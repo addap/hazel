@@ -1,7 +1,7 @@
 # Hazel - A Separation Logic for Effect Handlers
 
-This repository formalizes in Coq the contents of the homonym paper. To browse
-the project with ease, please take a look at the list of theories below.
+This repository formalizes in Coq the contents of the homonym paper.
+To browse the project, please take a look at the list of theories below.
 
 ## Preliminaries
 
@@ -9,17 +9,15 @@ the project with ease, please take a look at the list of theories below.
 
 ## Language
 
- - [theories/lang.v](theories/lang.v): Definition of the programming language
-   (named `eff_lang` here).
-   + Syntax: the syntax is implied by the definition of `expr`, the type of
-     expressions.
-   + Evaluation contexts: `ectxi` is the type of shallow contexts and `ectx`,
-     the type of deep contexts. (`ectx` is isomorphic to `list ectxi`.)
+ - [theories/lang.v](theories/lang.v): Definition of the programming language.
+   + Syntax: `expr` is the type of expressions.
+   + Evaluation contexts: `ectxi` is the type of shallow evaluation contexts
+     and `ectx`, the type of deep evaluation contexts.
    + Semantics: `head_step` is the head step reduction relation and `prim_step`
      is its closure under evaluation contexts.
-   + Neutral contexts: a shallow context is neutral when it satisfies the
-     predicate `NeutralEctxi`. A neutral deep context, `NeutralEctx`, is then
-     simply defined as a list of neutral shallow contexts.
+   + Neutral contexts: a evaluation context is neutral when it does not
+     catch an effect. The predicate `NeutralEctxi` holds for neutral shallow
+     contexts and `NeutralEctx`, for deep contexts.
  - [theories/notation.v](theories/notation.v): Syntactic sugar for commom
    constructs of the language.
 
@@ -27,37 +25,28 @@ the project with ease, please take a look at the list of theories below.
 
  - [theories/ieff.v](theories/ieff.v): Definition of effect protocols and
    auxiliary operators.
-   + Domain: the space `iEff` described in the paper is defined here. It is the
-     application of the functor `ieff` to `iProp`.
-   + Protocols: empty protocols are constructed via `iEff_done`, while nonempty
-     ones are constructed via `iEff_cons`.
-   + Notation: the protocol `end` is denoted by `Done` in the development. For a
-     nonempty protocol
-       `! x_1 .. x_n (v) { P }. ? y_1 .. y_2 (u) { Q }`
-     we also use another notation:
-       `>> x_1 .. x_n >> ! v { P }. << y_1 .. y_2 << ? u { Q }`.
+   + Domain: `iEff Σ` is the type of protocols.
+   + Protocols: `iEff_bottom` is the empty protocol and `iEff_sum` denotes
+     the sum over protocols.
+   + Ordering: `iEff_le` is a pre order relation on protocols.
+ - [theories/protocol_agreement.v](theories/protocol_agreement.v): Introduction and
+   study of the protocol agreement judgement.
 
 ## Reasoning Rules / Logic
 
  - [theories/weakestpre.v](theories/weakestpre.v): Definition of the weakest
    precondition and proof of usual reasoning rules.
-   + Weakest precondition: it is defined here as the fixpoint of the operator
-     `ewp_pre`.
-   + Notation: the statement `ewp e < Ψ > { Φ }` is denoted by
-     `EWP e <| Ψ |> {{ Φ }}` in the development.
+   + Weakest precondition: `ewp` is defined as the fixpoint of the operator `ewp_pre`.
    + Rules: some of the reasoning rules mentioned in the paper are (Val)
-    `ewp_value`, (End) `ewp_Done`, (Wand) `ewp_strong_mono`, (Do) `ewp_eff`,
+    `ewp_value`, (Wand) `ewp_strong_mono`, (Do) `ewp_eff`,
     (Bind) `ewp_bind`, (Try-With-Shallow) `ewp_try_with`.
- - [theories/deep_handler.v](theories/deep_handler.v): Proof of the reasoning
-   rule for deep handlers.
-   + Deep handler judgement: it is defined in the development under the name
-     `is_deep_handler`.
-   + Rules: the reasoning rule (Try-With-Deep) is proved here, it is the lemma
-     `ewp_try_with_deep`.
+   + Shallow handler judgement: the `shallow_handler` judgement is defined here.
+ - [theories/deep_handler.v](theories/deep_handler.v): Reasoning rule for deep handlers.
+   + Deep handler judgement: the `deep_handler` judgement is defined here.
+   + Rules: proof of the reasoning rule `ewp_deep_try_with` (Try-With-Deep) for deep handlers.
  - [theories/heap.v](theories/heap.v): Proof of the reasoning rules for
-   manipulating the heap.
- - [theories/adequacy.v](theories/adequacy.v): Proof that `ewp e < Done > { Φ }`
-   implies `wp e { Φ }`.
+   operations manipulating the heap.
+ - [theories/adequacy.v](theories/adequacy.v): Adequacy theorem.
 
 ## Libraries
 
@@ -78,4 +67,21 @@ the project with ease, please take a look at the list of theories below.
    library (case study from section 6).
  - [theories/shallow_handler.v](theories/shallow_handler.v): verified encoding
    of shallow handlers using deep handlers.
+
+## Notation
+
+
+|                 | Paper                                        | Coq mechanization                                                   |
+|-----------------|----------------------------------------------|---------------------------------------------------------------------|
+| Protocol        | `! x_1 .. x_n (v){ P }.? y_1 .. y_n (w) {Q}` | `>> x_1 .. x_n >> ! v {{ P }}; << y_1 .. y_n << ! w {{ Q }}; prot`  |
+| Empty           | `end`                                        | `⊥`                                                                 |
+| Sum             | `Ψ₁ + Ψ₂`                                    | `Ψ₁ <+> Ψ₂`                                                         |
+| Ewp             | `ewp e < Ψ > { Φ }`                          | `EWP e < Ψ > {{ Φ }}`                                               |
+| Effect          | `§(N)[do v]`                                 | `Eff v N`                                                           |
+| Shallow handler | `shallow-try e with h r`                     | `TryWith e h r`                                                     |
+| S. h. judgement | `shallow-handler ⟨Ψ⟩{Φ} h r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                                 |
+| Deep handler    | `deep-try e with h r`                        | `try: e with effect h return r end`                                 |
+| D. h. judgement | `deep-handler ⟨Ψ⟩{Φ} h r ⟨Ψ'⟩{Φ'}`           | `deep_handler E h r Ψ Ψ' Φ Φ'`                                      |
+
+
 
