@@ -325,7 +325,8 @@ Proof. apply ewp_pure_steps. by apply rtc_pure_prim_step_eff. Qed.
 
 Lemma ewp_bind K `{NeutralEctx K} E Ψ Φ e e' :
   e' = fill K e  →
-  EWP e @ E <| Ψ |> {{ v, EWP fill K (of_val v) @ E <| Ψ |> {{ Φ }} }} ⊢ EWP e' @ E <| Ψ |> {{ Φ }}.
+  EWP e  @ E <| Ψ |> {{ v, EWP fill K (of_val v) @ E <| Ψ |> {{ Φ }} }} ⊢
+  EWP e' @ E <| Ψ |> {{ Φ }}.
 Proof.
   intros ->. iLöb as "IH" forall (e Ψ).
   rewrite !(ewp_unfold E e) /ewp_pre.
@@ -356,24 +357,20 @@ Lemma Ectxi_ewp_bind Ki `{NeutralEctxi Ki} E Ψ Φ e e' :
   EWP e' @ E <| Ψ |> {{ Φ }}.
 Proof. intros ->. by iApply (ewp_bind (ConsCtx Ki EmptyCtx)). Qed.
 
-(* TODO: Prove another version of this lemma where
-         the program [e] abides a protocol [Ψ1],
-         the program [fill K (of_val v)],
-         a protocol [Ψ2] and their combination
-         satisfies the protocol sum [Ψ1 <+> Ψ2]. *)
-(*Lemma ewp_pure_bind K E Ψ Φ e e' :
+Lemma ewp_pure_bind K E Ψ Φ e e' :
   e' = fill K e  →
-  EWP                 e @ E <| Done |> {{ v,
-  EWP fill K (of_val v) @ E <| Ψ    |> {{ Φ }} }} ⊢
-  EWP                e' @ E <| Ψ    |> {{ Φ }}.
+  EWP                 e @ E <| ⊥ |> {{ v,
+  EWP fill K (of_val v) @ E <| Ψ |> {{ Φ }} }} ⊢
+  EWP                e' @ E <| Ψ |> {{ Φ }}.
 Proof.
   intros ->. iLöb as "IH" forall (e).
   rewrite !(ewp_unfold E e) /ewp_pre.
     destruct (to_val e) as [ v    |] eqn:He;
   [|destruct (to_eff e) as [(v, k)|] eqn:He'].
-  - rewrite <- (of_to_val _ _ He). iIntros "H". by iApply fupd_ewp.
-  - iIntros "H".
-    iApply fupd_ewp. by iMod "H".
+  - rewrite <- (of_to_val _ _ He).
+    iIntros "H". by iApply fupd_ewp.
+  - iIntros "Hprot_agr". rewrite protocol_agreement_bottom.
+     iApply fupd_ewp. by iMod "Hprot_agr".
   - rewrite !ewp_unfold /ewp_pre.
     rewrite (fill_not_val _ _ He) (fill_not_eff K _ He He').
     iIntros "Hewp" (σ₁ ks n) "Hs".
@@ -383,7 +380,7 @@ Proof.
     destruct (Ectx_prim_step_inv K _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
     iMod ("Hewp" $! e' σ₂ Hstep') as "Hewp". iIntros "!> !>".
     iMod "Hewp" as "[$ Hewp]". by iApply "IH".
-Qed.*)
+Qed.
 
 
 (** * Shallow Handlers. *)
