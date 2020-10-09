@@ -70,18 +70,15 @@ To browse the project, please take a look at the list of theories below.
 
 ## Notation
 
-
-|                 | Paper                                        | Coq mechanization                                                   |
-|-----------------|----------------------------------------------|---------------------------------------------------------------------|
-| Protocol        | `! x_1 .. x_n (v){ P }.? y_1 .. y_n (w) {Q}` | `>> x_1 .. x_n >> ! v {{ P }}; << y_1 .. y_n << ! w {{ Q }}; prot`  |
-| Empty           | `end`                                        | `⊥`                                                                 |
-| Sum             | `Ψ₁ + Ψ₂`                                    | `Ψ₁ <+> Ψ₂`                                                         |
-| Ewp             | `ewp e < Ψ > { Φ }`                          | `EWP e < Ψ > {{ Φ }}`                                               |
-| Effect          | `§(N)[do v]`                                 | `Eff v N`                                                           |
-| Shallow handler | `shallow-try e with h r`                     | `TryWith e h r`                                                     |
-| S. h. judgement | `shallow-handler ⟨Ψ⟩{Φ} h r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                                 |
-| Deep handler    | `deep-try e with h r`                        | `try: e with effect h return r end`                                 |
-| D. h. judgement | `deep-handler ⟨Ψ⟩{Φ} h r ⟨Ψ'⟩{Φ'}`           | `deep_handler E h r Ψ Ψ' Φ Φ'`                                      |
-
-
+|                 | Paper                                        | Coq mechanization                                             |
+|-----------------|----------------------------------------------|---------------------------------------------------------------|
+| Protocol        | `! x_1 .. x_n (v){ P }.? y_1 .. y_n (w) {Q}` | `>> x_1 .. x_n >> ! v {{ P }}; << y_1 .. y_n << ! w {{ Q }}`  |
+| Empty           | `end`                                        | `⊥`                                                           |
+| Sum             | `Ψ₁ + Ψ₂`                                    | `Ψ₁ <+> Ψ₂`                                                   |
+| Ewp             | `ewp e < Ψ > { Φ }`                          | `EWP e < Ψ > {{ Φ }}`                                         |
+| Effect          | `§(N)[do v]`                                 | `Eff v N`                                                     |
+| Shallow handler | `shallow-try e with h r`                     | `TryWith e h r`                                               |
+| S. h. judgement | `shallow-handler ⟨Ψ⟩{Φ} h r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                           |
+| Deep handler    | `deep-try e with h r`                        | `try: e with effect h return r end`                           |
+| D. h. judgement | `deep-handler ⟨Ψ⟩{Φ} h r ⟨Ψ'⟩{Φ'}`           | `deep_handler E h r Ψ Ψ' Φ Φ'`                                |
 
