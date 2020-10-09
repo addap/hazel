@@ -178,7 +178,7 @@ Notation "'<<..' x .. y << e" :=
    format "<<..  x  ..  y <<  e") : ieff_scope.
 
 (* Test. *)
-Check (λ Σ P Q, (>> v >> ! v {{ P }} ; << w << ? w {{ Q }})).
+(* Check (λ Σ P Q, (>> v >> ! v {{ P }} ; << w << ? w {{ Q }})).*)
 
 Lemma iEffPre_texist_eq {Σ} {TT : tele} v p (e : TT → iEff Σ) :
   iEff_car (>>.. x >> (e x))%ieff v p ⊣⊢ (∃.. x, iEff_car (e x) v p).
