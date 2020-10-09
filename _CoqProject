@@ -1,0 +1,27 @@
+-Q theories hazel
+-arg -w -arg -convert_concl_no_check
+
+theories/lib.v
+
+theories/lang.v
+theories/notation.v
+
+theories/ieff.v
+
+theories/protocol_agreement.v
+theories/weakestpre.v
+
+theories/deep_handler.v
+theories/shallow_handler.v
+
+theories/heap.v
+
+theories/list_lib.v
+theories/queue_lib.v
+
+theories/cascade.v
+theories/state.v
+theories/exceptions.v
+theories/scheduler.v
+
+theories/adequacy.v
