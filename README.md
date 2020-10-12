@@ -18,7 +18,7 @@ To browse the project, please take a look at the list of theories below.
    + Neutral contexts: a evaluation context is neutral when it does not
      catch an effect. The predicate `NeutralEctxi` holds for neutral shallow
      contexts and `NeutralEctx`, for deep contexts.
- - [theories/notation.v](theories/notation.v): Syntactic sugar for commom
+ - [theories/notation.v](theories/notation.v): Syntactic sugar for common
    constructs of the language.
 
 ## Protocols
@@ -30,7 +30,7 @@ To browse the project, please take a look at the list of theories below.
      the sum over protocols.
    + Ordering: `iEff_le` is a pre order relation on protocols.
  - [theories/protocol_agreement.v](theories/protocol_agreement.v): Introduction and
-   study of the protocol agreement judgement.
+   study of the protocol agreement judgment.
 
 ## Reasoning Rules / Logic
 
@@ -40,9 +40,9 @@ To browse the project, please take a look at the list of theories below.
    + Rules: some of the reasoning rules mentioned in the paper are (Val)
     `ewp_value`, (Wand) `ewp_strong_mono`, (Do) `ewp_eff`,
     (Bind) `ewp_bind`, (Try-With-Shallow) `ewp_try_with`.
-   + Shallow handler judgement: the `shallow_handler` judgement is defined here.
+   + Shallow handler judgment: the `shallow_handler` judgment is defined here.
  - [theories/deep_handler.v](theories/deep_handler.v): Reasoning rule for deep handlers.
-   + Deep handler judgement: the `deep_handler` judgement is defined here.
+   + Deep handler judgment: the `deep_handler` judgment is defined here.
    + Rules: proof of the reasoning rule `ewp_deep_try_with` (Try-With-Deep) for deep handlers.
  - [theories/heap.v](theories/heap.v): Proof of the reasoning rules for
    operations manipulating the heap.
@@ -70,15 +70,15 @@ To browse the project, please take a look at the list of theories below.
 
 ## Notation
 
-|                          | Paper                                         | Coq mechanization                                            |
-|--------------------------|-----------------------------------------------|--------------------------------------------------------------|
-| Protocol                  | `! x₁ .. xₙ (v) {P}.`<br/>`? y₁ .. yₙ (w) {Q}`  | `>> x₁ .. xₙ >> ! v {{ P }};`<br/>`<< y₁ .. yₙ << ! w {{ Q }}` |
+|                           | Paper                                           | Coq mechanization                                              |
+|---------------------------|-------------------------------------------------|----------------------------------------------------------------|
+| Protocol                  | `! x (v) {P}.`<br/>`? y (w) {Q}`                | `>>.. x >> ! v {{ P }};`<br/>`<<.. y << ! w {{ Q }}`           |
 | Empty                     | `end`                                           | `⊥`                                                            |
 | Sum                       | `Ψ₁ + Ψ₂`                                       | `Ψ₁ <+> Ψ₂`                                                    |
 | Ewp                       | `ewp e ⟨Ψ⟩{Φ}`                                  | `EWP e <\| Ψ \|> {{ Φ }}`                                      |
 | Effect                    | `§(N)[do v]`                                    | `Eff v N`                                                      |
 | Shallow handler           | `shallow-try e with h \| r`                     | `TryWith e h r`                                                |
-| Shallow handler judgement | `shallow-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                            |
+| Shallow handler judgment  | `shallow-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                            |
 | Deep handler              | `deep-try e with h \| r`                        | `try: e with effect h \| return r end`                         |
-| Deep handler judgement    | `deep-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`           | `deep_handler E h r Ψ Ψ' Φ Φ'`                                 |
+| Deep handler judgment     | `deep-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`           | `deep_handler E h r Ψ Ψ' Φ Φ'`                                 |
 
