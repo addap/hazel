@@ -65,16 +65,15 @@ Proof.
 
   - iIntros "H". iDestruct "H" as (Q') "[HP HQ']".
     rewrite iEffPre_texist_eq iEffPre_base_eq /iEffPre_base_def.
-    iDestruct "HP" as (x) "(<- & HP & #Heq)". iExists x. iFrame.
-    iSplit; [done|]. iIntros (y) "HQ". iApply "HQ'".
-    rewrite discrete_fun_equivI. iRewrite ("Heq" $! (w' x y)). iClear "Heq".
+    iDestruct "HP" as (x) "(<- & HP & HΦ)". iExists x. iFrame.
+    iSplit; [done|]. iIntros (y) "HQ". iApply "HQ'". iApply "HΦ".
     rewrite iEffPost_texist_eq iEffPost_base_eq /iEffPost_base_def.
     iExists y. by iFrame.
 
   - iIntros "H". iDestruct "H" as (x) "(-> & HP & HQ)".
     iExists (<<.. y << ? (w' x y) {{ Q x y }})%ieff.
     rewrite iEffPre_texist_eq. iSplitL "HP".
-    + iExists x. rewrite iEffPre_base_eq /iEffPre_base_def //=. by iFrame.
+    + iExists x. rewrite iEffPre_base_eq /iEffPre_base_def //=. iFrame. by auto.
     + iIntros (w) "HQ'".
       rewrite iEffPost_texist_eq iEffPost_base_eq.
       iDestruct "HQ'" as (y) "[<- HQ']". by iApply "HQ".
@@ -185,13 +184,12 @@ Lemma protocol_agreement_strong_mono E1 E2 v (Ψ1 Ψ2 : iEff Σ) Φ1 Φ2 :
      -∗ Ψ1 ⊑ Ψ2 -∗ (∀ v, Φ1 v ={E2}=∗ Φ2 v) -∗
    protocol_agreement E2 v Ψ2 Φ2)%ieff.
 Proof.
-  iIntros (HE) "Hprot_agr #HΨ HΦ".
+  iIntros (HE) "Hprot_agr #HΨ HΦ2".
   iMod (fupd_intro_mask' E2 E1) as "Hclose"; first done.
-  iMod "Hprot_agr" as (Q) "[HP Hk]".
-  iDestruct ("HΨ" with "HP") as (Q') "[HP' HQ]".
-  iModIntro. iExists Q'. iFrame. iIntros (w) "HQ'".
-  iSpecialize ("HQ" with "HQ'"). iSpecialize ("Hk" with "HQ").
-  iMod "Hk". iMod "Hclose". by iApply "HΦ".
+  iMod "Hprot_agr" as (Q) "[HP HΦ1]".
+  iExists Q. iSplitL "HP". { by iApply "HΨ". }
+  iModIntro. iIntros (w) "HQ". iSpecialize ("HΦ1" with "HQ").
+  iMod "HΦ1". iMod "Hclose". by iApply "HΦ2".
 Qed.
 
 Lemma protocol_agreement_mono E v (Ψ1 Ψ2 : iEff Σ) Φ :

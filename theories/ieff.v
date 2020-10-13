@@ -101,8 +101,8 @@ Instance iEff_bottom {Σ} : Bottom (iEff Σ) := IEff (λ _, λne _, False%I).
 
 Program Definition iEffPre_base_def {Σ}
   (v : val) (P : iProp Σ) (Q : val -d> iPropO Σ) : iEff Σ
-  := IEff (λ v', λne Q', ⌜ v = v' ⌝ ∗ P ∗ Q' ≡ Q)%I.
-Next Obligation. solve_proper. Qed.
+  := IEff (λ v', λne Q', ⌜ v = v' ⌝ ∗ P ∗ (∀ w, Q w -∗ Q' w))%I.
+Next Obligation. intros ??? ??? ???. repeat f_equiv. by apply H. Qed.
 Definition iEffPre_base_aux : seal (@iEffPre_base_def). by eexists. Qed.
 Definition iEffPre_base := iEffPre_base_aux.(unseal).
 Definition iEffPre_base_eq : @iEffPre_base = @iEffPre_base_def :=
@@ -240,7 +240,7 @@ Section ieff_proofs.
       (iEffPre_base (Σ:=Σ)).
   Proof.
     intros ?????????. rewrite iEffPre_base_eq /iEffPre_base_def.
-    intros ??. simpl. solve_proper.
+    intros ??. simpl. by repeat (apply H || f_equiv).
   Qed.
   Global Instance iEffPre_base_proper :
     Proper ((≡) ==> (≡) ==> (≡) ==> (≡)) (iEffPre_base (Σ:=Σ)).
@@ -394,8 +394,7 @@ End ieff_proofs.
 
 Program Definition iEff_le {Σ} : iEffO -n> iEffO -n> iPropO Σ :=
   λne e1 e2,
-    (□ (∀ v q, iEff_car e1 v q -∗
-        (∃ q', iEff_car e2 v q' ∗ (∀ w, q' w -∗ q w))))%I.
+    (□ (∀ v q, iEff_car e1 v q -∗ iEff_car e2 v q))%I.
 Next Obligation. intros ??????. repeat (apply iEff_car_ne || f_equiv); done. Defined.
 Next Obligation. intros ??????. simpl. repeat (apply iEff_car_ne || f_equiv); done. Defined.
 (*Arguments iEff_le {_} _%ieff _%ieff.*)
@@ -421,20 +420,18 @@ Section ieff_order.
   Proof. iModIntro. by iIntros (v q) "H". Qed.
 
   Lemma iEff_le_refl (Ψ : iEff Σ) : ⊢ (Ψ ⊑ Ψ)%ieff.
-  Proof. iModIntro. iIntros (v q) "H". iExists q. iFrame. by auto. Qed.
+  Proof. iModIntro. by iIntros (v q) "H". Qed.
 
   Lemma iEff_le_trans (Ψ1 Ψ2 Ψ3 : iEff Σ) : (Ψ1 ⊑ Ψ2 -∗ Ψ2 ⊑ Ψ3 -∗ Ψ1 ⊑ Ψ3)%ieff.
   Proof.
     iIntros "#H12 #H23". iModIntro. iIntros (v q) "H1".
-    iDestruct ("H12" $! v q  with "H1") as (q' ) "[H2 Hq' ]".
-    iDestruct ("H23" $! v q' with "H2") as (q'') "[H3 Hq'']".
-    iExists q''. iFrame. iIntros (w) "Hq". iApply "Hq'". by iApply "Hq''".
+    iApply "H23". by iApply "H12".
   Qed.
 
   Lemma iEff_le_sum_l (Ψ1 Ψ2 : iEff Σ) : ⊢ (Ψ1 ⊑ Ψ1 <+> Ψ2)%ieff.
   Proof.
-    iModIntro. iIntros (v q) "H". iExists q. iSplitL.
-    { rewrite iEff_sum_eq. by iLeft. } { by auto. }
+    iModIntro. iIntros (v q) "H".
+    rewrite iEff_sum_eq. by iLeft.
   Qed.
 
   Lemma iEff_le_sum_r (Ψ1 Ψ2 : iEff Σ) : ⊢ (Ψ2 ⊑ Ψ1 <+> Ψ2)%ieff.
@@ -445,18 +442,15 @@ Section ieff_order.
   Proof.
     iIntros "#HΨ1 #HΨ2". iModIntro. iIntros (v q) "HP".
     rewrite iEff_sum_eq. iDestruct "HP" as "[HP|HP]".
-    { iClear "HΨ2". iDestruct ("HΨ1" with "HP") as (q') "[HP Hq']".
-      iExists q'. by iFrame. }
-    { iClear "HΨ1". iDestruct ("HΨ2" with "HP") as (q') "[HP Hq']".
-      iExists q'. by iFrame. }
+    { iClear "HΨ2". iLeft.  by iApply "HΨ1". }
+    { iClear "HΨ1". iRight. by iApply "HΨ2". }
   Qed.
 
   Lemma iEff_le_marker f (Ψ1 Ψ2 : iEff Σ) : (Ψ1 ⊑ Ψ2 -∗ (f #> Ψ1) ⊑ (f #> Ψ2))%ieff.
   Proof.
     iIntros "#HΨ". iModIntro. iIntros (v q) "HP".
     rewrite iEff_marker_eq. iDestruct "HP" as (w) "[-> HP]".
-    iDestruct ("HΨ" with "HP") as (q') "[HP Hq']".
-    iExists q'. iFrame. iExists w. by iFrame.
+    iExists w. iSplit; [done|]. by iApply "HΨ".
   Qed.
 
   Lemma iEff_le_tele {TT1 TT2 TT1' TT2' : tele}
@@ -476,26 +470,23 @@ Section ieff_order.
     iSplit; iIntros "#Hle"; iModIntro.
     - iIntros (x) "HP".
       iSpecialize ("Hle" $! (v x) (<<..y<<?(w x y){{Q x y}})%ieff with "[HP]").
-      { rewrite iEffPre_texist_eq iEffPre_base_eq. iExists x. by iFrame. }
-      iDestruct "Hle" as (q) "[HP' Hq]".
+      { rewrite iEffPre_texist_eq iEffPre_base_eq. iExists x. iFrame. by auto. }
       rewrite iEffPre_texist_eq iEffPre_base_eq.
-      iDestruct "HP'" as (x') "[<- [HP' #Heq]]". iExists x'. iFrame.
+      iDestruct "Hle" as (x') "[<- [HP' HQ]]". iExists x'. iFrame.
       iSplit; [done|]. iIntros (y') "HQ'".
-      iSpecialize ("Hq" $! (w' x' y')with "[HQ']").
-      { rewrite discrete_fun_equivI. iRewrite ("Heq" $! (w' x' y')).
-        rewrite iEffPost_texist_eq iEffPost_base_eq. iExists y'. by iFrame. }
+      iSpecialize ("HQ" $! (w' x' y') with "[HQ']").
+      { rewrite iEffPost_texist_eq iEffPost_base_eq. iExists y'. by iFrame. }
       rewrite iEffPost_texist_eq iEffPost_base_eq.
-      iDestruct "Hq" as (y) "[<- HQ]". iExists y. by iFrame.
+      iDestruct "HQ" as (y) "[<- HQ]". iExists y. by iFrame.
     - iIntros (u q) "HP". rewrite iEffPre_texist_eq iEffPre_base_eq.
-      iDestruct "HP" as (x) "[<- [HP #Heq]]".
+      iDestruct "HP" as (x) "[<- [HP Hq]]".
       iDestruct ("Hle" with "HP") as (x') "(HP' & -> & HQ)". iClear "Hle".
-      iExists (<<..y'<<?(w' x' y'){{Q' x' y'}})%ieff. iSplitL "HP'".
-      { rewrite iEffPre_texist_eq. iExists x'. by iFrame. }
-      iIntros (u') "HQ'". rewrite iEffPost_texist_eq iEffPost_base_eq.
+      rewrite iEffPre_texist_eq. iExists x'. iFrame. iSplit; [done|].
+      iIntros (u') "HQ'". iApply "Hq".
+      rewrite !iEffPost_texist_eq iEffPost_base_eq.
       iDestruct "HQ'" as (y') "[<- HQ']".
       iDestruct ("HQ" with "HQ'") as (y) "[HQ <-]".
-      rewrite discrete_fun_equivI. iRewrite ("Heq" $! (w x y)).
-      rewrite iEffPost_texist_eq. iExists y. by iFrame.
+      iExists y. by iFrame.
   Qed.
 
 End ieff_order.
