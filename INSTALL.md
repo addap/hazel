@@ -10,7 +10,7 @@
     ./setup.sh
 
   This should create a "local opam switch" in the current directory, install
-  the *specific* versions of Coq, TLC, stdpp, and Iris that we need, then
+  the *specific* versions of Coq, stdpp, and Iris that we need, then
   compile our proofs.
 
 ## Troubleshooting
