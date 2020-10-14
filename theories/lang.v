@@ -609,13 +609,7 @@ Inductive head_step : expr → state → expr → state → Prop :=
      is_Some (σ.(heap) !! l) →
      head_step (Store (Val $ LitV $ LitLoc l) (Val v)) σ
                (Val $ LitV LitUnit) (state_upd_heap <[l:=v]> σ)
-  (* TryWith. *)
-  (* Deep:
-  | EffTryWithS v y k e2 σ :
-     (∀ w, subst' y w e2 = e2) →
-     head_step (TryWith (Eff (Val v) y k) e2) σ 
-               (App (App e2 (Val v)) (Val $ RecV BAnon y (TryWith k e2))) σ *)
-  (* Shallow: *)
+  (* TryWith: *)
   | TryWithEffS v k e2 e3 σ :
      head_step (TryWith (Eff (Val v) k) e2 e3) σ 
                (App (App e2 (Val v)) (Val $ ContV k)) σ
