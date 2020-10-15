@@ -8,13 +8,10 @@ From stdpp               Require Import list.
 From iris.proofmode      Require Import base tactics classes.
 From iris.algebra        Require Import excl_auth.
 From iris.program_logic  Require Import weakestpre.
-From hazel               Require Import notation ieff
-                                        protocol_agreement
-                                        weakestpre deep_handler.
+From hazel               Require Import notation weakestpre deep_handler.
 
 Section state_eff.
-
-Context `{!irisG eff_lang Σ}.
+Context `{!heapG Σ}.
 
 
 (** Effect markers. *)

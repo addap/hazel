@@ -60,7 +60,7 @@ with val :=
   | PairV (v1 v2 : val)
   | InjLV (v : val)
   | InjRV (v : val)
-  | ContV (k : ectx)
+  | ContV (k : ectx) (l : loc)
 
 with ectx :=
   | EmptyCtx
@@ -175,7 +175,7 @@ Proof.
          cast_if_and (decide (e1 = e1')) (decide (e2 = e2'))
       | InjLV e, InjLV e' => cast_if (decide (e = e'))
       | InjRV e, InjRV e' => cast_if (decide (e = e'))
-      | ContV k, ContV k' => cast_if (decide (k = k'))
+      | ContV k l, ContV k' l' => cast_if_and (decide (k = k')) (decide (l = l'))
       | _, _ => right _
       end
 
@@ -228,7 +228,8 @@ Proof.
 Qed.
 Instance ectx_eq_dec : EqDecision ectx.
 Proof.
-  intros ??. case (val_eq_dec (ContV x) (ContV y)).
+  intros ??.
+  case (val_eq_dec (ContV x inhabitant) (ContV y inhabitant)).
   - intros [= ->]. by left.
   - right. by intros ->.
 Qed.
@@ -301,7 +302,7 @@ Proof.
       | PairV v1 v2 => GenNode 1 [go_val v1; go_val v2]
       | InjLV v => GenNode 2 [go_val v]
       | InjRV v => GenNode 3 [go_val v]
-      | ContV k => GenNode 4 [go_ectx k]
+      | ContV k l => GenNode 4 [go_ectx k; GenLeaf (inr (inl (LitLoc l)))]
       end
 
     with go_ectx k :=
@@ -369,7 +370,7 @@ Proof.
       | GenNode 1 [v1; v2] => PairV (go_val v1) (go_val v2)
       | GenNode 2 [v] => InjLV (go_val v)
       | GenNode 3 [v] => InjRV (go_val v)
-      | GenNode 4 [k] => ContV (go_ectx k)
+      | GenNode 4 [k; GenLeaf (inr (inl (LitLoc l)))] => ContV (go_ectx k) l
       | _ => LitV LitUnit (* dummy *)
       end
 
@@ -568,9 +569,11 @@ Inductive head_step : expr → state → expr → state → Prop :=
      e' = subst' x v2 (subst' f (RecV f x e1) e1) →
      head_step (App (Val $ RecV f x e1) (Val v2)) σ e' σ
   (* Continuation resumption. *)
-  | ContS k w e' σ :
+  | ContS k l w e' σ :
+     σ.(heap) !! l = Some (LitV $ LitBool true) →
      e' = fill k (Val w) →
-     head_step (App (Val $ ContV k) (Val w)) σ e' σ
+     head_step (App (Val (ContV k l)) (Val w))                        σ
+               e' (state_upd_heap <[l:=(LitV $ LitBool false)]> σ)
   (* UnOp. *)
   | UnOpS op v v' σ :
      un_op_eval op v = Some v' →
@@ -610,9 +613,11 @@ Inductive head_step : expr → state → expr → state → Prop :=
      head_step (Store (Val $ LitV $ LitLoc l) (Val v)) σ
                (Val $ LitV LitUnit) (state_upd_heap <[l:=v]> σ)
   (* TryWith: *)
-  | TryWithEffS v k e2 e3 σ :
-     head_step (TryWith (Eff (Val v) k) e2 e3) σ 
-               (App (App e2 (Val v)) (Val $ ContV k)) σ
+  | TryWithEffS v k e2 e3 σ l :
+     σ.(heap) !! l = None →
+     head_step (TryWith (Eff (Val v) k) e2 e3)                    σ
+               (App (App e2 (Val v)) (Val (ContV k l)))
+               (state_upd_heap <[l:=(LitV $ LitBool true)]> σ)
   | TryWithRetS v e2 e3 σ :
      head_step (TryWith (Val v) e2 e3) σ (App e3 (Val v)) σ
   (* AppLCtx: [ eff v1 y.k ] v2 --> eff v1 y.(k v2). *)
@@ -829,6 +834,18 @@ Proof.
   rewrite loc_add_0. naive_solver.
 Qed.
 
+Lemma try_with_fresh h r v k σ :
+ let l := fresh_locs (dom (gset loc) σ.(heap)) in
+ head_step (TryWith (Eff (Val v) k) h r)              σ
+           (App (App h (Val v)) (Val (ContV k l)))
+           (state_upd_heap <[l:=LitV $ LitBool true]> σ).
+Proof.
+  intros. apply TryWithEffS.
+  intros. apply (not_elem_of_dom (D := gset loc)).
+  specialize (fresh_locs_fresh (dom _ (heap σ)) 0).
+  rewrite loc_add_0. naive_solver.
+Qed.
+
 Lemma eff_lang_mixin : LanguageMixin of_val to_val prim_step'.
 Proof.
   split; apply _ || eauto using to_of_val, of_to_val.
@@ -1019,10 +1036,14 @@ Proof.
   specialize (Hstep σ1) as H3.
   inversion H2; simplify_eq; try naive_solver;
   inversion H3; simplify_eq; try naive_solver.
+  - unfold state_upd_heap in H9. simpl in H9.
+    rewrite lookup_insert in H9. done.
   - unfold state_upd_heap in H4. simpl in H4.
     rewrite lookup_insert in H4. done.
   - split; [|done]. destruct σ1 as [σ1].
     by rewrite /state_upd_heap /= insert_insert.
+  - unfold state_upd_heap in H10. simpl in H10.
+    rewrite lookup_insert in H10. done.
 Qed.
 
 Lemma val_not_pure v e : ¬ pure_prim_step (Val v) e.
@@ -1057,19 +1078,6 @@ Proof.
   - exists (RecV f x e). inversion Hfill.
     by destruct (fill_val' _ _ _ (eq_sym H0)) as [-> ->].
   - exists v. inversion Hfill.
-    by destruct (fill_val' _ _ _ (eq_sym H1)) as [-> ->].
-Qed.
-
-Lemma pure_prim_step_cont k w :
-  pure_prim_step ((App (Val $ ContV k) (Val w))) (fill k (Val w)).
-Proof.
-  apply pure_prim_stepI'; [intros ?; by apply ContS|].
-  intros ??. destruct K as [|Ki K]; [intros _; by left|].
-  intros Hfill; right.
-  destruct Ki; try naive_solver. simpl in Hfill.
-  - exists (ContV k). inversion Hfill.
-    by destruct (fill_val' _ _ _ (eq_sym H0)) as [-> ->].
-  - exists w. inversion Hfill.
     by destruct (fill_val' _ _ _ (eq_sym H1)) as [-> ->].
 Qed.
 
@@ -1160,21 +1168,6 @@ Proof.
   apply pure_prim_stepI'; [intros ?; by apply TryWithRetS|].
   intros ??. destruct K as [|Ki K]; try destruct Ki; try naive_solver.
   intros [=]. destruct (fill_val' _ _ _ (eq_sym H0)) as [-> ->]; by eauto.
-Qed.
-
-Lemma pure_prim_step_try_with_eff v k e₂ e₃ :
-  pure_prim_step (TryWith (of_eff v k) e₂ e₃)
-                 (App (App e₂ (Val v)) (Val $ ContV k)).
-Proof.
-  apply pure_prim_stepI; [intros ?; by apply TryWithEffS|].
-  intros ??. inversion 1. destruct K as [|Ki K].
-  - simpl in H0, H1, H2; simplify_eq. by inversion H2.
-  - destruct Ki; try naive_solver.
-    simpl in H0, H1, H2; simplify_eq.
-    destruct K as [|Kj K].
-    + simpl in H0; simplify_eq. by inversion H2.
-    + destruct K as [|Kl K]; destruct Kj; try destruct Kl; try naive_solver.
-      simpl in H0. simplify_eq. by specialize (val_head_stuck _ _ _ _ H2).
 Qed.
 
 Lemma pure_prim_step_eff `{NeutralEctxi Ki} v k :

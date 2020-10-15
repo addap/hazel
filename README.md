@@ -38,14 +38,15 @@ To browse the project, please take a look at the list of theories below.
    precondition and proof of usual reasoning rules.
    + Weakest precondition: `ewp` is defined as the fixpoint of the operator `ewp_pre`.
    + Rules: some of the reasoning rules mentioned in the paper are (Val)
-    `ewp_value`, (Wand) `ewp_strong_mono`, (Do) `ewp_eff`,
-    (Bind) `ewp_bind`, (Try-With-Shallow) `ewp_try_with`.
+    `ewp_value`, (Wand) `ewp_strong_mono`, (Do) `ewp_eff`, (Bind) `ewp_bind`.
+ - [theories/heap.v](theories/heap.v): Proof of the reasoning rules for
+   operations manipulating the heap.
+ - [theories/shallow_handler.v](theories/shallow_handler.v): Reasoning rule for shallow handlers.
    + Shallow handler judgment: the `shallow_handler` judgment is defined here.
+   + Rules: proof of the reasoning rule `ewp_try_with` (Try-With-Shallow) for shallow handlers.
  - [theories/deep_handler.v](theories/deep_handler.v): Reasoning rule for deep handlers.
    + Deep handler judgment: the `deep_handler` judgment is defined here.
    + Rules: proof of the reasoning rule `ewp_deep_try_with` (Try-With-Deep) for deep handlers.
- - [theories/heap.v](theories/heap.v): Proof of the reasoning rules for
-   operations manipulating the heap.
  - [theories/adequacy.v](theories/adequacy.v): Adequacy theorem.
 
 ## Libraries
@@ -65,7 +66,7 @@ To browse the project, please take a look at the list of theories below.
    the paper).
  - [theories/scheduler.v](theories/scheduler.v): verification of an asynchronous
    library (case study from section 6).
- - [theories/shallow_handler.v](theories/shallow_handler.v): verified encoding
+ - [theories/shallow_as_deep.v](theories/shallow_as_deep.v): verified encoding
    of shallow handlers using deep handlers.
 
 ## Notation

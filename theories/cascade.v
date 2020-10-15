@@ -8,9 +8,7 @@ From stdpp              Require Import list.
 From iris.proofmode     Require Import base tactics classes.
 From iris.algebra       Require Import excl_auth.
 From iris.program_logic Require Import weakestpre.
-From hazel              Require Import weakestpre notation ieff
-                                       protocol_agreement
-                                       deep_handler lang.
+From hazel              Require Import notation weakestpre deep_handler.
 
 Section iter.
 
@@ -42,8 +40,7 @@ End iter.
 
 
 Section invert.
-
-Context `{!irisG eff_lang Σ} {HIterLib: IterLib Σ}.
+Context `{!heapG Σ} {HIterLib: IterLib Σ}.
 
 (** Control Invertion. *)
 

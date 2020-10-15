@@ -200,6 +200,15 @@ Proof.
   by iApply (protocol_agreement_strong_mono with "H"); auto.
 Qed.
 
+Lemma protocol_agreement_mono' E v Ψ Φ1 Φ2 :
+  (protocol_agreement E v Ψ Φ1 -∗ (∀ w, Φ1 w ={E}=∗ Φ2 w) -∗
+   protocol_agreement E v Ψ Φ2)%ieff.
+Proof.
+  iIntros "H HΦ".
+  iApply (protocol_agreement_strong_mono with "H"); auto.
+  by iApply iEff_le_refl.
+Qed.
+
 Lemma protocol_agreement_mask_mono E1 E2 v Ψ Φ :
   E1 ⊆ E2 →
     protocol_agreement E1 v Ψ Φ -∗
