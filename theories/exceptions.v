@@ -6,13 +6,10 @@
 
 From iris.proofmode      Require Import base tactics classes.
 From iris.program_logic  Require Import weakestpre.
-From hazel               Require Import notation ieff
-                                        protocol_agreement
-                                        weakestpre.
+From hazel               Require Import notation weakestpre shallow_handler.
 
-Section exception.
-
-Context `{!irisG eff_lang Σ}.
+Section exceptions.
+Context `{!heapG Σ}.
 
 (** Protocl. *)
 
@@ -69,4 +66,4 @@ Proof.
     iModIntro. by iApply "Hewp".
 Qed.
 
-End exception.
+End exceptions.

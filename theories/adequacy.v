@@ -1,8 +1,7 @@
 From iris.proofmode      Require Import base tactics classes.
 From iris.base_logic.lib Require Import iprop wsat.
 From iris.program_logic  Require Import weakestpre.
-From hazel               Require Import notation ieff weakestpre
-                                        protocol_agreement.
+From hazel               Require Import notation weakestpre.
 
 Section adequacy.
 Context `{!irisG eff_lang Σ}.

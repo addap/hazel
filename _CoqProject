@@ -11,14 +11,15 @@ theories/ieff.v
 theories/protocol_agreement.v
 theories/weakestpre.v
 
-theories/deep_handler.v
-theories/shallow_handler.v
-
 theories/heap.v
+
+theories/shallow_handler.v
+theories/deep_handler.v
 
 theories/list_lib.v
 theories/queue_lib.v
 
+theories/shallow_as_deep.v
 theories/cascade.v
 theories/state.v
 theories/exceptions.v

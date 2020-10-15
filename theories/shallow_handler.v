@@ -1,168 +1,249 @@
 (* shallow_handler.v
-
-   Here we show that it is possible to correctly implement
-   a shallow handler using a deep handler as the sole
-   mechanism for catching effects. The implementation is correct
-   in the sense that it satisfies the same specification
-   as the primitive "try-with" instruction of the language
-   called [TryWith].
 *)
 
-From stdpp               Require Import list.
 From iris.proofmode      Require Import base tactics classes.
+From iris.base_logic.lib Require Import iprop.
 From iris.program_logic  Require Import weakestpre.
-From hazel               Require Import notation ieff weakestpre
-                                        protocol_agreement
-                                        deep_handler.
-
-Definition eff_tree_split : val := λ: "e",
-  try: "e" #() with
-    effect (λ: "v" "k",
-      let: "k" := λ: "w",
-        match: "k" "w" with
-          InjL "p" => (Snd "p") (eff: (Fst "p"))
-        | InjR "v" => "v"
-        end
-      in
-      InjL ("v", "k"))%V
-  | return (λ: "v",
-      InjR "v")%V
-  end.
-
-Definition shallow_try_with : val := λ: "e" "h" "r",
-  match: (eff_tree_split "e") with
-    (* effect: *)  InjL "p" => "h" (Fst "p") (Snd "p")
-  | (* return: *)  InjR "v" => "r" "v"
-  end.
+From hazel               Require Import notation weakestpre.
+From hazel               Require Export heap.
 
 Section shallow_handler.
-Context `{irisG eff_lang Σ}.
+Context `{!heapG Σ}.
 
-Lemma eff_tree_split_spec E Ψ Φ (e : val) :
-  EWP e #() @ E <| Ψ |> {{ Φ }} ⊢
-    EWP (eff_tree_split e) @ E {{ y,
-      match y with
-      | InjRV  v     => Φ v
-      | InjLV (v, k) =>
-          protocol_agreement E v Ψ (λ w,
-            ▷ EWP k w @ E <| Ψ |> {{ Φ }})
-      | _            => False
-      end%I }}.
+(** * Shallow Handlers. *)
+
+(* Return clause judgement. *)
+
+Definition shallow_return_handler E r Ψ' (Φ Φ' : _ -d> _) :=
+  (∀ v, Φ v -∗ ▷ EWP (App r (Val v)) @ E <| Ψ' |> {{ Φ' }})%I.
+Arguments shallow_return_handler _ _%E _%ieff _%I _%I.
+
+Global Instance shallow_return_handler_ne E r n :
+  Proper
+    ((dist n) ==> (dist n) ==> (dist n) ==> (dist n))
+  (shallow_return_handler E r).
 Proof.
-  unfold eff_tree_split.
-  iIntros "e_spec".
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (ewp_deep_try_with with "e_spec").
-  iLöb as "IH" forall (Ψ).
-  rewrite !deep_handler_unfold /deep_handler_pre; iSplit.
-  - iIntros (v) "H". iNext.
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    iApply ewp_pure_step. apply pure_prim_step_InjR.
-    by iApply ewp_value.
-  - iIntros (v k) "H". iNext.
-    iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    iApply ewp_pure_step. apply pure_prim_step_rec.
-    iApply ewp_value. simpl.
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-    iApply ewp_pure_step. apply pure_prim_step_rec.
-    iApply ewp_value. simpl.
-    iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-    iApply ewp_pure_step. apply pure_prim_step_rec.
-    iApply ewp_value. simpl.
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    iApply (Ectxi_ewp_bind InjLCtx). done.
-    iApply ewp_pure_step. apply pure_prim_step_pair.
-    iApply ewp_value. simpl.
-    iApply ewp_pure_step. apply pure_prim_step_InjL.
-    iApply ewp_value. simpl.
-    iApply (protocol_agreement_strong_mono with "H"); try done.
-    iApply iEff_le_refl.
-    iIntros (u) "H". iModIntro. iNext.
-    iSpecialize ("IH" $! Ψ). iSpecialize ("H" with "IH").
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    iApply (Ectxi_ewp_bind (CaseCtx _ _)). done.
-    iApply (ewp_strong_mono with "H"); try done.
-    iApply iEff_le_bottom. clear u. iIntros (u) "H".
-    case u; try naive_solver.
-    + intros w. case w; try naive_solver.
-      iIntros (v' k'). iModIntro.
-      iApply ewp_pure_step. apply pure_prim_step_case_InjL.
-      iApply (Ectxi_ewp_bind (AppLCtx _ )). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec.
-      iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _ )). done.
-      iApply (Ectxi_ewp_bind (EffCtx _ )). done.
-      iApply ewp_pure_step. apply pure_prim_step_Fst.
-      iApply ewp_value. iApply ewp_eff. 
-      iApply (protocol_agreement_strong_mono with "H"); try done.
-      iApply iEff_le_refl.
-      iIntros (w') "HQ'". iModIntro. iNext.
-      iApply ewp_value. simpl.
-      iApply (Ectxi_ewp_bind (AppLCtx _ )). done.
-      iApply ewp_pure_step. apply pure_prim_step_Snd.
-      by iApply ewp_value.
-    + iIntros (v'). iModIntro.
-      iApply ewp_pure_step. apply pure_prim_step_case_InjR.
-      iApply (Ectxi_ewp_bind (AppLCtx _ )). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec.
-      iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      by iApply ewp_value.
+  intros ?????????. rewrite /shallow_return_handler.
+  f_equiv=>v. f_equiv. done. by solve_proper.
+Qed.
+Global Instance is_shallow_return_proper E h :
+  Proper ((≡) ==> (≡) ==> (≡) ==> (≡)) (shallow_return_handler E h).
+Proof.
+  intros ?????????. apply equiv_dist=>n;
+  apply shallow_return_handler_ne; by apply equiv_dist.
 Qed.
 
-Lemma ewp_shallow_try_with E Ψ Ψ' Φ Φ' (e : expr) (h r : val) :
-  EWP e @ E <| Ψ |> {{ Φ }} -∗ shallow_handler E h r Ψ Ψ Ψ' Φ Φ' -∗
-  EWP (shallow_try_with (λ: <>, e) h r) @ E <| Ψ' |> {{ Φ' }}.
+(* Effect clause judgement. *)
+
+Definition shallow_effect_handler E h Ψ_eff Ψ Ψ' (Φ Φ' : _ -d> _) :=
+  (∀ v k,
+    protocol_agreement E v Ψ_eff (λ w,
+      ▷ EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
+    ▷ EWP App (App h (Val v)) (Val k) @ E <| Ψ' |> {{ Φ' }})%I.
+Arguments shallow_effect_handler _ _%E _%ieff _%ieff _%ieff _%I _%I.
+
+Global Instance shallow_effect_handler_ne E h n :
+  Proper
+    ((dist n) ==> (dist n) ==> (dist n) ==> (dist n) ==> (dist n) ==> (dist n))
+  (shallow_effect_handler E h).
 Proof.
-  unfold shallow_try_with.
-  iIntros "He Hhandler".
-  iApply (Ectxi_ewp_bind (AppLCtx _)); try done.
-  iApply (Ectxi_ewp_bind (AppLCtx _)); try done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)); try done.
-  iApply ewp_pure_step; try by apply pure_prim_step_rec; simpl.
-  iApply ewp_value; simpl.
-  iApply ewp_pure_step; try by apply pure_prim_step_beta. simpl.
-  iApply ewp_pure_step; try by apply pure_prim_step_rec; simpl.
-  iApply ewp_value; simpl.
-  iApply ewp_pure_step; try by apply pure_prim_step_beta. simpl.
-  iApply ewp_pure_step; try by apply pure_prim_step_rec; simpl.
-  iApply ewp_value; simpl.
-  iApply ewp_pure_step; try by apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (CaseCtx _ _)); try done.
-  iApply (ewp_strong_mono E _ ⊥%ieff with "[He] [] [Hhandler]"); try done.
-  - iApply eff_tree_split_spec.
-    iApply ewp_pure_step; try by apply pure_prim_step_beta. simpl.
-    by iApply "He".
-  - iApply iEff_le_bottom.
-  - iIntros (v) "H". case v; try naive_solver.
-    + iIntros (v0); case v0; try naive_solver.
-      intros v' k. simpl.
-      iModIntro.
-      iApply ewp_pure_step'. apply pure_prim_step_case_InjL. iNext.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec.
-      iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_Snd.
-      iApply ewp_value. simpl.
-      iApply (ewp_bind (ConsCtx (AppLCtx _) (
-                        ConsCtx (AppRCtx _) EmptyCtx))). done.
-      iApply ewp_pure_step'. apply pure_prim_step_Fst.
-      iApply ewp_value.
-      rewrite /shallow_handler /shallow_effect_handler //=.
-      iDestruct "Hhandler" as "[_ Hh]". by iApply "Hh".
-    + iIntros (u). simpl. iModIntro.
-      iDestruct "Hhandler" as "[Hhandler _]".
-      iSpecialize ("Hhandler" with "H").
-      iApply ewp_pure_step'. apply pure_prim_step_case_InjR. iNext.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec.
-      iApply ewp_value. simpl.
-      by iApply ewp_pure_step; first apply pure_prim_step_beta.
+  intros ??? ??? ??? ??? ???. rewrite /shallow_effect_handler /protocol_agreement.
+  by repeat (apply H || solve_proper || f_equiv).
+Qed.
+Global Instance is_shallow_handler_proper E h :
+  Proper
+    ((≡) ==> (≡) ==> (≡) ==> (≡) ==> (≡) ==> (≡))
+  (shallow_effect_handler E h).
+Proof.
+  intros ??? ??? ??? ??? ???. apply equiv_dist=>n;
+  apply shallow_effect_handler_ne; by apply equiv_dist.
+Qed.
+
+Lemma shallow_effect_handler_bottom E h Ψ Ψ' Φ Φ' :
+  ⊢ shallow_effect_handler E h ⊥ Ψ Ψ' Φ Φ'.
+Proof.
+  iIntros (v k) "H". rewrite protocol_agreement_bottom.
+  iNext. iApply fupd_ewp. by iMod "H".
+Qed.
+
+Lemma shallow_effect_handler_marker_elim E f h Ψ_eff Ψ Ψ' Φ Φ' :
+  shallow_effect_handler E h (f #> Ψ_eff) Ψ Ψ' Φ Φ' ⊢
+    (∀ v k,
+      protocol_agreement E v Ψ_eff (λ w,
+        ▷ EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
+      ▷ EWP App (App h (Val (f v))) (Val k) @ E <| Ψ' |> {{ Φ' }}).
+Proof.
+  iIntros "Hewp" (v k) "Hprot_agr".
+  iApply "Hewp". by iApply protocol_agreement_marker_intro.
+Qed.
+
+Lemma shallow_effect_handler_marker_intro E f {Hf: Marker f} h Ψ_eff Ψ Ψ' Φ Φ' :
+  (∀ v k,
+    protocol_agreement E v Ψ_eff (λ w,
+      ▷ EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
+    ▷ EWP App (App h (Val (f v))) (Val k) @ E <| Ψ' |> {{ Φ' }}) ⊢
+    shallow_effect_handler E h (f #> Ψ_eff) Ψ Ψ' Φ Φ'.
+Proof.
+  iIntros "Hewp" (v k) "Hprot_agr".
+  case (marker_dec_range v) as [(w & Hw)|Hv].
+  { inversion Hw. iApply "Hewp".
+    by iApply (@protocol_agreement_marker_elim _ _ _ f marker_inj). }
+  { iNext. iApply fupd_ewp. iMod "Hprot_agr" as (Q) "[HP _]".
+    rewrite iEff_marker_eq. iDestruct "HP" as (w) "[-> _]". by case (Hv w). }
+Qed.
+
+Lemma shallow_effect_handler_sum_intro E (f g : val → val)
+  {Hf: Marker f} {Hg: Marker g} {Hfg: DisjRange f g} h Ψ1 Ψ2 Ψ Ψ' Φ Φ' :
+  ((shallow_effect_handler E h (f #> Ψ1) Ψ Ψ' Φ Φ') ∧
+   (shallow_effect_handler E h (g #> Ψ2) Ψ Ψ' Φ Φ')) ⊢
+     shallow_effect_handler E h ((f #> Ψ1) <+> (g #> Ψ2)) Ψ Ψ' Φ Φ'.
+Proof.
+  iIntros "Hhandler" (v k) "Hprot_agr".
+  iDestruct (protocol_agreement_sum_elim with "Hprot_agr") as "[H|H]".
+  { iDestruct "Hhandler" as "[Hhandler _]"; by iApply "Hhandler". }
+  { iDestruct "Hhandler" as "[_ Hhandler]"; by iApply "Hhandler". }
+Qed.
+
+Lemma shallow_effect_handler_sum_elim E f g h Ψ1 Ψ2 Ψ Ψ' Φ Φ' :
+  shallow_effect_handler E h ((f #> Ψ1) <+> (g #> Ψ2)) Ψ Ψ' Φ Φ' ⊢
+    (shallow_effect_handler E h (f #> Ψ1) Ψ Ψ' Φ Φ') ∧
+    (shallow_effect_handler E h (g #> Ψ2) Ψ Ψ' Φ Φ').
+Proof.
+  iIntros "Hhandler". iSplit; iIntros (v k) "Hprot_agr"; iApply "Hhandler".
+  { by iApply protocol_agreement_sum_intro_l. }
+  { by iApply protocol_agreement_sum_intro_r. }
+Qed.
+
+Lemma shallow_effect_handler_strong_mono
+  E h Ψ1_eff Ψ2_eff Ψ1 Ψ2 Ψ' Φ1 Φ2 Φ' :
+   (shallow_effect_handler E h Ψ2_eff Ψ2 Ψ' Φ2 Φ' -∗
+      Ψ1_eff ⊑ Ψ2_eff -∗ Ψ1 ⊑ Ψ2 -∗ (∀ v, Φ1 v ={E}=∗ Φ2 v) -∗
+    shallow_effect_handler E h Ψ1_eff Ψ1 Ψ' Φ1 Φ')%ieff.
+Proof.
+  iIntros "Hhandler #HΨ_eff #HΨ HΦ". iIntros (v k) "Hp".
+  iAssert (protocol_agreement E v Ψ2_eff (λ w,
+              ▷ EWP App (Val k) (Val w) @ E <|Ψ2|> {{Φ2}}))%I
+  with "[HΦ Hp]" as "Hp".
+  { iApply (protocol_agreement_strong_mono with "Hp"); try auto.
+    iIntros (w) "Hewp". iModIntro. iNext.
+    iApply (ewp_strong_mono with "Hewp"); by auto. }
+  iSpecialize ("Hhandler" with "Hp"). iNext.
+  iApply (ewp_strong_mono with "Hhandler"); try auto.
+  by iApply iEff_le_refl.
+Qed.
+
+(* Shallow handler judgement. *)
+
+Definition shallow_handler E h r Ψ_eff Ψ Ψ' (Φ Φ' : _ -d> _) : iProp Σ :=
+  (shallow_return_handler E   r         Ψ' Φ Φ') ∧
+  (shallow_effect_handler E h   Ψ_eff Ψ Ψ' Φ Φ').
+Arguments shallow_handler _ _%E _%E _%ieff _%ieff _%ieff _%I _%I.
+
+Global Instance shallow_handler_ne E h r n :
+  Proper
+    ((dist n) ==> (dist n) ==> (dist n) ==> (dist n) ==> (dist n) ==> (dist n))
+  (shallow_handler E h r).
+Proof.
+  intros ??? ??? ??? ??? ???. rewrite /shallow_handler.
+  f_equiv. solve_proper. by apply shallow_effect_handler_ne.
+Qed.
+Global Instance shallow_handler_proper E h r :
+  Proper
+    ((≡) ==> (≡) ==> (≡) ==> (≡) ==> (≡) ==> (≡))
+  (shallow_handler E h r).
+Proof.
+  intros ??? ??? ??? ??? ???.
+  apply equiv_dist=>n. apply shallow_handler_ne; apply equiv_dist; done.
+Qed.
+
+(* Reasoning rule for [TryWith]: a shallow single-effect handler. *)
+
+Lemma ewp_contv E Ψ Φ k (w : val) l :
+  EWP  fill  k    w @ E <| Ψ |> {{ Φ }} -∗ l ↦ #true -∗
+  EWP (ContV k l) w @ E <| Ψ |> {{ Φ }}.
+Proof.
+  iIntros "Hk Hl".
+  rewrite !(ewp_unfold _ (App _ _)) /ewp_pre //=.
+  iIntros (σ ks n) "Hσ".
+  iDestruct (gen_heap_valid with "Hσ Hl") as "%".
+  rename H into heap_valid.
+  iMod (gen_heap_update _ _ _ #false with "Hσ Hl") as "[Hσ Hl]".
+  iMod (fupd_intro_mask' E ∅) as "Hclose". by apply empty_subseteq.
+  iModIntro. iSplitR.
+  - iPureIntro. rewrite /reducible //=.
+    exists [], (fill k w), (state_upd_heap <[l:=#false]> σ), []. simpl.
+    apply (Ectx_prim_step _ _ _ _ EmptyCtx (ContV k l w) (fill k w)); try done.
+    apply ContS; by eauto.
+  - iIntros (e₂ σ₂ Hstep).
+    destruct Hstep; destruct K  as [|Ki K]; [| destruct Ki; try naive_solver ].
+    + simpl in H, H0. simplify_eq. inversion H1. simplify_eq. iFrame. by auto.
+    + simpl in H, H0. destruct K as [|Ki K] ; [| destruct Ki; try naive_solver ].
+      simpl in H. inversion H. simplify_eq. by inversion H1.
+    + simpl in H, H0. destruct K as [|Ki K] ; [| destruct Ki; try naive_solver ].
+      simpl in H. inversion H. simplify_eq. by inversion H1.
+Qed.
+
+Lemma ewp_try_with E Ψ Ψ' Φ Φ' e h r :
+  EWP          e      @ E <| Ψ  |> {{ Φ  }} -∗ shallow_handler E h r Ψ Ψ Ψ' Φ Φ' -∗
+  EWP (TryWith e h r) @ E <| Ψ' |> {{ Φ' }}.
+Proof.
+  iLöb as "IH" forall (e Ψ).
+  destruct (to_val e) as [ v    |] eqn:He; [|
+  destruct (to_eff e) as [(v, k)|] eqn:He' ].
+  - rewrite <-(of_to_val _ _ He).
+    iIntros "HΦ [Hr _]".
+    iApply fupd_ewp. iMod (ewp_value_inv with "HΦ") as "HΦ". iModIntro.
+    iApply ewp_pure_step'. apply pure_prim_step_try_with_val.
+    by iApply ("Hr" with "HΦ").
+  - rewrite <-(of_to_eff _ _ _ He').
+    iIntros "H Hhandler".
+    iDestruct (ewp_eff_inv with "H") as "H".
+    iDestruct "Hhandler" as "[_ Hh]".
+    rewrite !ewp_unfold /ewp_pre //=.
+    iIntros (σ ks n) "Hσ".
+    iMod (fupd_intro_mask' E ∅) as "Hclose". by apply empty_subseteq.
+    iModIntro. iSplitR.
+    + iPureIntro. rewrite /reducible //=.
+      set (l := fresh_locs (dom (gset loc) σ.(heap))).
+      exists [], (h v (ContV k l)), (state_upd_heap <[l:=#true]> σ), []. simpl.
+      apply (Ectx_prim_step _ _ _ _ EmptyCtx (TryWith (Eff v k) h r) (h v (ContV k l))).
+      done. done. by apply try_with_fresh.
+    + iIntros (e₂ σ₂ Hstep).
+      destruct Hstep; destruct K  as [|Ki K]; [| destruct Ki; try naive_solver ].
+      * simpl in H, H0. simplify_eq. inversion H1.
+        iMod (gen_heap_alloc _ l #true with "Hσ") as "($ & Hl & Hm)". { done. }
+        iSpecialize ("Hh" $! v (ContV k l) with "[H Hl]").
+        { iApply (protocol_agreement_mono' with "H").
+          iIntros (w) "Hk !> !>". by iApply (ewp_contv with "Hk Hl").
+        }
+        iIntros "!> !>". by iMod "Hclose".
+      * destruct (fill_eff' K e1' v k) as [-> |[-> ->]]; [naive_solver | |];
+        simpl in H; simplify_eq; by inversion H1.
+  - iIntros "He Hhandler".
+    rewrite !(ewp_unfold _ (TryWith _ _ _))
+            !(ewp_unfold _ e) /ewp_pre He He' //=.
+    iIntros (σ₁ ks n) "Hs". iMod ("He" $! σ₁ ks n with "Hs") as "[% He]".
+    iSplitR.
+    + iPureIntro. revert H; unfold reducible. simpl.
+      rewrite /prim_step'; simpl.
+      destruct 1 as [obs [e₄ [σ₄ [efs Hstep]]]].
+      case obs in Hstep; [|done].
+      case efs in Hstep; [|done].
+      inversion Hstep. simplify_eq.
+      exists [], (TryWith (fill K e2') h r), σ₄, [].
+      by apply (Ectx_prim_step _ _ _ _ (ConsCtx (TryWithCtx h r) K) e1' e2').
+    + iModIntro. iIntros (e₄ σ₄) "%". rename a into Hstep.
+      assert (Hstep' : ∃ e₅, prim_step e σ₁ e₅ σ₄ ∧ e₄ = TryWith e₅ h r).
+      { inversion Hstep. destruct K as [|Ki K].
+        - simpl in H; simplify_eq. inversion H2; naive_solver.
+        - destruct Ki; try naive_solver. simpl in H0, H1, H2; simplify_eq.
+          exists (fill K e2'). simpl. split;[| done].
+          by apply (Ectx_prim_step _ _ _ _ K e1' e2').
+      }
+      destruct Hstep' as [e₅ [Hstep' ->]].
+      iDestruct ("He" $! e₅ σ₄ Hstep') as "> He". iIntros "!> !>".
+      iMod "He" as "[$ He]".
+      by iApply ("IH" with "He Hhandler").
 Qed.
 
 End shallow_handler.

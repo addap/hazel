@@ -1,7 +1,7 @@
 From stdpp              Require Import list.
 From iris.proofmode     Require Import base tactics classes.
 From iris.program_logic Require Import weakestpre.
-From hazel              Require Import weakestpre lang notation ieff cascade.
+From hazel              Require Import notation weakestpre cascade.
 
 Class ListLib Σ `{!irisG eff_lang Σ} := {
   list_nil  : val;

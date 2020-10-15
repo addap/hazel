@@ -14,8 +14,8 @@
 From stdpp               Require Import list.
 From iris.proofmode      Require Import base tactics classes.
 From iris.program_logic  Require Import weakestpre.
-From hazel               Require Import lib ieff notation weakestpre
-                                        protocol_agreement.
+From hazel               Require Import notation weakestpre shallow_handler.
+From hazel               Require Export heap.
 
 
 (** * Deep Single-Effect Handler. *)
@@ -33,7 +33,7 @@ Definition deep_try_with : val := rec: "deep_try_with" "e" "h" "r" :=
 (** * Reasoning Rules. *)
 
 Section deep_handler.
-Context `{!irisG eff_lang Σ}.
+Context `{!heapG Σ}.
 
 (* Deep handler judgement. *)
 

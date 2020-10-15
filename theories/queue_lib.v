@@ -1,5 +1,6 @@
-From stdpp Require Import list.
-From hazel Require Import notation ieff weakestpre heap.
+From stdpp               Require Import list.
+From iris.program_logic  Require Import weakestpre.
+From hazel               Require Import notation weakestpre.
 
 Class QueueLib Σ `{!irisG eff_lang Σ} := {
   queue_create : val;

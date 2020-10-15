@@ -3,13 +3,10 @@ From iris.proofmode      Require Import base tactics classes.
 From iris.algebra        Require Import excl_auth gset gmap agree.
 From iris.base_logic.lib Require Import iprop wsat invariants.
 From iris.program_logic  Require Import weakestpre.
-From hazel               Require Import notation ieff
-                                        protocol_agreement
-                                        weakestpre deep_handler heap
+From hazel               Require Import notation weakestpre deep_handler
                                         list_lib queue_lib.
 
 Section scheduler.
-
 Context `{!heapG Σ}.
 
 (**  Effects. *)
