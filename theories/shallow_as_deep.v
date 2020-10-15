@@ -1,4 +1,4 @@
-(* shallow_handler.v
+(* shallow_as_handler.v
 
    Here we show that it is possible to correctly implement
    a shallow handler using a deep handler as the sole
