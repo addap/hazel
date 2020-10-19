@@ -50,7 +50,7 @@ Context `{!heapG Σ} {HIterLib: IterLib Σ}.
 *)
 
 Definition invert : val := λ: "iter",
-  let: "yield" := λ: "x", eff: "x" in
+  let: "yield" := λ: "x", do: "x" in
   λ: <>,
     try: "iter" "yield" with
       effect (λ: "u" "k", SOME ("u", "k"))%V
@@ -210,12 +210,13 @@ Proof.
     iIntros "[HP Hcascade]". iModIntro. by iFrame.
   - iApply (ewp_mono with "[HS Hcstate]"); [|
     iApply (iter_spec _ (client_state γ) (Ψ_seq _)
-               (λ: "x", eff:"x")%V with "[] HS Hcstate") ].
+               (λ: "x", do: "x")%V with "[] HS Hcstate") ].
     + simpl. iIntros (_) "H". iModIntro.
       iDestruct "H" as (vs) "(HS & Hcstate & Hcomplete)".
       iExists vs. by iFrame.
     + iModIntro. iIntros (us u) "Hpermitted HS' Hcstate".
       iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+      iApply ewp_pure_step. apply pure_prim_step_do. simpl.
       iApply ewp_eff. rewrite /Ψ_seq.
       rewrite (protocol_agreement_tele' [tele _ _] [tele]).
       iMod (fupd_intro_mask' _ ∅) as "Hclose". done. iModIntro.

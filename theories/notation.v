@@ -155,5 +155,5 @@ Notation "'match:' e0 'with' 'SOME' x => e2 | 'NONE' => e1 'end'" :=
   (Match e0 BAnon e1 x%binder e2)
   (e0, e1, x, e2 at level 200, only parsing) : expr_scope.
 
-Notation "'eff:' e" := (Eff e%E EmptyCtx)
-  (at level 200, e at level 200, format "'[' 'eff:' e ']'") : expr_scope.
+Notation "'do:' e" := (Do e%E)
+  (at level 200, e at level 200, format "'[' 'do:' e ']'") : expr_scope.

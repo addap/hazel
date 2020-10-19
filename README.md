@@ -78,6 +78,7 @@ To browse the project, please take a look at the list of theories below.
 | Sum                       | `Ψ₁ + Ψ₂`                                       | `Ψ₁ <+> Ψ₂`                                                    |
 | Ewp                       | `ewp e ⟨Ψ⟩{Φ}`                                  | `EWP e <\| Ψ \|> {{ Φ }}`                                      |
 | Effect                    | `§(N)[do v]`                                    | `Eff v N`                                                      |
+| Do construct              | `do e`                                          | `Do e` or `do: e`                                              |
 | Shallow handler           | `shallow-try e with h \| r`                     | `TryWith e h r`                                                |
 | Shallow handler judgment  | `shallow-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                            |
 | Deep handler              | `deep-try e with h \| r`                        | `try: e with effect h \| return r end`                         |

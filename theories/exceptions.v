@@ -25,13 +25,14 @@ Definition exn (Ψ : val → iProp Σ) : iEff Σ :=
 
 (* Raise. *)
 
-Definition raise : val := λ: "u", eff: "u".
+Definition raise : val := λ: "u", do: "u".
 
 Lemma ewp_raise E (Φ Ψ : val → iProp Σ) u :
   Ψ u -∗ EWP raise u @ E <| exn Ψ |> {{ v, Φ v }}.
 Proof.
   iIntros "H". unfold raise.
   iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+  iApply ewp_pure_step. apply pure_prim_step_do.
   iApply ewp_eff.
   unfold exn. rewrite (protocol_agreement_tele' [tele _] [tele]).
   iMod (fupd_intro_mask' _ ∅) as "Hclose". set_solver. iModIntro.
