@@ -217,7 +217,7 @@ Proof.
           iIntros (w) "Hk !> !>". by iApply (ewp_contv with "Hk Hl").
         }
         iIntros "!> !>". by iMod "Hclose".
-      * destruct (fill_eff' K e1' v k) as [-> |[-> ->]]; [naive_solver | |];
+      * destruct (fill_eff' K e1' v k) as [-> ->]; [naive_solver | ];
         simpl in H; simplify_eq; by inversion H1.
   - iIntros "He Hhandler".
     rewrite !(ewp_unfold _ (TryWith _ _ _))

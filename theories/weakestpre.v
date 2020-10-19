@@ -134,7 +134,7 @@ Proof. by rewrite ewp_eff_eq. Qed.
 
 Goal forall A (P : A → iProp Σ) Φ (Ψ : iEff Σ) (v : val) x,
   (P x -∗
-  EWP (Eff (Val v) EmptyCtx)
+  EWP (Eff v EmptyCtx)
     <| >> x >> ! v {{ P x }};
        << w << ? w {{ Φ w }}
     |>
@@ -319,8 +319,8 @@ Qed.
 (* Bind rule. *)
 
 Lemma ewp_eff_steps K `{NeutralEctx K} E Ψ Φ v k :
-  EWP Eff (Val v) (ectx_app K k) @ E <| Ψ |> {{ Φ }} ⊢
-  EWP fill K (Eff (Val v) k) @ E <| Ψ |> {{ Φ }}.
+  EWP Eff v (ectx_app K k) @ E <| Ψ |> {{ Φ }} ⊢
+  EWP fill K (Eff v k)     @ E <| Ψ |> {{ Φ }}.
 Proof. apply ewp_pure_steps. by apply rtc_pure_prim_step_eff. Qed.
 
 Lemma ewp_bind K `{NeutralEctx K} E Ψ Φ e e' :
@@ -341,7 +341,7 @@ Proof.
     iMod ("HQ" with "HQ'") as "HQ". iIntros "!> !>".
     rewrite fill_ectx_app. by iApply "IH".
   - rewrite !ewp_unfold /ewp_pre.
-    rewrite (fill_not_val _ _ He) (fill_not_eff K _ He He').
+    rewrite (fill_not_val _ _ He) (fill_not_eff K _ He').
     iIntros "Hewp" (σ₁ ks n) "Hs".
     iMod ("Hewp" $! σ₁ with "Hs") as "[% Hewp]". iModIntro.
     iSplitR; [iPureIntro; by apply reducible_fill|].
@@ -372,7 +372,7 @@ Proof.
   - iIntros "Hprot_agr". rewrite protocol_agreement_bottom.
      iApply fupd_ewp. by iMod "Hprot_agr".
   - rewrite !ewp_unfold /ewp_pre.
-    rewrite (fill_not_val _ _ He) (fill_not_eff K _ He He').
+    rewrite (fill_not_val _ _ He) (fill_not_eff K _ He').
     iIntros "Hewp" (σ₁ ks n) "Hs".
     iMod ("Hewp" $! σ₁ with "Hs") as "[% Hewp]". iModIntro.
     iSplitR; [iPureIntro; by apply reducible_fill|].

@@ -19,7 +19,7 @@ Definition eff_tree_split : val := λ: "e",
     effect (λ: "v" "k",
       let: "k" := λ: "w",
         match: "k" "w" with
-          InjL "p" => (Snd "p") (eff: (Fst "p"))
+          InjL "p" => (Snd "p") (do: (Fst "p"))
         | InjR "v" => "v"
         end
       in
@@ -93,9 +93,11 @@ Proof.
       iApply ewp_value. simpl.
       iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
       iApply (Ectxi_ewp_bind (AppRCtx _ )). done.
-      iApply (Ectxi_ewp_bind (EffCtx _ )). done.
+      iApply (Ectxi_ewp_bind DoCtx). done.
       iApply ewp_pure_step. apply pure_prim_step_Fst.
-      iApply ewp_value. iApply ewp_eff. 
+      iApply ewp_value.
+      iApply ewp_pure_step. apply pure_prim_step_do.
+      iApply ewp_eff. 
       iApply (protocol_agreement_strong_mono with "H"); try done.
       iApply iEff_le_refl.
       iIntros (w') "HQ'". iModIntro. iNext.

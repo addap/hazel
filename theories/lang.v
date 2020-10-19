@@ -31,7 +31,8 @@ Inductive expr :=
   (* Values *)
   | Val (v : val)
   (* Effects *)
-  | Eff (e : expr) (k : ectx)
+  | Do (e : expr)
+  | Eff (v : val) (k : ectx)
   | TryWith (e1 e2 e3 : expr)
   (* Base lambda calculus *)
   | Var (x : string)
@@ -69,7 +70,7 @@ with ectx :=
 with ectx_item :=
   | AppLCtx (v2 : val)
   | AppRCtx (e1 : expr)
-  | EffCtx (k : ectx)
+  | DoCtx
   | TryWithCtx (e2 e3 : expr)
   | UnOpCtx (op : un_op)
   | BinOpLCtx (op : bin_op) (v2 : val)
@@ -98,12 +99,12 @@ Definition to_val (e : expr) : option val :=
   | _     => None
   end.
 
-Notation of_eff := (fun v k => (Eff (Val v) k)) (only parsing).
+Notation of_eff := Eff (only parsing).
 
 Definition to_eff (e : expr) : option (val * ectx) :=
   match e with
-  | Eff (Val v) k => Some (v, k)
-  | _             => None
+  | Eff v k => Some (v, k)
+  | _       => None
   end.
 
 (** The state: heaps of vals. *)
@@ -117,7 +118,7 @@ Lemma of_to_val e v : to_val e = Some v → of_val v = e.
 Proof. destruct e=>//=. by intros [= <-]. Qed.
 
 Lemma of_to_eff e v k : to_eff e = Some (v, k) → of_eff v k = e.
-Proof. do 2 destruct e=>//=. by intros [= <- <-]. Qed.
+Proof. destruct e=>//=. by intros [= <- <-]. Qed.
 
 Instance of_val_inj : Inj (=) (=) of_val.
 Proof. by intros ?? [=]. Qed.
@@ -139,8 +140,8 @@ Proof.
       match e1, e2 with
       | Val v, Val v' => cast_if (decide (v = v'))
       | Var x, Var x' => cast_if (decide (x = x'))
-      | Eff e1 k , Eff e1' k' =>
-         cast_if_and (decide (e1 = e1')) (decide (k = k'))
+      | Do e , Do  e' => cast_if (decide (e = e'))
+      | Eff v k , Eff v' k' => cast_if_and (decide (v = v')) (decide (k = k'))
       | TryWith e1 e2 e3, TryWith e1' e2' e3' =>
          cast_if_and3 (decide (e1 = e1')) (decide (e2 = e2')) (decide (e3 = e3'))
       | Rec f x e, Rec f' x' e' =>
@@ -191,7 +192,7 @@ Proof.
       match ki1, ki2 with
       | AppLCtx v2, AppLCtx v2' => cast_if (decide (v2 = v2'))
       | AppRCtx e1, AppRCtx e1' => cast_if (decide (e1 = e1'))
-      | EffCtx k, EffCtx k' => cast_if (decide (k = k'))
+      | DoCtx, DoCtx => left _
       | TryWithCtx e2 e3, TryWithCtx e2' e3' =>
          cast_if_and (decide (e2 = e2')) (decide (e3 = e3'))
       | UnOpCtx op, UnOpCtx op' => cast_if (decide (op = op'))
@@ -287,11 +288,12 @@ Proof.
       | InjL e => GenNode 9 [go_expr e]
       | InjR e => GenNode 10 [go_expr e]
       | Case e0 e1 e2 => GenNode 11 [go_expr e0; go_expr e1; go_expr e2]
-      | Eff e k => GenNode 12 [go_expr e; go_ectx k]
-      | Alloc e => GenNode 13 [go_expr e]
-      | Load e => GenNode 14 [go_expr e]
-      | Store e1 e2 => GenNode 15 [go_expr e1; go_expr e2]
-      | TryWith e1 e2 e3 => GenNode 16 [go_expr e1; go_expr e2; go_expr e3]
+      | Do e => GenNode 12 [go_expr e]
+      | Eff v k => GenNode 13 [go_val v; go_ectx k]
+      | Alloc e => GenNode 14 [go_expr e]
+      | Load e => GenNode 15 [go_expr e]
+      | Store e1 e2 => GenNode 16 [go_expr e1; go_expr e2]
+      | TryWith e1 e2 e3 => GenNode 17 [go_expr e1; go_expr e2; go_expr e3]
       end
 
     with go_val v :=
@@ -315,7 +317,7 @@ Proof.
       match ki with
       | AppLCtx v2 => GenNode 0 [go_val v2]
       | AppRCtx e1 => GenNode 1 [go_expr e1]
-      | EffCtx k =>  GenNode 2 [go_ectx k]
+      | DoCtx =>  GenNode 2 []
       | TryWithCtx e2 e3 => GenNode 3 [go_expr e2; go_expr e3]
       | UnOpCtx op => GenNode 4 [GenLeaf (inr (inr (inl op)))]
       | BinOpLCtx op v2 => GenNode 5 [GenLeaf (inr (inr (inr op))); go_val v2]
@@ -354,11 +356,12 @@ Proof.
       | GenNode 9 [e] => InjL (go_expr e)
       | GenNode 10 [e] => InjR (go_expr e)
       | GenNode 11 [e0; e1; e2] => Case (go_expr e0) (go_expr e1) (go_expr e2)
-      | GenNode 12 [e; k] => Eff (go_expr e) (go_ectx k)
-      | GenNode 13 [e] => Alloc (go_expr e)
-      | GenNode 14 [e] => Load (go_expr e)
-      | GenNode 15 [e1; e2] => Store (go_expr e1) (go_expr e2)
-      | GenNode 16 [e1; e2; e3] => TryWith (go_expr e1) (go_expr e2) (go_expr e3)
+      | GenNode 12 [e] => Do (go_expr e)
+      | GenNode 13 [v; k] => Eff (go_val v) (go_ectx k)
+      | GenNode 14 [e] => Alloc (go_expr e)
+      | GenNode 15 [e] => Load (go_expr e)
+      | GenNode 16 [e1; e2] => Store (go_expr e1) (go_expr e2)
+      | GenNode 17 [e1; e2; e3] => TryWith (go_expr e1) (go_expr e2) (go_expr e3)
       | _ => Var "dummy" (* dummy *)
       end
 
@@ -385,7 +388,7 @@ Proof.
       match ki with
       | GenNode 0 [v2] => AppLCtx (go_val v2)
       | GenNode 1 [e1] => AppRCtx (go_expr e1)
-      | GenNode 2 [k] => EffCtx (go_ectx k)
+      | GenNode 2 [] => DoCtx
       | GenNode 3 [e2; e3] => TryWithCtx (go_expr e2) (go_expr e3)
       | GenNode 4 [GenLeaf (inr (inr (inl op)))] => UnOpCtx op
       | GenNode 5 [GenLeaf (inr (inr (inr op))); v2] => BinOpLCtx op (go_val v2)
@@ -412,7 +415,7 @@ Proof.
           with go_val       (v  : val)       {struct v}  := _
           with go_ectx      (k  : ectx)      {struct k}  := _
           with go_ectx_item (ki : ectx_item) {struct ki} := _ for go_expr).
-  - destruct e as [v| | | | | | | | | | | | | | | | |]; simpl; f_equal;
+  - destruct e as [v| | | | | | | | | | | | | | | | | |]; simpl; f_equal;
      [exact (go_val v)|try done..]; exact (go_ectx k).
   - destruct v; by f_equal.
   - destruct k as [|ki k]; simpl; f_equal; try done; exact (go_ectx_item ki).
@@ -439,7 +442,7 @@ Fixpoint fill_item (Ki : ectx_item) (e : expr) : expr :=
   match Ki with
   | AppLCtx v2 => App e (of_val v2)
   | AppRCtx e1 => App e1 e
-  | EffCtx k => Eff e k
+  | DoCtx => Do e
   | TryWithCtx e2 e3 => TryWith e e2 e3
   | UnOpCtx op => UnOp op e
   | BinOpLCtx op v2 => BinOp op e (Val v2)
@@ -474,7 +477,8 @@ Fixpoint subst (x : string) (v : val) (e : expr) : expr :=
   match e with
   | Val _ => e
   | Var y => if decide (x = y) then Val v else Var y
-  | Eff e k => Eff (subst x v e) k
+  | Do e => Do (subst x v e)
+  | Eff _ _ => e
   | TryWith e1 e2 e3 =>
      TryWith (subst x v e1) (subst x v e2) (subst x v e3)
   | Rec f y e =>
@@ -612,87 +616,90 @@ Inductive head_step : expr → state → expr → state → Prop :=
      is_Some (σ.(heap) !! l) →
      head_step (Store (Val $ LitV $ LitLoc l) (Val v)) σ
                (Val $ LitV LitUnit) (state_upd_heap <[l:=v]> σ)
-  (* TryWith: *)
+  (* Do. *)
+  | DoS v σ :
+     head_step (Do (Val v)) σ (Eff v EmptyCtx) σ
+  (* TryWith. *)
   | TryWithEffS v k e2 e3 σ l :
      σ.(heap) !! l = None →
-     head_step (TryWith (Eff (Val v) k) e2 e3)                    σ
+     head_step (TryWith (Eff v k) e2 e3)                    σ
                (App (App e2 (Val v)) (Val (ContV k l)))
                (state_upd_heap <[l:=(LitV $ LitBool true)]> σ)
   | TryWithRetS v e2 e3 σ :
      head_step (TryWith (Val v) e2 e3) σ (App e3 (Val v)) σ
   (* AppLCtx: [ eff v1 y.k ] v2 --> eff v1 y.(k v2). *)
   | AppLEffS v1 k v2 σ :
-     head_step (App (Eff (Val v1) k) (Val v2))         σ
-               (Eff (Val v1) (ConsCtx (AppLCtx v2) k)) σ
+     head_step (App (Eff v1 k) (Val v2))         σ
+               (Eff v1 (ConsCtx (AppLCtx v2) k)) σ
   (* AppRCtx:  e1 [ eff v2 y.k ] --> eff v2 y.(e1 k). *)
   | AppREffS e1 v1 k σ :
-     head_step (App e1 (Eff (Val v1) k))               σ
-               (Eff (Val v1) (ConsCtx (AppRCtx e1) k)) σ
+     head_step (App e1 (Eff v1 k))               σ
+               (Eff v1 (ConsCtx (AppRCtx e1) k)) σ
   (* UnOpCtx: op [ eff v y.k ] --> eff v y.(op k). *)
   | UnOpEffS op v k σ :
-     head_step (UnOp op (Eff (Val v) k))              σ
-               (Eff (Val v) (ConsCtx (UnOpCtx op) k)) σ
+     head_step (UnOp op (Eff v k))              σ
+               (Eff v (ConsCtx (UnOpCtx op) k)) σ
   (* BinOpLCtx: op [ eff v1 y.k ] v2 --> eff v1 y.(op k v2). *)
   | BinOpLEffS op v1 k v2 σ :
-     head_step (BinOp op (Eff (Val v1) k) (Val v2))         σ
-               (Eff (Val v1) (ConsCtx (BinOpLCtx op v2) k)) σ
+     head_step (BinOp op (Eff v1 k) (Val v2))         σ
+               (Eff v1 (ConsCtx (BinOpLCtx op v2) k)) σ
   (* BinOpRCtx: op e1 [ eff v2 y.k ] --> eff v2 y.(op e1 k). *)
   | BinOpREffS op e1 v2 k σ :
-     head_step (BinOp op e1 (Eff (Val v2) k))               σ
-               (Eff (Val v2) (ConsCtx (BinOpRCtx op e1) k)) σ
+     head_step (BinOp op e1 (Eff v2 k))               σ
+               (Eff v2 (ConsCtx (BinOpRCtx op e1) k)) σ
   (* IfCtx: If [ eff v y.k ] e1 e2 --> eff v y.(If k e1 e2). *)
   | IfEffS v k e1 e2 σ :
-     head_step (If (Eff (Val v) k) e1 e2)              σ
-               (Eff (Val v) (ConsCtx (IfCtx e1 e2) k)) σ
+     head_step (If (Eff v k) e1 e2)              σ
+               (Eff v (ConsCtx (IfCtx e1 e2) k)) σ
   (* PairLCtx: ([ eff v1 y.k ], v2) --> eff v1 y.(k, v2). *)
   | PairLEffS v1 k v2 σ :
-     head_step (Pair (Eff (Val v1) k) (Val v2))         σ
-               (Eff (Val v1) (ConsCtx (PairLCtx v2) k)) σ
+     head_step (Pair (Eff v1 k) (Val v2))         σ
+               (Eff v1 (ConsCtx (PairLCtx v2) k)) σ
   (* PairRCtx: (e1, [ eff v2 y.k ]) --> eff v2 y.(e1, k). *)
   | PairREffS e1 v2 k σ :
-     head_step (Pair e1 (Eff (Val v2) k))               σ
-               (Eff (Val v2) (ConsCtx (PairRCtx e1) k)) σ
+     head_step (Pair e1 (Eff v2 k))               σ
+               (Eff v2 (ConsCtx (PairRCtx e1) k)) σ
   (* FstCtx: fst [ eff v y.k  ] --> eff v y.(fst k) . *)
   | FstEffS v k σ :
-     head_step (Fst (Eff (Val v) k))            σ
-               (Eff (Val v) (ConsCtx FstCtx k)) σ
+     head_step (Fst (Eff v k))            σ
+               (Eff v (ConsCtx FstCtx k)) σ
   (* SndCtx: snd [ eff v y.k  ] --> eff v y.(snd k) . *)
   | SndEffS v k σ :
-     head_step (Snd (Eff (Val v) k))            σ
-               (Eff (Val v) (ConsCtx SndCtx k)) σ
+     head_step (Snd (Eff v k))            σ
+               (Eff v (ConsCtx SndCtx k)) σ
   (* InjLCtx: InjL [ eff v y.k ] --> eff v y.(InjL k). *)
   | InjLEffS v k σ :
-     head_step (InjL (Eff (Val v) k))            σ
-               (Eff (Val v) (ConsCtx InjLCtx k)) σ
+     head_step (InjL (Eff v k))            σ
+               (Eff v (ConsCtx InjLCtx k)) σ
   (* InjRCtx: InjR [ eff v y.k ] --> eff v y.(InjR k). *)
   | InjREffS v k σ :
-     head_step (InjR (Eff (Val v) k))            σ
-               (Eff (Val v) (ConsCtx InjRCtx k)) σ
+     head_step (InjR (Eff v k))            σ
+               (Eff v (ConsCtx InjRCtx k)) σ
   (* CaseCtx: match [ eff v y.k ] with InjL => e1 | InjR => e2 end -->
               eff v y.(match  k   with InjL => e1 | InjR => e2 end). *)
   | CaseEffS v k e1 e2 σ :
-     head_step (Case (Eff (Val v) k) e1 e2)              σ
-               (Eff (Val v) (ConsCtx (CaseCtx e1 e2) k)) σ
+     head_step (Case (Eff v k) e1 e2)              σ
+               (Eff v (ConsCtx (CaseCtx e1 e2) k)) σ
   (* AllocCtx: ref [ eff v y.k ] --> eff v y.(ref k). *)
   | AllocEffS v k σ :
-     head_step (Alloc (Eff (Val v) k))            σ
-               (Eff (Val v) (ConsCtx AllocCtx k)) σ
+     head_step (Alloc (Eff v k))            σ
+               (Eff v (ConsCtx AllocCtx k)) σ
   (* LoadCtx: ! [ eff v y.k ] --> eff v y.(! k). *)
   | LoadEffS v k σ :
-     head_step (Load (Eff (Val v) k))            σ
-               (Eff (Val v) (ConsCtx LoadCtx k)) σ
+     head_step (Load (Eff v k))            σ
+               (Eff v (ConsCtx LoadCtx k)) σ
   (* StoreLCtx: [ eff v1 y.k ] := v2 --> eff v1 y.(k := v2). *)
   | StoreLEffS v1 k v2 σ :
-     head_step (Store (Eff (Val v1) k) (Val v2))         σ
-               (Eff (Val v1) (ConsCtx (StoreLCtx v2) k)) σ
+     head_step (Store (Eff v1 k) (Val v2))         σ
+               (Eff v1 (ConsCtx (StoreLCtx v2) k)) σ
   (* StoreRCtx: e1 := [ eff v2 y.k ] --> eff v2 y.(e1 := k). *)
   | StoreREffS e1 v2 k σ :
-     head_step (Store e1 (Eff (Val v2) k))               σ
-               (Eff (Val v2) (ConsCtx (StoreRCtx e1) k)) σ
-  (* EffCtx: eff [ eff v y.k1 ] x.k2 --> eff v y.(eff k1 x.k2). *)
-  | EffEffS v k1 k2 σ :
-     head_step (Eff (Eff (Val v) k1) k2)              σ
-               (Eff (Val v) (ConsCtx (EffCtx k2) k1)) σ.
+     head_step (Store e1 (Eff v2 k))               σ
+               (Eff v2 (ConsCtx (StoreRCtx e1) k)) σ
+  (* EffCtx: do [ eff v y.k ] --> eff v y.(do k). *)
+  | DoEffS v k σ :
+     head_step (Do (Eff v k))            σ
+               (Eff v (ConsCtx DoCtx k)) σ.
 
 Inductive prim_step (e1 : expr) (σ1 : state)
                     (e2 : expr) (σ2 : state) : Prop :=
@@ -770,8 +777,8 @@ Proof. induction Ki; intros ???; simplify_eq/=; auto with f_equal. Qed.
 Lemma fill_item_val Ki e : to_val (fill_item Ki e) = None.
 Proof. induction Ki; simplify_option_eq; eauto. Qed.
 
-Lemma fill_item_eff Ki e : to_val e = None → to_eff (fill_item Ki e) = None.
-Proof. induction Ki; simplify_option_eq; eauto. by destruct e =>//=. Qed.
+Lemma fill_item_eff Ki e : to_eff (fill_item Ki e) = None.
+Proof. induction Ki; simplify_option_eq; eauto. Qed.
 
 Lemma fill_val K e v : to_val (fill K e) = Some v → K = EmptyCtx ∧ e = Val v.
 Proof.
@@ -786,32 +793,20 @@ Proof. intros ?; apply (fill_val _ e v). by rewrite H. Qed.
 Lemma fill_not_val K e : to_val e = None → to_val (fill K e) = None.
 Proof. induction K as [|Ki K]; eauto. intros ?; by apply fill_item_val. Qed.
 
-Lemma fill_not_eff K e : to_val e = None → to_eff e = None → to_eff (fill K e) = None.
+Lemma fill_not_eff K e : to_eff e = None → to_eff (fill K e) = None.
 Proof.
   induction K as [|Ki K]; eauto.
   induction Ki; simplify_option_eq; eauto.
-  case_eq (fill K e); eauto. intro v.
-  intros ??. specialize (fill_not_val K _ H0). by rewrite H.
 Qed.
 
-Lemma fill_eff K e v k :
-  to_eff (fill K e) = Some (v, k) →
-    (K = EmptyCtx) ∨
-    (K = ConsCtx (EffCtx k) EmptyCtx ∧ e = Val v).
+Lemma fill_eff K e v k : to_eff (fill K e) = Some (v, k) → K = EmptyCtx ∧ e = Eff v k.
 Proof.
   destruct K as [|Ki K].
-  - intro Heq; by left.
-  - destruct Ki; try naive_solver.
-    simpl.
-    case_eq (to_val (fill K e)).
-    + intros v' Heq. destruct (fill_val _ _ _ Heq) as [-> ->]. by naive_solver.
-    + case (fill K e); by naive_solver.
+  - intros Heq. by rewrite (of_to_eff _ _ _ Heq).
+  - by rewrite fill_item_eff.
 Qed.
 
-Lemma fill_eff' K e v k :
-  fill K e = of_eff v k →
-    (K = EmptyCtx) ∨
-    (K = ConsCtx (EffCtx k) EmptyCtx ∧ e = Val v).
+Lemma fill_eff' K e v k : fill K e = of_eff v k → K = EmptyCtx ∧ e = Eff v k.
 Proof. intros Heq. apply fill_eff. by rewrite Heq. Qed.
 
 Lemma val_head_stuck e1 σ1 e2 σ2 : head_step e1 σ1 e2 σ2 → to_val e1 = None.
@@ -824,8 +819,8 @@ Proof. revert Ki1. induction Ki2, Ki1; naive_solver eauto with f_equal. Qed.
 
 Lemma alloc_fresh v σ :
   let l := fresh_locs (dom (gset loc) σ.(heap)) in
-  head_step (Alloc (Val v))                                   σ
-             (Val $ LitV $ LitLoc l) (state_upd_heap <[l:=v]> σ).
+  head_step (Alloc (Val v))                                  σ
+            (Val $ LitV $ LitLoc l) (state_upd_heap <[l:=v]> σ).
 Proof.
   intros.
   apply AllocS.
@@ -836,7 +831,7 @@ Qed.
 
 Lemma try_with_fresh h r v k σ :
  let l := fresh_locs (dom (gset loc) σ.(heap)) in
- head_step (TryWith (Eff (Val v) k) h r)              σ
+ head_step (TryWith (Eff v k) h r)                    σ
            (App (App h (Val v)) (Val (ContV k l)))
            (state_upd_heap <[l:=LitV $ LitBool true]> σ).
 Proof.
@@ -893,8 +888,8 @@ Inductive Forall_ectx (P : ectx_item → Prop) : ectx → Prop :=
 
 Class NeutralEctxi (Ki : ectx_item) :=
   { neutral_ectxi v k σ :
-      head_step (fill_item Ki (Eff (Val v) k)) σ
-                (Eff (Val v) (ConsCtx Ki k))   σ
+      head_step (fill_item Ki (Eff v k)) σ
+                (Eff v (ConsCtx Ki k))   σ
   }.
 
 Class NeutralEctx (K : ectx) :=
@@ -913,8 +908,8 @@ Instance AppLCtx_neutral v2 : NeutralEctxi (AppLCtx v2).
 Proof. constructor => v k σ. by apply AppLEffS. Qed.
 Instance AppRCtx_neutral e1 : NeutralEctxi (AppRCtx e1).
 Proof. constructor => v k σ. by apply AppREffS. Qed.
-Instance RaiseCtx_neutral k' : NeutralEctxi (EffCtx k').
-Proof. constructor => v k σ. by apply EffEffS. Qed.
+Instance DoCtx_neutral : NeutralEctxi DoCtx.
+Proof. constructor => v k σ. by apply DoEffS. Qed.
 Instance UnOpCtx_neutral op : NeutralEctxi (UnOpCtx op).
 Proof. constructor => v k σ. by apply UnOpEffS. Qed.
 Instance BinOpLCtx_neutral op v2 : NeutralEctxi (BinOpLCtx op v2).
@@ -949,9 +944,9 @@ Proof. constructor => v k σ. by apply StoreREffS. Qed.
 Lemma TryWithCtx_non_neutral e2 e3 : ¬ NeutralEctxi (TryWithCtx e2 e3).
 Proof.
   intros ?. cut (head_step
-      (TryWith (Eff (Val $ LitV LitUnit) EmptyCtx) e2 e3)    {|heap:=∅|}
-               (Eff (Val $ LitV LitUnit)
-                      (ConsCtx (TryWithCtx e2 e3) EmptyCtx)) {|heap:=∅|});
+      (TryWith (Eff (LitV LitUnit) EmptyCtx) e2 e3)        {|heap:=∅|}
+               (Eff (LitV LitUnit)
+                    (ConsCtx (TryWithCtx e2 e3) EmptyCtx)) {|heap:=∅|});
   [inversion 1|apply H]; done.
 Qed.
 
@@ -959,11 +954,11 @@ Qed.
 (** Reducible *)
 
 Lemma reducible_fill_item_eff Ki `{NeutralEctxi Ki} v k σ :
-  reducible (fill_item Ki (Eff (Val v) k)) σ.
+  reducible (fill_item Ki (Eff v k)) σ.
 Proof.
-  unfold reducible. simpl. exists [], (Eff (Val v) (ConsCtx Ki k)), σ, [].
-  apply (Ectx_prim_step _ _ _ _ EmptyCtx (fill_item Ki (Eff (Val v) k))
-                                        (Eff (Val v) (ConsCtx Ki k))); eauto.
+  unfold reducible. simpl. exists [], (Eff v (ConsCtx Ki k)), σ, [].
+  apply (Ectx_prim_step _ _ _ _ EmptyCtx (fill_item Ki (Eff v k))
+                                        (Eff v (ConsCtx Ki k))); eauto.
   by apply H.
 Qed.
 
@@ -980,7 +975,7 @@ Qed.
 Lemma reducible_fill_item Ki e σ : reducible e σ → reducible (fill_item Ki e) σ.
 Proof. by apply (reducible_fill (ConsCtx Ki EmptyCtx)). Qed.
 
-Lemma eff_irreducible v k σ : irreducible (Eff (Val v) k) σ.
+Lemma eff_irreducible v k σ : irreducible (Eff v k) σ.
 Proof.
   unfold irreducible; simpl. unfold prim_step'; simpl.
   intros obs ???.
@@ -989,9 +984,7 @@ Proof.
   inversion 1.
   destruct K as [|Ki K].
   - simpl in H0; simplify_eq. by inversion H2.
-  - destruct Ki; simpl in H0; try naive_solver.
-    destruct K as [|Ki K]; [| destruct Ki; by try naive_solver].
-    simpl in H0; simplify_eq. by inversion H2.
+  - destruct Ki; try naive_solver.
 Qed.
 
 Lemma reducible_not_eff e σ : reducible e σ → to_eff e = None.
@@ -1056,7 +1049,7 @@ Qed.
 Lemma val_not_pure' v e e' : to_val e = Some v → ¬ pure_prim_step e e'.
 Proof. intro H1; rewrite <- (of_to_val _ _ H1). by apply val_not_pure. Qed.
 
-Lemma eff_not_pure v k e : ¬ pure_prim_step (Eff (Val v) k) e.
+Lemma eff_not_pure v k e : ¬ pure_prim_step (Eff v k) e.
 Proof.
   intros H0.
   specialize (pure_prim_step_imp_reducible _ _ H0 {|heap:=∅|}).
@@ -1170,9 +1163,16 @@ Proof.
   intros [=]. destruct (fill_val' _ _ _ (eq_sym H0)) as [-> ->]; by eauto.
 Qed.
 
+Lemma pure_prim_step_do v :
+  pure_prim_step (Do (Val v)) (Eff v EmptyCtx).
+Proof.
+  apply pure_prim_stepI'; [intros ?; by apply DoS|].
+  intros ??. destruct K as [|Ki K]; try destruct Ki; try naive_solver.
+  intros [=]. destruct (fill_val' _ _ _ (eq_sym H0)) as [-> ->]; by eauto.
+Qed.
+
 Lemma pure_prim_step_eff `{NeutralEctxi Ki} v k :
-  pure_prim_step (fill_item Ki (Eff (Val v) k))
-                 (Eff (Val v) (ConsCtx Ki k)).
+  pure_prim_step (fill_item Ki (Eff v k)) (Eff v (ConsCtx Ki k)).
 Proof.
   apply pure_prim_stepI; [intros ?; by apply H|].
   intros ??.
@@ -1180,13 +1180,13 @@ Proof.
   - simpl in H2, H3. simplify_eq.
     destruct Ki; simpl in H3; inversion H3; try naive_solver.
     by specialize (TryWithCtx_non_neutral e2 e3).
-  - simpl in H0. simplify_eq.
-    cut ((fill K e1' = Eff (Val v) k) ∨ (∃ v', fill K e1' = Val v')).
+  - simpl in H0, H1. simplify_eq.
+    cut ((fill K e1' = Eff v k) ∨ (∃ v', fill K e1' = Val v')).
     + destruct K as [|Kl K]; simpl.
       * case; [intros -> | destruct 1 as [v' ->]]; by inversion H3.
       * case; [| destruct 1 as [v' H4]; destruct Kl; by naive_solver].
         destruct K as [|Km K]; [| destruct Kl, Km; by naive_solver].
-        simpl. destruct Kl; try naive_solver. intros [= ->]. by inversion H3.
+        simpl. destruct Kl; try naive_solver.
     + destruct Ki, Kj; simpl in H1; by naive_solver.
 Qed.
 
@@ -1222,7 +1222,7 @@ Proof.
   - simpl. intros Hstep. exists e₂. by split.
   - simpl. intros Hstep.
     destruct (Ectxi_prim_step_inv Ki _ _ _ _ (fill_not_val K _ H)
-                                             (fill_not_eff K _ H H0) Hstep)
+                                             (fill_not_eff K _ H0) Hstep)
       as [e' [He' ->]].
     destruct (IHK _ He') as [e'' [He'' ->]].
     by exists e''.
@@ -1293,13 +1293,13 @@ Proof.
 Qed.
 
 Lemma rtc_pure_prim_step_eff `{NeutralEctx K} v k :
-  rtc pure_prim_step (fill K (Eff (Val v) k)) (Eff (Val v) (ectx_app K k)).
+  rtc pure_prim_step (fill K (Eff v k)) (Eff v (ectx_app K k)).
 Proof.
   induction K as [|Ki K].
   - done.
   - specialize (ConsCtx_neutral_inv' _ _ H) as Ki_neutral.
     specialize (ConsCtx_neutral_inv  _ _ H) as  K_neutral.
-    apply (rtc_r _ (fill_item Ki (Eff (Val v) (ectx_app K k)))); simpl.
+    apply (rtc_r _ (fill_item Ki (Eff v (ectx_app K k)))); simpl.
     + by apply rtc_pure_prim_step_fill_item; auto.
     + by apply pure_prim_step_eff.
 Qed.
