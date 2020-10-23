@@ -28,9 +28,9 @@ To browse the project, please take a look at the list of theories below.
    + Domain: `iEff Σ` is the type of protocols.
    + Protocols: `iEff_bottom` is the empty protocol and `iEff_sum` denotes
      the sum over protocols.
-   + Ordering: `iEff_le` is a pre order relation on protocols.
  - [theories/protocol_agreement.v](theories/protocol_agreement.v): Introduction and
-   study of the protocol agreement judgment.
+   study of the protocol agreement judgement.
+   + Ordering: `iEff_le` is a pre order relation on protocols.
 
 ## Reasoning Rules / Logic
 
@@ -42,10 +42,10 @@ To browse the project, please take a look at the list of theories below.
  - [theories/heap.v](theories/heap.v): Proof of the reasoning rules for
    operations manipulating the heap.
  - [theories/shallow_handler.v](theories/shallow_handler.v): Reasoning rule for shallow handlers.
-   + Shallow handler judgment: the `shallow_handler` judgment is defined here.
+   + Shallow handler judgement: the `shallow_handler` judgement is defined here.
    + Rules: proof of the reasoning rule `ewp_try_with` (Try-With-Shallow) for shallow handlers.
  - [theories/deep_handler.v](theories/deep_handler.v): Reasoning rule for deep handlers.
-   + Deep handler judgment: the `deep_handler` judgment is defined here.
+   + Deep handler judgement: the `deep_handler` judgement is defined here.
    + Rules: proof of the reasoning rule `ewp_deep_try_with` (Try-With-Deep) for deep handlers.
  - [theories/adequacy.v](theories/adequacy.v): Adequacy theorem.
 
@@ -64,23 +64,26 @@ To browse the project, please take a look at the list of theories below.
    passing style (not included in the paper).
  - [theories/exceptions.v](theories/exceptions.v): exceptions (not included in
    the paper).
- - [theories/scheduler.v](theories/scheduler.v): verification of an asynchronous
-   library (case study from section 6).
+ - [theories/scheduler.v](theories/scheduler.v): verification of a library for
+   asynchronous computation (case study from section 6).
  - [theories/shallow_as_deep.v](theories/shallow_as_deep.v): verified encoding
-   of shallow handlers using deep handlers.
+   of shallow handlers using deep handlers (not included in the paper).
 
 ## Notation
 
-|                           | Paper                                           | Coq mechanization                                              |
-|---------------------------|-------------------------------------------------|----------------------------------------------------------------|
-| Protocol                  | `! x (v) {P}.`<br/>`? y (w) {Q}`                | `>>.. x >> ! v {{ P }};`<br/>`<<.. y << ! w {{ Q }}`           |
-| Empty                     | `end`                                           | `⊥`                                                            |
-| Sum                       | `Ψ₁ + Ψ₂`                                       | `Ψ₁ <+> Ψ₂`                                                    |
-| Ewp                       | `ewp e ⟨Ψ⟩{Φ}`                                  | `EWP e <\| Ψ \|> {{ Φ }}`                                      |
-| Effect                    | `§(N)[do v]`                                    | `Eff v N`                                                      |
-| Do construct              | `do e`                                          | `Do e` or `do: e`                                              |
-| Shallow handler           | `shallow-try e with h \| r`                     | `TryWith e h r`                                                |
-| Shallow handler judgment  | `shallow-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                            |
-| Deep handler              | `deep-try e with h \| r`                        | `try: e with effect h \| return r end`                         |
-| Deep handler judgment     | `deep-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`           | `deep_handler E h r Ψ Ψ' Φ Φ'`                                 |
+|                            | Paper                                           | Coq mechanization                                              |
+|----------------------------|-------------------------------------------------|----------------------------------------------------------------|
+| Typical protocol           | `! x (v) {P}.`<br/>`? y (w) {Q}`                | `>>.. x >> ! v {{ P }};`<br/>`<<.. y << ! w {{ Q }}`           |
+| Empty protocol             | `⊥`                                             | `⊥`                                                            |
+| Protocol sum               | `Ψ₁ + Ψ₂`                                       | `Ψ₁ <+> Ψ₂`                                                    |
+| Protocol marker            | `f # Ψ`                                         | `f #> Ψ`                                                       |
+| Interpretation             | `Ψ allows do v {Φ}`                             | `protocol_agreement v Ψ Φ`                                     |
+| Subsumption                | `Ψ₁ ⊑ Ψ₂`                                       | `Ψ₁ ⊑ Ψ₂`                                                      |
+| Weakest precondition       | `ewp e ⟨Ψ⟩ {Φ}`                                 | `EWP e @ E <\| Ψ \|> {{ Φ }}`                                  |
+| Active effect              | `§(N)[do v]`                                    | `Eff v N`                                                      |
+| Do construct               | `do e`                                          | `Do e` or `do: e`                                              |
+| Shallow handler construct  | `shallow-try e with h \| r`                     | `TryWith e h r`                                                |
+| Shallow handler judgement  | `shallow-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                            |
+| Deep handler construct     | `deep-try e with h \| r`                        | `try: e with effect h \| return r end`                         |
+| Deep handler judgement     | `deep-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`           | `deep_handler E h r Ψ Ψ' Φ Φ'`                                 |
 

@@ -43,8 +43,8 @@ Lemma eff_tree_split_spec E Ψ Φ (e : val) :
       match y with
       | InjRV  v     => Φ v
       | InjLV (v, k) =>
-          protocol_agreement E v Ψ (λ w,
-            ▷ EWP k w @ E <| Ψ |> {{ Φ }})
+          protocol_agreement v Ψ (λ w,
+            EWP k w @ E <| Ψ |> {{ Φ }})
       | _            => False
       end%I }}.
 Proof.
@@ -78,7 +78,7 @@ Proof.
     iApply ewp_value. simpl.
     iApply (protocol_agreement_strong_mono with "H"); try done.
     iApply iEff_le_refl.
-    iIntros (u) "H". iModIntro. iNext.
+    iIntros (u) "H".
     iSpecialize ("IH" $! Ψ). iSpecialize ("H" with "IH").
     iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
     iApply (Ectxi_ewp_bind (CaseCtx _ _)). done.
@@ -100,7 +100,7 @@ Proof.
       iApply ewp_eff. 
       iApply (protocol_agreement_strong_mono with "H"); try done.
       iApply iEff_le_refl.
-      iIntros (w') "HQ'". iModIntro. iNext.
+      iIntros (w') "HQ'". iNext.
       iApply ewp_value. simpl.
       iApply (Ectxi_ewp_bind (AppLCtx _ )). done.
       iApply ewp_pure_step. apply pure_prim_step_Snd.

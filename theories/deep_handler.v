@@ -43,10 +43,9 @@ Definition deep_handler_pre :
   := λ deep_handler E h r Ψ Ψ' Φ Φ',
   ((shallow_return_handler E r Ψ' Φ Φ') ∧
    (∀ v k,
-     protocol_agreement E v Ψ (λ w,
-       ▷ (∀ Ψ'' Φ'',
-           deep_handler E h r Ψ Ψ'' Φ Φ'' -∗
-             EWP (Val k) (Val w) @ E <| Ψ'' |> {{ Φ'' }})) -∗
+     protocol_agreement v Ψ (λ w, ∀ Ψ'' Φ'',
+       ( ▷ deep_handler E h r Ψ Ψ'' Φ Φ'' -∗
+         EWP (Val k) (Val w) @ E <| Ψ'' |> {{ Φ'' }})) -∗
      ▷ EWP App (App h (Val v)) (Val k) @ E <| Ψ' |> {{ Φ' }}))%I.
 Arguments deep_handler_pre _ _%E _%E _%ieff _%ieff _%I _%I.
 
@@ -80,7 +79,7 @@ Proof.
   rewrite !deep_handler_unfold /deep_handler_pre.
   repeat (apply protocol_agreement_ne||apply ewp_ne||f_contractive||f_equiv);
   try done; try (eapply dist_le; eauto with lia).
-  intros ?. f_contractive. do 5 f_equiv.
+  intros ?. do 2 (f_equiv=>?). f_equiv. f_contractive.
   apply IH; try lia; eapply dist_le; eauto with lia.
 Qed.
 Global Instance deep_handler_proper E h r :
@@ -90,9 +89,8 @@ Proof.
   apply equiv_dist=>n. apply deep_handler_ne; apply equiv_dist; done.
 Qed.
 
-Lemma deep_handler_sum_elim_l E (f g : val → val) h r Ψ1 Ψ2 Ψ' Φ Φ' :
-  deep_handler E h r ((f #> Ψ1) <+> (g #> Ψ2)) Ψ' Φ Φ' ⊢
-    deep_handler E h r (f #> Ψ1) Ψ' Φ Φ'.
+Lemma deep_handler_sum_elim_l E h r Ψ1 Ψ2 Ψ' Φ Φ' :
+  deep_handler E h r (Ψ1 <+> Ψ2) Ψ' Φ Φ' ⊢ deep_handler E h r Ψ1 Ψ' Φ Φ'.
 Proof.
   iLöb as "IH" forall (Ψ' Φ'). iIntros "Hhandler".
   rewrite !deep_handler_unfold.
@@ -100,19 +98,18 @@ Proof.
   iIntros (v k) "Hprot_agr". iApply "Hhandler".
   iApply (protocol_agreement_strong_mono with "Hprot_agr"); try done.
   - by iApply iEff_le_sum_l.
-  - iIntros (w) "Hhandler". iModIntro. iNext.
+  - iIntros (w) "Hhandler".
     iIntros (Ψ'' Φ'') "Hhandler'". iApply "Hhandler". by iApply "IH".
 Qed.
 
-Lemma deep_handler_sum_elim_r E (f g : val → val) h r Ψ1 Ψ2 Ψ' Φ Φ' :
-  deep_handler E h r ((f #> Ψ1) <+> (g #> Ψ2)) Ψ' Φ Φ' ⊢
-    deep_handler E h r (g #> Ψ2) Ψ' Φ Φ'.
+Lemma deep_handler_sum_elim_r E h r Ψ1 Ψ2 Ψ' Φ Φ' :
+  deep_handler E h r (Ψ1 <+> Ψ2) Ψ' Φ Φ' ⊢ deep_handler E h r Ψ2 Ψ' Φ Φ'.
 Proof. rewrite iEff_sum_comm. by iApply deep_handler_sum_elim_l. Qed.
 
 Lemma deep_handler_sum_elim E (f g : val → val) h r Ψ1 Ψ2 Ψ' Φ Φ' :
-  deep_handler E h r ((f #> Ψ1) <+> (g #> Ψ2)) Ψ' Φ Φ' ⊢
-    ((deep_handler E h r (f #> Ψ1) Ψ' Φ Φ') ∧
-     (deep_handler E h r (g #> Ψ2) Ψ' Φ Φ'))%I.
+  deep_handler E h r (Ψ1 <+> Ψ2) Ψ' Φ Φ' ⊢
+    ((deep_handler E h r Ψ1 Ψ' Φ Φ') ∧
+     (deep_handler E h r Ψ2 Ψ' Φ Φ'))%I.
 Proof.
   iIntros "Hhandler". iSplit.
   { by iApply deep_handler_sum_elim_l. }
@@ -159,8 +156,8 @@ Proof.
     iApply ewp_value; simpl. iApply "H". iNext.
     iApply (protocol_agreement_strong_mono with "H'"); try auto.
     { iApply iEff_le_refl. }
-    iIntros (w) "Hk". iModIntro. iNext. iIntros (Ψ'' Φ'') "Hhandler".
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+    iIntros (w) "Hk". iIntros (Ψ'' Φ'') "Hhandler".
+    iApply ewp_pure_step'. apply pure_prim_step_beta. simpl.
     by iApply ("IH" with "[Hk] Hhandler").
 Qed.
 

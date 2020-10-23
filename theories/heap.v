@@ -1,10 +1,7 @@
 (* heap.v
 
-   Contents:
-
-   - Definition of the "points to" predicate.
-
-   - Proof of reasoning rules for stateful programs.
+   In this theory, we prove reasoning rules for the three main heap
+   manipulating operations: [Alloc], [Load] and [Store].
 *)
 
 From stdpp Require Import fin_maps.

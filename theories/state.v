@@ -54,23 +54,23 @@ Definition Ψ_read  I : iEff Σ := (read  #> (>> v   >> ! #() {{ I v }}; ? (v) {
 Definition Ψ_write I : iEff Σ := (write #> (>> v w >> ! (w) {{ I v }}; ? #() {{ I w }})).
 Definition Ψ_state I : iEff Σ := (Ψ_read I <+> Ψ_write I)%ieff.
 
-Lemma Ψ_state_agreement E v Φ' I :
-  protocol_agreement E v (Ψ_state I) Φ' ⊢
-    ((protocol_agreement E v (Ψ_read I) Φ') ∨ (protocol_agreement E v (Ψ_write I) Φ')).
+Lemma Ψ_state_agreement v Φ' I :
+  protocol_agreement v (Ψ_state I) Φ' ⊢
+    ((protocol_agreement v (Ψ_read I) Φ') ∨ (protocol_agreement v (Ψ_write I) Φ')).
 Proof.
   iIntros "Hprot_agr".
   iDestruct (protocol_agreement_sum_elim with "Hprot_agr") as "[H|H]"; by eauto.
 Qed.
-Lemma Ψ_read_agreement E u Φ' I :
-  protocol_agreement E u (Ψ_read I) Φ' ≡
-    (|={E,∅}=> ∃ v, ⌜ u = read #() ⌝ ∗ I v ∗ (I v ={∅,E}=∗ Φ' v))%I.
+Lemma Ψ_read_agreement u Φ' I :
+  protocol_agreement u (Ψ_read I) Φ' ≡
+    (∃ v, ⌜ u = read #() ⌝ ∗ I v ∗ (I v -∗ Φ' v))%I.
 Proof.
   rewrite /Ψ_read (iEff_marker_tele' [tele _] [tele]).
   rewrite (protocol_agreement_tele' [tele _] [tele]). by auto.
 Qed.
-Lemma Ψ_write_agreement E u Φ' I :
-  protocol_agreement E u (Ψ_write I) Φ' ≡
-    (|={E,∅}=> ∃ v w, ⌜ u = write w ⌝ ∗ I v ∗ (I w ={∅,E}=∗ Φ' #()))%I.
+Lemma Ψ_write_agreement u Φ' I :
+  protocol_agreement u (Ψ_write I) Φ' ≡
+    (∃ v w, ⌜ u = write w ⌝ ∗ I v ∗ (I w -∗ Φ' #()))%I.
 Proof.
   rewrite /Ψ_write (iEff_marker_tele' [tele _ _] [tele]).
   rewrite (protocol_agreement_tele' [tele _ _] [tele]). by auto.
@@ -153,9 +153,10 @@ Proof.
       iDestruct (Ψ_state_agreement with "Hprot_agr") as "[Hread|Hwrite]".
       { (* Read. *)
         rewrite Ψ_read_agreement.
-        iNext. iApply fupd_ewp. iMod "Hread" as (w) "(-> & Hpoints_to & Hk)".
+        iNext. iApply fupd_ewp.
+        iDestruct "Hread" as (w) "(-> & Hpoints_to & Hk)".
         iDestruct (ghost_var_agree γ init w with "[$]") as "%". rewrite H.
-        iSpecialize ("Hk" with "Hpoints_to"). iMod "Hk". iModIntro.
+        iSpecialize ("Hk" with "Hpoints_to"). iModIntro.
         iApply (Ectxi_ewp_bind (AppLCtx _)). done.
         iApply ewp_pure_step'. apply pure_prim_step_beta. simpl.
         iApply ewp_pure_step. apply pure_prim_step_rec.
@@ -181,10 +182,10 @@ Proof.
       { (* Write. *)
         rewrite Ψ_write_agreement.
         iNext. iApply fupd_ewp.
-        iMod "Hwrite" as (v' w') "(-> & Hpoints_to & Hk)".
+        iDestruct "Hwrite" as (v' w') "(-> & Hpoints_to & Hk)".
         iMod ((ghost_var_update _ w') with "Hstate Hpoints_to") as
           "[Hstate Hpoints_to]".
-        iSpecialize ("Hk" with "Hpoints_to"). iMod "Hk". iModIntro.
+        iSpecialize ("Hk" with "Hpoints_to"). iModIntro.
         iApply (Ectxi_ewp_bind (AppLCtx _)). done.
         iApply ewp_pure_step'. apply pure_prim_step_beta. simpl.
         iApply ewp_pure_step. apply pure_prim_step_rec.

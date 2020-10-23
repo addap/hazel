@@ -37,8 +37,8 @@ Qed.
 
 Definition shallow_effect_handler E h Ψ_eff Ψ Ψ' (Φ Φ' : _ -d> _) :=
   (∀ v k,
-    protocol_agreement E v Ψ_eff (λ w,
-      ▷ EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
+    protocol_agreement v Ψ_eff (λ w,
+        EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
     ▷ EWP App (App h (Val v)) (Val k) @ E <| Ψ' |> {{ Φ' }})%I.
 Arguments shallow_effect_handler _ _%E _%ieff _%ieff _%ieff _%I _%I.
 
@@ -61,16 +61,13 @@ Qed.
 
 Lemma shallow_effect_handler_bottom E h Ψ Ψ' Φ Φ' :
   ⊢ shallow_effect_handler E h ⊥ Ψ Ψ' Φ Φ'.
-Proof.
-  iIntros (v k) "H". rewrite protocol_agreement_bottom.
-  iNext. iApply fupd_ewp. by iMod "H".
-Qed.
+Proof. iIntros (v k) "H". by rewrite protocol_agreement_bottom. Qed.
 
 Lemma shallow_effect_handler_marker_elim E f h Ψ_eff Ψ Ψ' Φ Φ' :
   shallow_effect_handler E h (f #> Ψ_eff) Ψ Ψ' Φ Φ' ⊢
     (∀ v k,
-      protocol_agreement E v Ψ_eff (λ w,
-        ▷ EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
+      protocol_agreement v Ψ_eff (λ w,
+          EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
       ▷ EWP App (App h (Val (f v))) (Val k) @ E <| Ψ' |> {{ Φ' }}).
 Proof.
   iIntros "Hewp" (v k) "Hprot_agr".
@@ -79,24 +76,23 @@ Qed.
 
 Lemma shallow_effect_handler_marker_intro E f {Hf: Marker f} h Ψ_eff Ψ Ψ' Φ Φ' :
   (∀ v k,
-    protocol_agreement E v Ψ_eff (λ w,
-      ▷ EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
+    protocol_agreement v Ψ_eff (λ w,
+        EWP App (Val k) (Val w) @ E <| Ψ |> {{ Φ }}) -∗
     ▷ EWP App (App h (Val (f v))) (Val k) @ E <| Ψ' |> {{ Φ' }}) ⊢
     shallow_effect_handler E h (f #> Ψ_eff) Ψ Ψ' Φ Φ'.
 Proof.
   iIntros "Hewp" (v k) "Hprot_agr".
   case (marker_dec_range v) as [(w & Hw)|Hv].
   { inversion Hw. iApply "Hewp".
-    by iApply (@protocol_agreement_marker_elim _ _ _ f marker_inj). }
-  { iNext. iApply fupd_ewp. iMod "Hprot_agr" as (Q) "[HP _]".
+    by iApply (@protocol_agreement_marker_elim _ f marker_inj). }
+  { iNext. iDestruct "Hprot_agr" as (Q) "[HP _]".
     rewrite iEff_marker_eq. iDestruct "HP" as (w) "[-> _]". by case (Hv w). }
 Qed.
 
-Lemma shallow_effect_handler_sum_intro E (f g : val → val)
-  {Hf: Marker f} {Hg: Marker g} {Hfg: DisjRange f g} h Ψ1 Ψ2 Ψ Ψ' Φ Φ' :
-  ((shallow_effect_handler E h (f #> Ψ1) Ψ Ψ' Φ Φ') ∧
-   (shallow_effect_handler E h (g #> Ψ2) Ψ Ψ' Φ Φ')) ⊢
-     shallow_effect_handler E h ((f #> Ψ1) <+> (g #> Ψ2)) Ψ Ψ' Φ Φ'.
+Lemma shallow_effect_handler_sum_intro E h Ψ1 Ψ2 Ψ Ψ' Φ Φ' :
+  ((shallow_effect_handler E h Ψ1 Ψ Ψ' Φ Φ') ∧
+   (shallow_effect_handler E h Ψ2 Ψ Ψ' Φ Φ')) ⊢
+     shallow_effect_handler E h (Ψ1 <+> Ψ2) Ψ Ψ' Φ Φ'.
 Proof.
   iIntros "Hhandler" (v k) "Hprot_agr".
   iDestruct (protocol_agreement_sum_elim with "Hprot_agr") as "[H|H]".
@@ -104,10 +100,10 @@ Proof.
   { iDestruct "Hhandler" as "[_ Hhandler]"; by iApply "Hhandler". }
 Qed.
 
-Lemma shallow_effect_handler_sum_elim E f g h Ψ1 Ψ2 Ψ Ψ' Φ Φ' :
-  shallow_effect_handler E h ((f #> Ψ1) <+> (g #> Ψ2)) Ψ Ψ' Φ Φ' ⊢
-    (shallow_effect_handler E h (f #> Ψ1) Ψ Ψ' Φ Φ') ∧
-    (shallow_effect_handler E h (g #> Ψ2) Ψ Ψ' Φ Φ').
+Lemma shallow_effect_handler_sum_elim E h Ψ1 Ψ2 Ψ Ψ' Φ Φ' :
+  shallow_effect_handler E h (Ψ1 <+> Ψ2) Ψ Ψ' Φ Φ' ⊢
+    (shallow_effect_handler E h Ψ1 Ψ Ψ' Φ Φ') ∧
+    (shallow_effect_handler E h Ψ2 Ψ Ψ' Φ Φ').
 Proof.
   iIntros "Hhandler". iSplit; iIntros (v k) "Hprot_agr"; iApply "Hhandler".
   { by iApply protocol_agreement_sum_intro_l. }
@@ -121,12 +117,11 @@ Lemma shallow_effect_handler_strong_mono
     shallow_effect_handler E h Ψ1_eff Ψ1 Ψ' Φ1 Φ')%ieff.
 Proof.
   iIntros "Hhandler #HΨ_eff #HΨ HΦ". iIntros (v k) "Hp".
-  iAssert (protocol_agreement E v Ψ2_eff (λ w,
-              ▷ EWP App (Val k) (Val w) @ E <|Ψ2|> {{Φ2}}))%I
+  iAssert (protocol_agreement v Ψ2_eff (λ w,
+              EWP App (Val k) (Val w) @ E <|Ψ2|> {{Φ2}}))%I
   with "[HΦ Hp]" as "Hp".
   { iApply (protocol_agreement_strong_mono with "Hp"); try auto.
-    iIntros (w) "Hewp". iModIntro. iNext.
-    iApply (ewp_strong_mono with "Hewp"); by auto. }
+    iIntros (w) "Hewp". iApply (ewp_strong_mono with "Hewp"); by auto. }
   iSpecialize ("Hhandler" with "Hp"). iNext.
   iApply (ewp_strong_mono with "Hhandler"); try auto.
   by iApply iEff_le_refl.
@@ -159,8 +154,8 @@ Qed.
 (* Reasoning rule for [TryWith]: a shallow single-effect handler. *)
 
 Lemma ewp_contv E Ψ Φ k (w : val) l :
-  EWP  fill  k    w @ E <| Ψ |> {{ Φ }} -∗ l ↦ #true -∗
-  EWP (ContV k l) w @ E <| Ψ |> {{ Φ }}.
+  ▷ EWP  fill  k    w @ E <| Ψ |> {{ Φ }} -∗ l ↦ #true -∗
+    EWP (ContV k l) w @ E <| Ψ |> {{ Φ }}.
 Proof.
   iIntros "Hk Hl".
   rewrite !(ewp_unfold _ (App _ _)) /ewp_pre //=.
@@ -213,8 +208,8 @@ Proof.
       * simpl in H, H0. simplify_eq. inversion H1.
         iMod (gen_heap_alloc _ l #true with "Hσ") as "($ & Hl & Hm)". { done. }
         iSpecialize ("Hh" $! v (ContV k l) with "[H Hl]").
-        { iApply (protocol_agreement_mono' with "H").
-          iIntros (w) "Hk !> !>". by iApply (ewp_contv with "Hk Hl").
+        { iApply (protocol_agreement_mono with "H").
+          iIntros (w) "Hk". by iApply (ewp_contv with "Hk Hl").
         }
         iIntros "!> !>". by iMod "Hclose".
       * destruct (fill_eff' K e1' v k) as [-> ->]; [naive_solver | ];

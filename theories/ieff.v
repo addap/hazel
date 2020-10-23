@@ -187,12 +187,28 @@ Proof.
   induction TT as [|T TT IH]; simpl; [done|]. f_equiv=> x. by apply IH.
 Qed.
 
-Lemma iEffPost_texist_eq  {Σ} {TT : tele} w (e : TT → _ -d> iPropO Σ) :
+Lemma iEffPost_texist_eq {Σ} {TT : tele} w (e : TT → _ -d> iPropO Σ) :
   (<<.. y << (e y))%ieff w ⊣⊢ (∃.. y, (e y) w).
 Proof.
   rewrite /iEffPost_texist iEffPost_exist_eq.
   induction TT as [|T TT IH]; simpl; [done|].
   rewrite /iEffPost_exist_def. f_equiv=>x. by apply IH.
+Qed.
+
+Lemma iEff_tele_eq {Σ} {TT1 TT2 : tele}
+  (v : TT1 →       val) (P : TT1 →       iProp Σ)
+  (w : TT1 → TT2 → val) (Q : TT1 → TT2 → iProp Σ) v' Φ' :
+    iEff_car (>>.. x >> ! (v x  ) {{ P x }};
+              <<.. y << ? (w x y) {{ Q x y }}) v' Φ'
+   ⊣⊢
+    (∃.. x, ⌜ v x = v' ⌝ ∗ P x ∗ (∀.. y, Q x y -∗ Φ' (w x y)))%I.
+Proof.
+  rewrite iEffPre_texist_eq iEffPre_base_eq. do 2 f_equiv.
+  iSplit; iIntros "(-> & HP & HΦ')"; iSplit; try done; iFrame.
+  { iIntros (y) "HQ". iApply "HΦ'". rewrite iEffPost_texist_eq.
+    iExists y. rewrite iEffPost_base_eq. by iFrame. }
+  { iIntros (y) "HQ". rewrite iEffPost_texist_eq iEffPost_base_eq.
+    iDestruct "HQ" as (w') "(<- & HQ)". by iApply "HΦ'". }
 Qed.
 
 (* iEff_marker. *)
@@ -388,105 +404,3 @@ Section ieff_proofs.
   Qed.
 
 End ieff_proofs.
-
-
-(** * Protocol Ordering. *)
-
-Program Definition iEff_le {Σ} : iEffO -n> iEffO -n> iPropO Σ :=
-  λne e1 e2,
-    (□ (∀ v q, iEff_car e1 v q -∗ iEff_car e2 v q))%I.
-Next Obligation. intros ??????. repeat (apply iEff_car_ne || f_equiv); done. Defined.
-Next Obligation. intros ??????. simpl. repeat (apply iEff_car_ne || f_equiv); done. Defined.
-(*Arguments iEff_le {_} _%ieff _%ieff.*)
-Instance: Params (@iEff_le) 3 := {}.
-
-Infix "⊑" := (iEff_le) (at level 70, only parsing) : ieff_scope.
-
-Section ieff_order.
-  Context {Σ : gFunctors}.
-
-  Global Instance iEff_le_ne n :
-    Proper ((dist n) ==> (dist n)) (iEff_le (Σ:=Σ)).
-  Proof.
-    rewrite /iEff_le. intros ????.
-    repeat (apply iEff_car_ne || f_equiv); done.
-  Qed.
-  Global Instance iEff_le_proper :  Proper ((≡) ==> (≡)) (iEff_le (Σ:=Σ)).
-  Proof.
-    intros ????. apply equiv_dist=>n; apply iEff_le_ne; by apply equiv_dist.
-  Qed.
-
-  Lemma iEff_le_bottom (Ψ : iEff Σ) : ⊢ (⊥ ⊑ Ψ)%ieff.
-  Proof. iModIntro. by iIntros (v q) "H". Qed.
-
-  Lemma iEff_le_refl (Ψ : iEff Σ) : ⊢ (Ψ ⊑ Ψ)%ieff.
-  Proof. iModIntro. by iIntros (v q) "H". Qed.
-
-  Lemma iEff_le_trans (Ψ1 Ψ2 Ψ3 : iEff Σ) : (Ψ1 ⊑ Ψ2 -∗ Ψ2 ⊑ Ψ3 -∗ Ψ1 ⊑ Ψ3)%ieff.
-  Proof.
-    iIntros "#H12 #H23". iModIntro. iIntros (v q) "H1".
-    iApply "H23". by iApply "H12".
-  Qed.
-
-  Lemma iEff_le_sum_l (Ψ1 Ψ2 : iEff Σ) : ⊢ (Ψ1 ⊑ Ψ1 <+> Ψ2)%ieff.
-  Proof.
-    iModIntro. iIntros (v q) "H".
-    rewrite iEff_sum_eq. by iLeft.
-  Qed.
-
-  Lemma iEff_le_sum_r (Ψ1 Ψ2 : iEff Σ) : ⊢ (Ψ2 ⊑ Ψ1 <+> Ψ2)%ieff.
-  Proof. rewrite (iEff_sum_comm Ψ1 Ψ2). by iApply iEff_le_sum_l. Qed.
-
-  Lemma iEff_le_sum (Ψ1 Ψ2 Ψ1' Ψ2' : iEff Σ) :
-    (Ψ1 ⊑ Ψ1' -∗ Ψ2 ⊑ Ψ2' -∗ Ψ1 <+> Ψ2 ⊑ Ψ1' <+> Ψ2')%ieff.
-  Proof.
-    iIntros "#HΨ1 #HΨ2". iModIntro. iIntros (v q) "HP".
-    rewrite iEff_sum_eq. iDestruct "HP" as "[HP|HP]".
-    { iClear "HΨ2". iLeft.  by iApply "HΨ1". }
-    { iClear "HΨ1". iRight. by iApply "HΨ2". }
-  Qed.
-
-  Lemma iEff_le_marker f (Ψ1 Ψ2 : iEff Σ) : (Ψ1 ⊑ Ψ2 -∗ (f #> Ψ1) ⊑ (f #> Ψ2))%ieff.
-  Proof.
-    iIntros "#HΨ". iModIntro. iIntros (v q) "HP".
-    rewrite iEff_marker_eq. iDestruct "HP" as (w) "[-> HP]".
-    iExists w. iSplit; [done|]. by iApply "HΨ".
-  Qed.
-
-  Lemma iEff_le_tele {TT1 TT2 TT1' TT2' : tele}
-    (v  : TT1  →        val) (P  : TT1  →        iProp Σ)
-    (w  : TT1  → TT2  → val) (Q  : TT1  → TT2  → iProp Σ)
-    (v' : TT1' →        val) (P' : TT1' →        iProp Σ)
-    (w' : TT1' → TT2' → val) (Q' : TT1' → TT2' → iProp Σ) :
-      (>>.. x  >> ! (v  x   )  {{ P  x     }};
-       <<.. y  << ? (w  x  y)  {{ Q  x  y  }})
-        ⊑
-      (>>.. x' >> ! (v' x'   ) {{ P' x'    }};
-       <<.. y' << ? (w' x' y') {{ Q' x' y' }})
-     ⊣⊢
-       □ (∀.. x,  P  x     -∗ (∃.. x', P' x'  ∗ ⌜ v x   = v' x'    ⌝ ∗
-         (∀.. y', Q' x' y' -∗ (∃.. y,  Q  x y ∗ ⌜ w x y = w' x' y' ⌝)))).
-  Proof.
-    iSplit; iIntros "#Hle"; iModIntro.
-    - iIntros (x) "HP".
-      iSpecialize ("Hle" $! (v x) (<<..y<<?(w x y){{Q x y}})%ieff with "[HP]").
-      { rewrite iEffPre_texist_eq iEffPre_base_eq. iExists x. iFrame. by auto. }
-      rewrite iEffPre_texist_eq iEffPre_base_eq.
-      iDestruct "Hle" as (x') "[<- [HP' HQ]]". iExists x'. iFrame.
-      iSplit; [done|]. iIntros (y') "HQ'".
-      iSpecialize ("HQ" $! (w' x' y') with "[HQ']").
-      { rewrite iEffPost_texist_eq iEffPost_base_eq. iExists y'. by iFrame. }
-      rewrite iEffPost_texist_eq iEffPost_base_eq.
-      iDestruct "HQ" as (y) "[<- HQ]". iExists y. by iFrame.
-    - iIntros (u q) "HP". rewrite iEffPre_texist_eq iEffPre_base_eq.
-      iDestruct "HP" as (x) "[<- [HP Hq]]".
-      iDestruct ("Hle" with "HP") as (x') "(HP' & -> & HQ)". iClear "Hle".
-      rewrite iEffPre_texist_eq. iExists x'. iFrame. iSplit; [done|].
-      iIntros (u') "HQ'". iApply "Hq".
-      rewrite !iEffPost_texist_eq iEffPost_base_eq.
-      iDestruct "HQ'" as (y') "[<- HQ']".
-      iDestruct ("HQ" with "HQ'") as (y) "[HQ <-]".
-      iExists y. by iFrame.
-  Qed.
-
-End ieff_order.

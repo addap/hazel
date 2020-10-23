@@ -16,7 +16,7 @@ Proof.
   - rewrite -(of_to_eff _ _ _ Heqo0).
     iIntros "Hewp".
     iPoseProof (ewp_eff_inv with "Hewp") as "HFalse".
-    rewrite protocol_agreement_bottom. iApply fupd_wp. by iMod "HFalse".
+    by rewrite protocol_agreement_bottom.
   - rewrite ewp_unfold /ewp_pre wp_unfold /wp_pre /= Heqo Heqo0.
     iIntros "Hewp" (σ k ks n) "Hs".
     iMod ("Hewp" with "Hs") as "[$ H]". iModIntro.

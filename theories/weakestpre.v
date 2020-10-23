@@ -1,6 +1,6 @@
 (* weakestpre.v
 
-   We defise a notion of weakest precondition that is adapted
+   We define a notion of weakest precondition that is adapted
    to effects and their handlers. Most of this theory is
    dedicated to the proof of our version of the usual separation
    logic reasoning rules. In the end, we prove a novel reasoning
@@ -20,7 +20,7 @@ Definition ewp_pre `{!irisG eff_lang Σ} :
   := λ ewp E e₁ Ψ Φ,
   match to_val e₁ with Some  v     => |={E}=> Φ v | None =>
   match to_eff e₁ with Some (v, k) =>
-    protocol_agreement E v Ψ (λ w, ▷ ewp E (fill k (Val w)) Ψ Φ)
+    protocol_agreement v Ψ (λ w, ▷ ewp E (fill k (Val w)) Ψ Φ)
   | None =>
     ∀ σ₁ ks n,
      state_interp σ₁ ks n ={E,∅}=∗
@@ -95,11 +95,11 @@ Proof.
   revert e. induction (lt_wf n) as [n _ IH]=> e Ψ Ψ' HΨ Φ Φ' HΦ.
   rewrite !ewp_unfold /ewp_pre /protocol_agreement.
   f_equiv. { by f_equiv. }
-  do 7 f_equiv.
+  do 6 f_equiv.
   - by apply HΨ.
-  - intros ?. do 3 (f_contractive || f_equiv).
+  - intros ?. do 2 (f_contractive || f_equiv).
     apply IH; try lia; eapply dist_le; eauto with lia.
-  - do 12 (f_contractive || f_equiv).
+  - do 13 (f_contractive || f_equiv).
     apply IH; try lia; eapply dist_le; eauto with lia.
 Qed.
 
@@ -120,16 +120,16 @@ Lemma ewp_value_fupd E Ψ Φ v :
   (|={E}=> Φ v)%I ⊢ EWP of_val v @ E <| Ψ |> {{ Φ }}.
 Proof. intros. by rewrite !ewp_unfold /ewp_pre. Qed.
 Lemma ewp_eff_eq E Ψ Φ v k :
-  protocol_agreement E v Ψ (λ w, ▷ EWP fill k (Val w) @ E <| Ψ |> {{ Φ }}) ⊣⊢
+  protocol_agreement v Ψ (λ w, ▷ EWP fill k (Val w) @ E <| Ψ |> {{ Φ }}) ⊣⊢
   EWP of_eff v k @ E <| Ψ |> {{ Φ }}.
 Proof. by rewrite ewp_unfold /ewp_pre /=. Qed.
 Lemma ewp_eff E Ψ Φ v k :
-  protocol_agreement E v Ψ (λ w, ▷ EWP fill k (Val w) @ E <| Ψ |> {{ Φ }}) ⊢
+  protocol_agreement v Ψ (λ w, ▷ EWP fill k (Val w) @ E <| Ψ |> {{ Φ }}) ⊢
   EWP of_eff v k @ E <| Ψ |> {{ Φ }}.
 Proof. by rewrite ewp_eff_eq. Qed.
 Lemma ewp_eff_inv E Ψ Φ v k :
   EWP of_eff v k @ E <| Ψ |> {{ Φ }} ⊢
-  protocol_agreement E v Ψ (λ w, ▷ EWP fill k (Val w) @ E <| Ψ |> {{ Φ }}).
+  protocol_agreement v Ψ (λ w, ▷ EWP fill k (Val w) @ E <| Ψ |> {{ Φ }}).
 Proof. by rewrite ewp_eff_eq. Qed.
 
 Goal forall A (P : A → iProp Σ) Φ (Ψ : iEff Σ) (v : val) x,
@@ -142,10 +142,9 @@ Goal forall A (P : A → iProp Σ) Φ (Ψ : iEff Σ) (v : val) x,
 Proof.
   intros A P Φ Ψ v x.
   iIntros "HP". iApply ewp_eff.
-  rewrite (protocol_agreement_tele' [tele _] [tele _]).
-  iMod (fupd_intro_mask' ⊤ ∅) as "Hclose"; first done.
+  rewrite (protocol_agreement_tele' [tele _] [tele _]) //=.
   iExists x. iFrame.
-  iModIntro. iSplit; [done|]. iIntros (w) "HΦ". iMod "Hclose". iModIntro.
+  iSplit; [done|]. iIntros (w) "HΦ". iNext.
   by iApply ewp_value.
 Qed.
 
@@ -163,7 +162,7 @@ Proof.
     iApply ("HΦ" with "[> -]"). by iApply (fupd_mask_mono E1 _).
   - rewrite -(of_to_eff _ _ _ Heqo0) -!ewp_eff_eq.
     iApply (protocol_agreement_strong_mono with "Hewp"); auto.
-    iIntros (w) "Hk". iModIntro. iNext.
+    iIntros (w) "Hk". iNext.
     by iApply ("IH" with "Hk HΦ").
   - rewrite !ewp_unfold /ewp_pre Heqo Heqo0.
     iIntros (σ₁ ks n) "Hσ". iMod (fupd_intro_mask' E2 E1) as "Hclose"; first done.
@@ -216,12 +215,13 @@ Proof.
 Qed.  
 
 Lemma fupd_ewp E e Ψ Φ :
+  TCEq (to_eff e) None →
   (|={E}=> EWP e @ E <| Ψ |> {{ Φ }}) ⊢ EWP e @ E <| Ψ |> {{ Φ }}.
 Proof.
-  iIntros "H"; rewrite ewp_unfold /ewp_pre.
+  iIntros (?) "H"; rewrite ewp_unfold /ewp_pre.
     destruct (to_val e) as [ v    |] eqn:?;
   [|destruct (to_eff e) as [(v, k)|] eqn:?].
-  { by iMod "H". } { iMod "H". by iFrame. }
+  { by iMod "H". } { by inversion H. }
   { iIntros (σ1 ks n) "Hσ1". iMod "H". by iApply "H". }
 Qed.
 
@@ -230,7 +230,7 @@ Lemma ewp_fupd E e Ψ Φ :
 Proof. iIntros "H". iApply (ewp_mono with "H"); auto. Qed.
 
 Lemma ewp_atomic E1 E2 e Ψ Φ `{!Atomic StronglyAtomic e} :
-  TCEq (to_eff e) None → 
+  TCEq (to_eff e) None →
   (|={E1,E2}=>
      EWP e @ E2 <| Ψ |> {{ v, |={E2,E1}=> Φ v }}) ⊢
      EWP e @ E1 <| Ψ |> {{ Φ }}.
@@ -332,13 +332,14 @@ Proof.
   rewrite !(ewp_unfold E e) /ewp_pre.
     destruct (to_val e) as [ v    |] eqn:He;
   [|destruct (to_eff e) as [(v, k)|] eqn:He'].
-  - rewrite <- (of_to_val _ _ He). iIntros "H". by iApply fupd_ewp.
+  - rewrite <- (of_to_val _ _ He). iIntros "H".
+    by iApply fupd_ewp; first rewrite fill_not_eff.
   - iIntros "H".
     rewrite <- (of_to_eff _ _ _ He').
     iApply ewp_eff_steps. iApply ewp_eff.
-    iMod "H" as (Q) "[HP HQ]". iModIntro.
+    iDestruct "H" as (Q) "[HP HQ]".
     iExists Q. iFrame. iIntros (w) "HQ'".
-    iMod ("HQ" with "HQ'") as "HQ". iIntros "!> !>".
+    iDestruct ("HQ" with "HQ'") as "HQ". iNext.
     rewrite fill_ectx_app. by iApply "IH".
   - rewrite !ewp_unfold /ewp_pre.
     rewrite (fill_not_val _ _ He) (fill_not_eff K _ He').
@@ -368,9 +369,8 @@ Proof.
     destruct (to_val e) as [ v    |] eqn:He;
   [|destruct (to_eff e) as [(v, k)|] eqn:He'].
   - rewrite <- (of_to_val _ _ He).
-    iIntros "H". by iApply fupd_ewp.
-  - iIntros "Hprot_agr". rewrite protocol_agreement_bottom.
-     iApply fupd_ewp. by iMod "Hprot_agr".
+    iIntros "H". by iApply fupd_ewp; first rewrite fill_not_eff.
+  - iIntros "Hprot_agr". by rewrite protocol_agreement_bottom.
   - rewrite !ewp_unfold /ewp_pre.
     rewrite (fill_not_val _ _ He) (fill_not_eff K _ He').
     iIntros "Hewp" (σ₁ ks n) "Hs".

@@ -157,11 +157,11 @@ Proof.
     rewrite /(Ψ_seq (client_state γ)).
     rewrite (protocol_agreement_tele' [tele _ _] [tele]) //=.
     iApply fupd_ewp.
-    iMod "Hhandler" as (us' u') "(<- & [Hcstate Hpermitted] & Hk)".
+    iDestruct "Hhandler" as (us' u') "(<- & [Hcstate Hpermitted] & Hk)".
     iDestruct (ghost_state_agree with "Hhstate Hcstate") as "%".
     rewrite -H. clear H.
     iMod (ghost_var_update _ (us ++ [u]) with "Hhstate Hcstate") as "[Hhstate Hcstate]".
-    iSpecialize ("Hk" with "Hcstate"). iMod "Hk". iModIntro.
+    iSpecialize ("Hk" with "Hcstate"). iModIntro.
     iApply (Ectxi_ewp_bind (AppLCtx _)). reflexivity.
     iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
     iApply ewp_pure_step. apply pure_prim_step_rec.
@@ -218,11 +218,9 @@ Proof.
       iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
       iApply ewp_pure_step. apply pure_prim_step_do. simpl.
       iApply ewp_eff. rewrite /Ψ_seq.
-      rewrite (protocol_agreement_tele' [tele _ _] [tele]).
-      iMod (fupd_intro_mask' _ ∅) as "Hclose". done. iModIntro.
+      rewrite (protocol_agreement_tele' [tele _ _] [tele]) //=.
       iExists us, u. iFrame. iSplit; [done|].
-      iIntros "Hcstate". iMod "Hclose".
-      iModIntro. iNext. iApply ewp_value. by iFrame.
+      iIntros "Hcstate". iModIntro. iApply ewp_value. by iFrame.
 Qed.
 
 End invert.

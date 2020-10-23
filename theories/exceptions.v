@@ -34,8 +34,7 @@ Proof.
   iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
   iApply ewp_pure_step. apply pure_prim_step_do.
   iApply ewp_eff.
-  unfold exn. rewrite (protocol_agreement_tele' [tele _] [tele]).
-  iMod (fupd_intro_mask' _ ∅) as "Hclose". set_solver. iModIntro.
+  unfold exn. rewrite (protocol_agreement_tele' [tele _] [tele]) //=.
   iExists u. iFrame. iSplit; [done|]. by iIntros "H".
 Qed.
 
@@ -55,7 +54,7 @@ Proof.
   - iIntros (v k) "Hhandler".
     iNext. iApply fupd_ewp. unfold exn.
     rewrite {1}(protocol_agreement_tele' [tele _] [tele]) //=.
-    iMod "Hhandler" as (x) "(<- & Hewp & _)".
+    iDestruct "Hhandler" as (x) "(<- & Hewp & _)".
     iApply (Ectxi_ewp_bind (AppLCtx k)). done.
     iApply (Ectxi_ewp_bind (AppLCtx v)). done.
     iApply ewp_pure_step. apply pure_prim_step_rec.
