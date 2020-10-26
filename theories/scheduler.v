@@ -199,77 +199,116 @@ End running.
 
 (* [promise_inv] is the main proof invariant. It asserts the existence of a
    set of promises, each of which has either already been fulfilled or not.
-   If not, a number of threads might be waiting for this event to happen. *)
+   If not, a number of threads might be waiting for this event to happen.
 
-Definition promise_inv_pre :
-  (val -d> (val -d> iPropO Σ) -d> iPropO Σ) →
-  (val -d> (val -d> iPropO Σ) -d> iPropO Σ)
-  := λ promise_inv q ready,
-  (∃ (S : gmap (loc * gname) (val → iProp Σ)),
-   own δ (● (promise_unfold <$> S : gmap _ _)) ∗
-   [∗ map] key ↦ Φ ∈ S,
-   match key with (p, γ) =>
-     ∃ b, running_auth γ b ∗ 
-     match b with
-     | false =>
-        ∃ v, p ↦ InjLV v ∗ □ Φ v
-     | true =>
-        ∃ l ks, p ↦ InjRV l ∗ is_list l ks ∗
-          [∗ list] k ∈ ks,
-            ∀ (v : val), □ Φ v -∗
-              ▷ (promise_inv q ready) -∗
-                ▷ (∃ (n : nat), is_queue q ready n) -∗
-                  EWP (k : val) v {{ _, True }}
+   [ready] is the specification satisfied by paused threads. *)
+
+Definition mut_def_pre :
+  (val -d> (() + (val -d> iPropO Σ) * val) -d> iPropO Σ) →
+  (val -d> (() + (val -d> iPropO Σ) * val) -d> iPropO Σ)
+  := λ mut_def q choice,
+  let promise_inv := mut_def q (inl ()) in
+  let ready k := mut_def q (inr ((λ v, ⌜ v = #() ⌝)%I, k)) in
+  match choice with
+  | inr (Φ, k) =>
+     ∀ (v : val), □ Φ v -∗
+       ▷ promise_inv -∗
+         ▷ (∃ (n : nat), is_queue q ready n) -∗
+           EWP (k : val) v {{ _, True }}
+  | inl () =>
+     ∃ (S : gmap (loc * gname) (val → iProp Σ)),
+     own δ (● (promise_unfold <$> S : gmap _ _)) ∗
+     [∗ map] key ↦ Φ ∈ S,
+     match key with (p, γ) =>
+       ∃ b, running_auth γ b ∗ 
+       if b then
+          ∃ l ks, p ↦ InjRV l ∗ is_list l ks ∗
+          [∗ list] k ∈ ks, ∀ (v : val), □ Φ v -∗
+            ▷ promise_inv -∗
+              ▷ (∃ (n : nat), is_queue q ready n) -∗
+                EWP (k : val) v {{ _, True }}
+       else
+          ∃ v, p ↦ InjLV v ∗ □ Φ v
      end
-    end)%I.
+  end%I.
 
-Local Instance promise_inv_pre_contractive : Contractive promise_inv_pre.
+Local Instance mut_def_inv_pre_contractive : Contractive mut_def_pre.
 Proof.
-  rewrite /promise_inv_pre=> n promise_inv promise_inv' HW q ready.
-  repeat (f_contractive || f_equiv); try apply HW.
+  rewrite /mut_def_pre=> n mut_def_inv mut_def_inv' HW q choice.
+  repeat (f_contractive || apply is_queue_ne || f_equiv);
+  try apply HW; try done; try (intros=>?; apply HW).
 Qed.
-Definition promise_inv_def := fixpoint promise_inv_pre.
-Definition promise_inv_aux : seal promise_inv_def. Proof. by eexists. Qed.
-Definition promise_inv := promise_inv_aux.(unseal).
-Definition promise_inv_eq : promise_inv = promise_inv_def :=
-  promise_inv_aux.(seal_eq).
-Global Lemma promise_inv_unfold q ready :
-  promise_inv q ready ⊣⊢ promise_inv_pre promise_inv q ready.
-Proof. rewrite promise_inv_eq /promise_inv_def.
-       apply (fixpoint_unfold promise_inv_pre).
+Definition mut_def_def := fixpoint mut_def_pre.
+Definition mut_def_aux : seal mut_def_def. Proof. by eexists. Qed.
+Definition mut_def := mut_def_aux.(unseal).
+Definition mut_def_eq : mut_def = mut_def_def :=
+  mut_def_aux.(seal_eq).
+Global Lemma mut_def_unfold q choice :
+  mut_def q choice ⊣⊢ mut_def_pre mut_def q choice.
+Proof. rewrite mut_def_eq /mut_def_def.
+       apply (fixpoint_unfold mut_def_pre).
 Qed.
-Global Instance promise_inv_ne n :
-  Proper ((dist n) ==> (dist n) ==> (dist n)) promise_inv.
+Global Instance mut_def_ne n :
+  Proper ((dist n) ==> (dist n) ==> (dist n)) mut_def.
 Proof.
   induction (lt_wf n) as [n _ IH]=> q q' Hq ready ready' Hready.
-  inversion Hq. rewrite !promise_inv_unfold /promise_inv_pre.
-  repeat (f_contractive || apply promise_inv_ne || apply is_queue_ne
-         ||    apply IH || f_equiv);
-  try lia; by (eapply dist_le; eauto with lia).
+  inversion Hq. rewrite !mut_def_unfold /mut_def_pre.
+  repeat (f_contractive || apply mut_def_ne || apply is_queue_ne
+         ||    apply IH || f_equiv
+         || case x1 as ()         || case x2 as ()
+         || case y1 as (y11, y12) || case y2 as (y21, y22) ).
+  apply H0. apply H1.
 Qed.
-Global Instance promise_inv_proper : Proper ((≡) ==> (≡) ==> (≡)) promise_inv.
+Global Instance mut_def_proper : Proper ((≡) ==> (≡) ==> (≡)) mut_def.
 Proof. intros ??????. apply equiv_dist=>n.
-       by apply promise_inv_ne; apply equiv_dist.
+       by apply mut_def_ne; apply equiv_dist.
+Qed.
+
+Definition promise_inv : val -d> iPropO Σ := λ q, mut_def q (inl ()).
+Definition ready : val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ :=
+  λ q Φ k, mut_def q (inr (Φ, k)).
+
+Global Instance ready_ne n : Proper ((dist n) ==> (dist n) ==> (dist n)) ready.
+Proof. by solve_proper. Qed.
+Global Instance ready_proper : Proper ((≡) ==> (≡) ==> (≡)) ready.
+Proof. by solve_proper. Qed.
+Lemma ready_unfold q Φ k : ready q Φ k ⊣⊢
+  ∀ (v : val), □ Φ v -∗ ▷ promise_inv q -∗
+    ▷ (∃ (n : nat), is_queue q (ready q (λ v, ⌜ v = #() ⌝)) n) -∗
+      EWP k v {{ _, True }}.
+Proof. by rewrite /ready /promise_inv mut_def_unfold /mut_def_pre. Qed.
+
+Global Instance promise_inv_ne n : Proper ((dist n) ==> (dist n)) promise_inv.
+Proof. by solve_proper. Qed.
+Global Instance promise_inv_proper : Proper ((≡) ==> (≡)) promise_inv.
+Proof. by solve_proper. Qed.
+Lemma promise_inv_unfold q : promise_inv q ⊣⊢ 
+  ∃ (S : gmap (loc * gname) (val → iProp Σ)),
+  own δ (● (promise_unfold <$> S : gmap _ _)) ∗
+  [∗ map] key ↦ Φ ∈ S,
+  match key with (p, γ) =>
+    ∃ b, running_auth γ b ∗ 
+    if b then
+       ∃ l ks, p ↦ InjRV l ∗ is_list l ks ∗ [∗ list] k ∈ ks, ready q Φ k
+    else
+       ∃ v, p ↦ InjLV v ∗ □ Φ v
+  end.
+Proof.
+  rewrite /promise_inv /ready mut_def_unfold /mut_def_pre.
+  repeat f_equiv. fold (ready q a1 a4). by rewrite ready_unfold.
 Qed.
 
 (* Properties of [promise_inv]. *)
 
 Section promise_inv.
-  Context (q : val) (ready : val -d> iPropO Σ).
+  Context (q : val).
 
   Definition points_to p γ Φ : iProp Σ :=
-   ∃ b, running_auth γ b ∗ 
-   match b with
-   | false =>
-      ∃ v, p ↦ InjLV v ∗ □ Φ v
-   | true =>
-      ∃ l ks, p ↦ InjRV l ∗ is_list l ks ∗
-        [∗ list] k ∈ ks,
-          ∀ (v : val), □ Φ v -∗
-            ▷ (promise_inv q ready) -∗
-              ▷ (∃ (n : nat), is_queue q ready n) -∗
-                EWP (k : val) v {{ _, True }}
-   end.
+    ∃ b, running_auth γ b ∗ 
+    if b then
+       ∃ l ks, p ↦ InjRV l ∗ is_list l ks ∗ [∗ list] k ∈ ks, ready q Φ k
+    else
+       ∃ v, p ↦ InjLV v ∗ □ Φ v.
 
   Lemma promise_alloc Φ :
     ⊢ EWP ref (InjR (list_nil #())) {{ p',
@@ -290,8 +329,8 @@ Section promise_inv.
   Qed.
 
   Lemma promise_upd p γ Φ :
-    promise_inv q ready ∗ points_to p γ Φ ==∗
-    promise_inv q ready ∗ own δ (◯ {[ (p, γ) := promise_unfold Φ ]}).
+    promise_inv q ∗ points_to p γ Φ ==∗
+    promise_inv q ∗ own δ (◯ {[ (p, γ) := promise_unfold Φ ]}).
   Proof.
     iIntros "[Hpromise_inv Hpoints_to]". rewrite {1}promise_inv_unfold.
     iDestruct "Hpromise_inv" as (S) "[HS Hinv]".
@@ -306,13 +345,13 @@ Section promise_inv.
         apply (alloc_singleton_local_update _ (p, γ) (promise_unfold Φ)).
         by rewrite /= lookup_fmap Heq. done. }
       iModIntro. iFrame.
-      rewrite {-1}promise_inv_unfold. iExists (<[(p, γ):= Φ]> S).
+      rewrite promise_inv_unfold. iExists (<[(p, γ):= Φ]> S).
       rewrite /= fmap_insert. iFrame.
       rewrite big_opM_insert. iFrame. done.
   Qed.
 
   Lemma promise_agree p γ Φ :
-    promise_inv q ready ∗
+    promise_inv q ∗
     own δ (◯ {[(p, γ) := promise_unfold Φ]}) -∗
     (∃ S, own δ (● (promise_unfold <$> S : gmap _ _)) ∗
       ([∗ map] key ↦ Φ ∈ delete (p, γ) S,
@@ -328,40 +367,6 @@ Section promise_inv.
   Qed.
 
 End promise_inv.
-
-(* [ready] is the specification satisfied by paused threads. *)
-
-Definition ready_pre : (val -d> val -d> iPropO Σ) → (val -d> val -d> iPropO Σ)
-  := λ ready q k,
-  (▷ (promise_inv q (ready q)) -∗
-     ▷ (∃ (n : nat), is_queue q (ready q) n) -∗
-       EWP (k : val) #() {{ _, True }})%I.
-
-Local Instance ready_pre_contractive : Contractive ready_pre.
-Proof.
-  rewrite /ready_pre=> n ready ready' HW q k.
-  repeat (f_contractive || apply promise_inv_ne || apply is_queue_ne || f_equiv);
-  by try (eapply dist_le; eauto with lia).
-Qed.
-Definition ready_def := fixpoint ready_pre.
-Definition ready_aux : seal ready_def. Proof. by eexists. Qed.
-Definition ready := ready_aux.(unseal).
-Definition ready_eq : ready = ready_def := ready_aux.(seal_eq).
-Global Lemma ready_unfold q k : ready q k ⊣⊢ ready_pre ready q k.
-Proof. rewrite ready_eq /ready_def.
-       apply (fixpoint_unfold ready_pre).
-Qed.
-Global Instance ready_ne n : Proper ((dist n) ==> (dist n) ==> (dist n)) ready.
-Proof.
-  induction (lt_wf n) as [n _ IH]=> q q' Hq k k' Hk.
-  rewrite !ready_unfold /ready_pre.
-  repeat (f_contractive || apply promise_inv_ne || apply is_queue_ne || f_equiv);
-  by try (eapply dist_le; eauto with lia).
-Qed.
-Global Instance ready_inv_proper : Proper ((≡) ==> (≡) ==> (≡)) promise_inv.
-Proof. intros ??????. apply equiv_dist=>n.
-       by apply promise_inv_ne; apply equiv_dist.
-Qed.
 
 
 (* ************************************************************************** *)
@@ -426,7 +431,7 @@ Definition run : val := λ: "main",
   "fulfill" (ref (InjR (list_nil #()))) "main".
 
 Lemma run_spec' (main : val) Φ :
-  (∀ q ready, promise_inv q ready) -∗
+  (∀ q, promise_inv q) -∗
     EWP main #() <| Ψ_conc |> {{ v, □ Φ v }} -∗
       EWP run main {{ _, True }}.
 Proof.
@@ -435,17 +440,20 @@ Proof.
   iApply (Ectxi_ewp_bind (AppRCtx _)). done.
   iApply ewp_strong_mono; first done; [
   iApply queue_create_spec | iApply iEff_le_refl |].
-  iIntros (q) "Hq". iSpecialize ("Hq" $! (ready q)).
-  iSpecialize ("Hpromise_inv" $! q (ready q)).
+  iIntros (q) "Hq".
+  iSpecialize ("Hq" $! (ready q (λ v, ⌜ v = #() ⌝)%I)).
+  iSpecialize ("Hpromise_inv" $! q).
 
   (* ************************************************************** *)
   (** Verification of [next]. *)
 
   (* Specification. *)
-  iAssert (∀ q, □ (▷ promise_inv q (ready q) -∗ ▷ (∃ n, is_queue q (ready q) n) -∗
-    EWP
-      (λ: <>, if: queue_empty q then #() else queue_pop q #())%V #()
-    {{ _, True }}))%I
+  iAssert (∀ q,
+    □ (▷ promise_inv q -∗
+         ▷ (∃ n, is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) n) -∗
+           EWP
+             (λ: <>, if: queue_empty q then #() else queue_pop q #())%V #()
+           {{ _, True }}))%I
   as "#next_spec".
 
   (* Proof. *)
@@ -465,9 +473,9 @@ Proof.
       iApply (ewp_mono' with "[Hq]");  [
       iApply (queue_pop_spec with "Hq")|].
       simpl. iModIntro. iIntros (k) "[Hq Hk]".
-      rewrite !ready_unfold /ready_pre.
+      rewrite ready_unfold.
       iApply (ewp_mono' with "[Hk Hpromise_inv Hq]").
-      { iApply ("Hk" with "Hpromise_inv"). iExists m. by iFrame. }
+      { iApply ("Hk" $! #() with "[//] Hpromise_inv"). iExists m. by iFrame. }
       { by auto. }
   }
   (* ************************************************************** *)
@@ -492,12 +500,12 @@ Proof.
   iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
   iApply (ewp_bind (ConsCtx (AppLCtx _) (ConsCtx (AppRCtx _) EmptyCtx))). done.
   iApply ewp_mono'; [
-  iApply (promise_alloc q (ready q) Φ) |]. simpl.
+  iApply (promise_alloc q Φ) |]. simpl.
   iModIntro. iIntros (v) "H".
   iDestruct "H" as (p γ) "(-> & Hrunning & Hpoints_to)".
   iMod (promise_upd with "[$]") as "[Hpromise_inv Hp]".
-  iAssert (∃ (n : nat), is_queue q (ready q) n)%I with "[Hq]" as "Hq".
-  { by iExists 0%nat. }
+  iAssert (∃ (n : nat), is_queue q (ready q (λ v, ⌜ v = #() ⌝)) n)%I
+  with "[Hq]" as "Hq". { by iExists 0%nat. }
   iModIntro.
 
   (* ************************************************************** *)
@@ -522,14 +530,15 @@ Proof.
   iApply (ewp_deep_try_with with "Hmain").
 
   (* Step 3 - Proof of [is_deep_hanlder] judgment. *)
-  iAssert (▷ ∃ (n : nat), is_queue q (ready q) n)%I with "Hq" as "Hq".
+  iAssert (▷ ∃ (n : nat), is_queue q (ready q (λ v, ⌜ v = #() ⌝)) n)%I
+  with "Hq" as "Hq".
   iLöb as "IH_handler" forall (q p γ Φ).
   rewrite deep_handler_unfold.
   iSplit.
 
   (* Return branch. *)
   - iIntros (v) "#Hv".
-    iDestruct (promise_agree q (ready q) with "[$]") as (S) "(HS & Hinv & H)".
+    iDestruct (promise_agree q with "[$]") as (S) "(HS & Hinv & H)".
     iDestruct "H" as (Ψ) "(% & Hpoints_to & Heq')".
     rename H into lookup_S.
     iDestruct "Hpoints_to" as (b) "[Hrunning' Hp]".
@@ -552,26 +561,26 @@ Proof.
       iApply ewp_pure_step. apply pure_prim_step_rec. simpl.
       iApply ewp_value.
       iApply (list_iter_spec' _
-             (λ fs, (∃ (n : nat), is_queue q (ready q) n) ∗
-                    ([∗ list] f ∈ fs, ∀ (v : val), □ Ψ v -∗
-                       ▷ promise_inv q (ready q) -∗
-                         ▷ (∃ (n : nat), is_queue q (ready q) n) -∗
-                           EWP (f : val) v <|⊥|> {{ _, True }}))%I _ _ ks with "[] Hl");
-      [|by iFrame].
-      iModIntro. iIntros (gs f fs <-) "[Hq Hfs]".
-      rewrite big_opL_cons. iDestruct "Hfs" as "[Hf Hfs]".
-      iAssert (ready q (λ: <>, f v)%V)%I with "[Hf]" as "Hready".
-      { rewrite ready_unfold. iIntros "Hpromise_inv Hq".
+             (λ fs, (∃ (n : nat), is_queue q (ready q (λ v, ⌜ v = #() ⌝)) n) ∗
+                    ([∗ list] f ∈ fs, ∀ (v : val), □ Ψ v -∗ ▷ promise_inv q -∗
+                       ▷ (∃ (n : nat), is_queue q (ready q (λ v, ⌜ v = #() ⌝)) n) -∗
+                         EWP (f : val) v <|⊥|> {{ _, True }}))%I _ _ ks with "[] Hl").
+      - iModIntro. iIntros (gs f fs <-) "[Hq Hfs]".
+        rewrite big_opL_cons. iDestruct "Hfs" as "[Hf Hfs]".
+        iAssert (ready q (λ v, ⌜ v = #() ⌝) (λ: <>, f v)%V)%I with "[Hf]" as "Hready".
+        { rewrite ready_unfold. iIntros (w) "-> Hpromise_inv Hq".
+          iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+          iApply ("Hf" with "[] Hpromise_inv Hq"). by iRewrite ("Heq" $! v).
+        }
+        iDestruct "Hq" as (n) "Hq".
         iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-        iApply ("Hf" with "[] Hpromise_inv Hq"). by iRewrite ("Heq" $! v).
-      }
-      iDestruct "Hq" as (n) "Hq".
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec.
-      iApply ewp_value. simpl.
-      iApply (ewp_mono' with "[Hq Hready]"). { by iApply (queue_push_spec with "Hq Hready"). }
-      iIntros (_) "Hq". iModIntro. by eauto with iFrame.
+        iApply (Ectxi_ewp_bind (AppRCtx _)). done.
+        iApply ewp_pure_step. apply pure_prim_step_rec.
+        iApply ewp_value. simpl.
+        iApply (ewp_mono' with "[Hq Hready]"). { by iApply (queue_push_spec with "Hq Hready"). }
+        iIntros (_) "Hq". iModIntro. by eauto with iFrame.
+      - iNext. iFrame. iApply (big_sepL_mono with "Hks"). simpl.
+        iIntros (n f) "% Hready". by rewrite ready_unfold.
     }
     iModIntro. iIntros (w) "(_ & Hq & _)".
     iApply (Ectxi_ewp_bind (AppLCtx _)). done.
@@ -585,9 +594,9 @@ Proof.
     iApply (ewp_mono' with "[Hp]"). { by iApply (ewp_store with "Hp"). }
     iModIntro. iIntros (u) "Hp".
     iMod (running_upd _ _ _ false with "Hrunning' Hrunning") as "[Hrunning' Hrunning]".
-    iAssert (points_to q (ready q) p γ Ψ) with "[Hp Hrunning']" as "Hpoints_to".
+    iAssert (points_to q p γ Ψ) with "[Hp Hrunning']" as "Hpoints_to".
     { iExists false. iFrame. iExists v. iFrame. by iRewrite ("Heq" $! v). }
-    iAssert (promise_inv q (ready q)) with "[HS Hinv Hpoints_to]" as "Hpromise_inv".
+    iAssert (promise_inv q) with "[HS Hinv Hpoints_to]" as "Hpromise_inv".
     { rewrite promise_inv_unfold. iExists S. iFrame.
       rewrite (big_sepM_delete _ S (p, γ) _ lookup_S). by iFrame. }
     iApply (Ectxi_ewp_bind (AppLCtx _)). done.
@@ -614,7 +623,7 @@ Proof.
       iApply ewp_value. simpl.
       iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
       iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply ewp_mono'. { by iApply (promise_alloc q (ready q) Φ'). }
+      iApply ewp_mono'. { by iApply (promise_alloc q Φ'). }
       iNext. iIntros (_p') "Hp'". simpl.
       iDestruct "Hp'" as (p' γ') "(-> & Hrunning' & Hpoints_to)".
       iMod (promise_upd with "[$]") as "[Hpromise_inv #Hp']". iModIntro.
@@ -627,8 +636,9 @@ Proof.
       iApply (Ectxi_ewp_bind (AppRCtx _)). done.
       iApply ewp_pure_step. apply pure_prim_step_rec.
       iApply ewp_value. simpl.
-      iAssert (ready q (λ: <>, k #p')%V)%I with "[Hk Hrunning Hp]" as "Hready".
-      { rewrite ready_unfold. iIntros "Hpromise_inv Hq".
+      iAssert (ready q (λ v, ⌜ v = #() ⌝) (λ: <>, k #p')%V)%I
+      with "[Hk Hrunning Hp]" as "Hready".
+      { rewrite ready_unfold. iIntros (w) "-> Hpromise_inv Hq".
         iApply ewp_pure_step'. apply pure_prim_step_beta.
         iNext. iApply "Hk".
         by iApply ("IH_handler" with "Hrunning Hpromise_inv Hp Hq").
@@ -686,15 +696,16 @@ Proof.
         iApply ewp_pure_step. apply pure_prim_step_rec. simpl.
         iApply ewp_value.
         iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-        iAssert (points_to q (ready q) p' γ' Ψ)
+        iAssert (points_to q p' γ' Ψ)
         with "[Hrunning Hp Hrunning' Hks Hl' Hp' Hk]" as "Hpoints_to".
         { iExists true. iFrame. iExists l', (_ :: ks). iFrame.
+          rewrite ready_unfold.
           iIntros (v) "#HΨ Hpromise_inv Hq". iRewrite ("Heq" $! v) in "HΨ".
           iSpecialize ("Hk" with "HΨ").
           iApply "Hk". iNext.
           by iApply ("IH_handler" with "Hrunning Hpromise_inv Hp Hq").
         }
-        iAssert (promise_inv q (ready q))%I with "[HS Hinv Hpoints_to]" as "Hpromise_inv".
+        iAssert (promise_inv q)%I with "[HS Hinv Hpoints_to]" as "Hpromise_inv".
         { rewrite promise_inv_unfold. iExists S. iFrame.
           rewrite (big_sepM_delete _ S (p', γ') _ lookup_S). by iFrame.
         }
@@ -712,7 +723,7 @@ Proof.
         iApply ewp_pure_step'. apply pure_prim_step_beta. simpl.
         iNext. iApply "Hk".
         iApply ("IH_handler" with "Hrunning [HS Hinv Hrunning' Hp'] Hp Hq").
-        iAssert (points_to q (ready q) p' γ' Ψ)%I with "[Hrunning' Hp']" as "Hpoints_to".
+        iAssert (points_to q p' γ' Ψ)%I with "[Hrunning' Hp']" as "Hpoints_to".
         { iExists false. iFrame. iExists v. iRewrite ("Heq" $! v). by iFrame. }
         rewrite promise_inv_unfold. iExists S. iFrame.
         rewrite (big_sepM_delete _ S (p', γ') _ lookup_S). by iFrame.
@@ -733,11 +744,11 @@ Context `{!inG Σ (authR (gmapUR
                           (loc * gname)
                           (agreeR (laterO (val -d> (iPrePropO Σ))))))}.
 
-Lemma promise_inv_alloc : ⊢ |==> ∃ γ, ∀ q ready, promise_inv γ q ready.
+Lemma promise_inv_alloc : ⊢ |==> ∃ γ, ∀ q, promise_inv γ q.
 Proof.
   iIntros. iMod (own_alloc (● (∅ : gmap (loc * gname) _))) as (γI) "HI";
     first by rewrite auth_auth_valid.
-  iModIntro. iExists γI. iIntros (q ready).
+  iModIntro. iExists γI. iIntros (q).
   rewrite promise_inv_unfold.
   iExists ∅. rewrite fmap_empty. by iFrame.
 Qed.
