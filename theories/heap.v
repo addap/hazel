@@ -16,6 +16,17 @@ From hazel Require Import weakestpre notation ieff.
 
 Set Default Proof Using "Type".
 
+Class heapPreG Σ := HeapPreG {
+  heap_preG_iris :> invPreG Σ;
+  heap_preG_heap :> gen_heapPreG loc val Σ;
+  heap_preG_inv_heap :> inv_heapPreG loc val Σ;
+}.
+
+Definition heapΣ : gFunctors :=
+  #[invΣ; gen_heapΣ loc val; inv_heapΣ loc val].
+Instance subG_heapPreG {Σ} : subG heapΣ Σ → heapPreG Σ.
+Proof. solve_inG. Qed.
+
 Class heapG Σ := HeapG {
   heapG_invG : invG Σ;
   heapG_gen_heapG :> gen_heapG loc val Σ;

@@ -1,6 +1,7 @@
 # Hazel - A Separation Logic for Effect Handlers
 
 This repository formalizes in Coq the contents of the homonym paper.
+To build the project, please follow the instructions in the file [INSTALL.md](INSTALL.md).
 To browse the project, please take a look at the list of theories below.
 
 ## Preliminaries
@@ -11,10 +12,12 @@ To browse the project, please take a look at the list of theories below.
 
  - [theories/lang.v](theories/lang.v): Definition of the programming language.
    + Syntax: `expr` is the type of expressions.
-   + Evaluation contexts: `ectxi` is the type of shallow evaluation contexts
+   + Evaluation contexts: `ectx_item` is the type of shallow evaluation contexts
      and `ectx`, the type of deep evaluation contexts.
    + Semantics: `head_step` is the head step reduction relation and `prim_step`
-     is its closure under evaluation contexts.
+     is its closure under evaluation contexts. Some of the reduction steps mentioned
+     in the paper are `DoEffS` (R1), `AppREffS` (R2), `AppLEffS` (R3),
+     `TryWithEffS` (R4), `TryWithRetS` (R5) and `ContS` (R6).
    + Neutral contexts: a evaluation context is neutral when it does not
      catch an effect. The predicate `NeutralEctxi` holds for neutral shallow
      contexts and `NeutralEctx`, for deep contexts.
@@ -37,8 +40,10 @@ To browse the project, please take a look at the list of theories below.
  - [theories/weakestpre.v](theories/weakestpre.v): Definition of the weakest
    precondition and proof of usual reasoning rules.
    + Weakest precondition: `ewp` is defined as the fixpoint of the operator `ewp_pre`.
-   + Rules: some of the reasoning rules mentioned in the paper are (Val)
-    `ewp_value`, (Wand) `ewp_strong_mono`, (Do) `ewp_eff`, (Bind) `ewp_bind`.
+   + Rules: some of the reasoning rules that can be found here and that were
+     mentioned in the paper are `ewp_value` (Val), `ewp_eff` (Do),
+     `ewp_strong_mono` (Monotonicity), `ewp_bind` (Bind) and
+     `ewp_bind_pure` (Bind-Pure).
  - [theories/heap.v](theories/heap.v): Proof of the reasoning rules for
    operations manipulating the heap.
  - [theories/shallow_handler.v](theories/shallow_handler.v): Reasoning rule for shallow handlers.
@@ -82,6 +87,7 @@ To browse the project, please take a look at the list of theories below.
 | Weakest precondition       | `ewp e ⟨Ψ⟩ {Φ}`                                 | `EWP e @ E <\| Ψ \|> {{ Φ }}`                                  |
 | Active effect              | `§(N)[do v]`                                    | `Eff v N`                                                      |
 | Do construct               | `do e`                                          | `Do e` or `do: e`                                              |
+| Continuation construct     | `(λ N)^l`                                       | `ContV N l`                                                    |
 | Shallow handler construct  | `shallow-try e with h \| r`                     | `TryWith e h r`                                                |
 | Shallow handler judgement  | `shallow-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                            |
 | Deep handler construct     | `deep-try e with h \| r`                        | `try: e with effect h \| return r end`                         |

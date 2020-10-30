@@ -12,14 +12,6 @@ From iris.program_logic  Require Import weakestpre.
 From hazel               Require Import notation weakestpre deep_handler
                                         list_lib queue_lib.
 
-Section scheduler.
-Context `{!heapG Σ}.
-
-(* ************************************************************************** *)
-(** Data structures. *)
-
-Context {HList: ListLib Σ} {HQueue: QueueLib Σ}.
-
 
 (* ************************************************************************** *)
 (** Camera setup. *)
@@ -28,10 +20,29 @@ Context {HList: ListLib Σ} {HQueue: QueueLib Σ}.
    and [running_frang] while the second is for the definition of
    [is_promise], [promise_inv] and [ready]. *)
 
-Context `{!inG Σ (excl_authR boolO)}.
-Context `{!inG Σ (authR (gmapUR
-                          (loc * gname)
-                          (agreeR (laterO (val -d> (iPrePropO Σ))))))}.
+Class promiseG Σ := {
+  promise_mapG :> inG Σ (authR (gmapUR
+                               (loc * gname)
+                               (agreeR (laterO (val -d> (iPrePropO Σ))))));
+  runningG :> inG Σ (excl_authR boolO);
+}.
+
+Definition promiseΣ := #[
+  GFunctor (authRF (gmapURF (loc * gname) (agreeRF (laterOF (valO -d> idOF)))));
+  GFunctor (excl_authR boolO)
+].
+
+Instance subG_promiseΣ {Σ} : subG promiseΣ Σ → promiseG Σ.
+Proof. solve_inG. Qed.
+
+
+Section scheduler.
+Context `{!heapG Σ, !promiseG Σ}.
+
+(* ************************************************************************** *)
+(** Data structures. *)
+
+Context {HList: ListLib Σ} {HQueue: QueueLib Σ}.
 
 
 (* ************************************************************************** *)
@@ -201,7 +212,10 @@ End running.
    set of promises, each of which has either already been fulfilled or not.
    If not, a number of threads might be waiting for this event to happen.
 
-   [ready] is the specification satisfied by paused threads. *)
+   [ready] is the specification satisfied by paused threads.
+*)
+
+(* [mut_def] defines [promise_inv] and [ready] by mutual recursion. *)
 
 Definition mut_def_pre :
   (val -d> (() + (val -d> iPropO Σ) * val) -d> iPropO Σ) →
@@ -734,15 +748,9 @@ Qed.
 End scheduler.
 
 Section spec.
-
-Context `{!heapG Σ}.
+Context `{!heapG Σ, !promiseG Σ}.
 
 Context {HList: ListLib Σ} {HQueue: QueueLib Σ}.
-
-Context `{!inG Σ (excl_authR boolO)}.
-Context `{!inG Σ (authR (gmapUR
-                          (loc * gname)
-                          (agreeR (laterO (val -d> (iPrePropO Σ))))))}.
 
 Lemma promise_inv_alloc : ⊢ |==> ∃ γ, ∀ q, promise_inv γ q.
 Proof.

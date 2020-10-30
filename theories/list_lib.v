@@ -203,8 +203,8 @@ Definition iter : val := λ: "f", list_iter' "f" l.
 Definition permitted us : iProp Σ := ∃ vs, ⌜ us ++ vs = xs ⌝.
 Definition complete  us : iProp Σ := ⌜ us = xs ⌝.
 
-Definition S  : iProp Σ := is_list' l xs.
-Definition S' : iProp Σ := True.
+Local Definition S  : iProp Σ := is_list' l xs.
+Local Definition S' : iProp Σ := True.
 
 Lemma iter_spec E (I : list val → iProp Σ)
                   (Ψ : iEff Σ) (f : val) :
