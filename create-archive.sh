@@ -18,6 +18,7 @@ mkdir $ARCHIVE
 cp -r \
   README.md \
   INSTALL.md \
+  LICENSE \
   theories \
   opam \
   setup.sh \
