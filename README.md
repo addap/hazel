@@ -1,6 +1,9 @@
 # Hazel - A Separation Logic for Effect Handlers
 
-This repository formalizes in Coq the contents of the homonym paper.
+This repository contains a Coq formalization of the paper
+[A Separation Logic for Effect Handlers](http://cambium.inria.fr/~fpottier/publis/de-vilhena-pottier-sleh.pdf)
+by Paulo Emílio de Vilhena and François Pottier.
+
 To build the project, please follow the instructions in the file [INSTALL.md](INSTALL.md).
 To browse the project, please take a look at the list of theories below.
 
@@ -92,4 +95,3 @@ To browse the project, please take a look at the list of theories below.
 | Shallow handler judgement  | `shallow-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`        | `shallow_handler E h r Ψ Ψ Ψ' Φ Φ'`                            |
 | Deep handler construct     | `deep-try e with h \| r`                        | `try: e with effect h \| return r end`                         |
 | Deep handler judgement     | `deep-handler ⟨Ψ⟩{Φ} h \| r ⟨Ψ'⟩{Φ'}`           | `deep_handler E h r Ψ Ψ' Φ Φ'`                                 |
-
