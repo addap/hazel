@@ -22,7 +22,7 @@ Set Default Proof Using "Type".
 
 Class ieffG Σ :=
   ieffG_authG :>
-    inG Σ (excl_authR (laterO (valO -d> (valO -d> iPrePropO Σ) -n> iPrePropO Σ))).
+    inG Σ (excl_authR (laterO (valO -d> (valO -d> iPropO Σ) -n> iPropO Σ))).
 
 Definition ieffΣ := #[
   GFunctor (authRF (optionURF (exclRF (laterOF (valO -d> (valO -d> idOF) -n> idOF)))))
@@ -60,7 +60,7 @@ Section ieff_ofe.
 
   Lemma iEff_ofe_mixin : OfeMixin (iEff Σ).
   Proof. by apply (iso_ofe_mixin iEff_car). Qed.
-  Canonical Structure iEffO := OfeT (iEff Σ) iEff_ofe_mixin.
+  Canonical Structure iEffO := Ofe (iEff Σ) iEff_ofe_mixin.
 
   Global Instance iEff_cofe : Cofe iEffO.
   Proof. by apply (iso_cofe IEff iEff_car). Qed.

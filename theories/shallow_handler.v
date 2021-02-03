@@ -227,7 +227,7 @@ Proof.
       inversion Hstep. simplify_eq.
       exists [], (TryWith (fill K e2') h r), σ₄, [].
       by apply (Ectx_prim_step _ _ _ _ (ConsCtx (TryWithCtx h r) K) e1' e2').
-    + iModIntro. iIntros (e₄ σ₄) "%". rename a into Hstep.
+    + iModIntro. iIntros (e₄ σ₄) "%". rename H0 into Hstep.
       assert (Hstep' : ∃ e₅, prim_step e σ₁ e₅ σ₄ ∧ e₄ = TryWith e₅ h r).
       { inversion Hstep. destruct K as [|Ki K].
         - simpl in H; simplify_eq. inversion H2; naive_solver.

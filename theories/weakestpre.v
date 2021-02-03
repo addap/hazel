@@ -346,7 +346,7 @@ Proof.
     iIntros "Hewp" (σ₁ ks n) "Hs".
     iMod ("Hewp" $! σ₁ with "Hs") as "[% Hewp]". iModIntro.
     iSplitR; [iPureIntro; by apply reducible_fill|].
-    iIntros (e₂ σ₂) "%". rename a into Hstep.
+    iIntros (e₂ σ₂) "%". rename H1 into Hstep.
     destruct (Ectx_prim_step_inv K _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
     iMod ("Hewp" $! e' σ₂ Hstep') as "Hewp". iIntros "!> !>".
     iMod "Hewp" as "[$ Hewp]". by iApply "IH".
@@ -376,7 +376,7 @@ Proof.
     iIntros "Hewp" (σ₁ ks n) "Hs".
     iMod ("Hewp" $! σ₁ with "Hs") as "[% Hewp]". iModIntro.
     iSplitR; [iPureIntro; by apply reducible_fill|].
-    iIntros (e₂ σ₂) "%". rename a into Hstep, H into Hred.
+    iIntros (e₂ σ₂) "%". rename H0 into Hstep, H into Hred.
     destruct (Ectx_prim_step_inv K _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
     iMod ("Hewp" $! e' σ₂ Hstep') as "Hewp". iIntros "!> !>".
     iMod "Hewp" as "[$ Hewp]". by iApply "IH".

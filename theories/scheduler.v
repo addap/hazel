@@ -23,7 +23,7 @@ From hazel               Require Import notation weakestpre deep_handler
 Class promiseG Σ := {
   promise_mapG :> inG Σ (authR (gmapUR
                                (loc * gname)
-                               (agreeR (laterO (val -d> (iPrePropO Σ))))));
+                               (agreeR (laterO (val -d> (iPropO Σ))))));
   runningG :> inG Σ (excl_authR boolO);
 }.
 
@@ -55,8 +55,8 @@ Context {HList: ListLib Σ} {HQueue: QueueLib Σ}.
 Context (δ : gname).
 
 Definition promise_unfold (Φ : val → iProp Σ) :
-  agree (later (discrete_fun (λ (_ : val), iPrePropO Σ))) :=
-  to_agree (Next (λ v, iProp_unfold (Φ v))).
+  agree (later (discrete_fun (λ (_ : val), iPropO Σ))) :=
+  to_agree (Next (λ v, (Φ v))).
 
 Definition is_promise p Φ := (∃ γ, own δ (◯ {[ (p, γ) := promise_unfold Φ ]}))%I.
 
@@ -143,7 +143,7 @@ Section promise_unfold.
     ∃ Ψ, ⌜ S !! (p, γ) = Some Ψ ⌝ ∗ (promise_unfold Ψ ≡ promise_unfold Φ).
   Proof.
     rewrite -own_op own_valid auth_both_validI /=.
-    iIntros "[_ [#HS #HvS]]". iDestruct "HS" as (S') "HS".
+    iIntros "[HS #HvS]". iDestruct "HS" as (S') "#HS".
     rewrite gmap_equivI gmap_validI.
     iSpecialize ("HS" $! (p, γ)). iSpecialize ("HvS" $! (p, γ)).
     rewrite lookup_fmap lookup_op lookup_singleton.
@@ -152,7 +152,7 @@ Section promise_unfold.
     case: (S' !! (p, γ))=> [Ψ'|] /=; by iExFalso].
     iExists Ψ. iSplit; first done.
     case: (S' !! (p, γ))=> [Ψ'|] //=.
-    iRewrite "HS" in "HvS". rewrite uPred.option_validI agree_validI.
+    iRewrite "HS" in "HvS". rewrite option_validI agree_validI.
     iRewrite -"HvS" in "HS". by rewrite agree_idemp.
   Qed.
 
@@ -162,8 +162,7 @@ Section promise_unfold.
     rewrite /promise_unfold.
     rewrite agree_equivI. iIntros "Heq". iNext. iIntros (v).
     iDestruct (discrete_fun_equivI with "Heq") as "Heq".
-    iSpecialize ("Heq" $! v).
-    by iApply iProp_unfold_equivI.  
+    by iSpecialize ("Heq" $! v).
   Qed.
 
 End promise_unfold.
@@ -183,8 +182,9 @@ Section running.
   Proof.
     rewrite /running_auth -own_op own_valid. iIntros "#H".
     iAssert (⌜ Excl' b = Excl' b' ⌝)%I as "%"; iRevert "H".
-    { iIntros (H). iPureIntro. by apply (auth_auth_frac_op_invL _ _ _ _ H). }
-    inversion H. rewrite -auth_auth_frac_op auth_validI. by iIntros "#[% _]".
+    { iIntros (H). iPureIntro. by apply (auth_auth_frac_op_inv_L _ _ _ _ H). }
+    inversion H. rewrite -auth_auth_frac_op.
+    rewrite auth_auth_frac_validI. by iIntros "#[% _]".
   Qed.
   Lemma running_frag_twice γ b b' : running_frag γ b ∗ running_frag γ b' ⊢ False.
   Proof.
@@ -192,7 +192,7 @@ Section running.
     iIntros (H). by destruct (excl_auth_frag_valid_op_1_l _ _ H).
   Qed.
   Lemma running_agree γ b b' : ⊢ running_auth γ b ∗ running_frag γ b' → ⌜ b = b' ⌝.
-  Proof. iIntros "[H● H◯]". by iDestruct (own_valid_2 with "H● H◯") as %?%excl_auth_agreeL. Qed.
+  Proof. iIntros "[H● H◯]". by iDestruct (own_valid_2 with "H● H◯") as %?%excl_auth_agree_L. Qed.
   Lemma running_agree' γ b b' : b ≠ b' → running_auth γ b -∗ running_frag γ b' -∗ False.
   Proof.
     iIntros (Hneq) "H● H◯".
@@ -334,7 +334,7 @@ Section promise_inv.
     iApply (Ectxi_ewp_bind AllocCtx). done.
     iApply ewp_pure_step. apply pure_prim_step_InjR.
     iApply ewp_value. simpl.
-    iApply ewp_mono'. { by iApply (ewp_alloc _ (InjRV l)). }
+    iApply ewp_mono'. { by iApply (ewp_alloc _ _ (InjRV l)). }
     iIntros (v) "Hp". iDestruct "Hp" as (p) "[-> Hp]".
     iMod (own_alloc (●E true ⋅ ◯E true)) as (γ) "[Hauth Hfrag]".
     - by apply excl_auth_valid.

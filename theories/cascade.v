@@ -120,7 +120,7 @@ Qed.
 Lemma ghost_state_agree γ us vs : handler_state γ us -∗ client_state γ vs -∗ ⌜ us = vs ⌝.
 Proof.
   iIntros "Hγ● Hγ◯".
-  by iDestruct (own_valid_2 with "Hγ● Hγ◯") as %?%excl_auth_agreeL.
+  by iDestruct (own_valid_2 with "Hγ● Hγ◯") as %?%excl_auth_agree_L.
 Qed.
 Lemma ghost_var_update γ ws us vs :
   handler_state γ us -∗ client_state γ vs ==∗ handler_state γ ws  ∗ client_state γ ws.

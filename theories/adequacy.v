@@ -31,10 +31,10 @@ Section adequacy.
     adequate s e σ (λ v _, φ v).
   Proof.
     intros Hwp; eapply (wp_adequacy _ _); iIntros (??) "".
-    iMod (gen_heap_init σ.(heap)) as (?) "Hh".
+    iMod (gen_heap_init σ.(heap)) as (?) "[Hh _]".
     iMod (inv_heap_init loc val) as (?) ">Hi".
     iModIntro. iExists
-      (λ σ κs, gen_heap_ctx σ.(heap)),
+      (λ σ κs, gen_heap_interp σ.(heap)),
       (λ _, True%I).
     iFrame. iApply (Hwp (HeapG _ _ _ _)).
   Qed.

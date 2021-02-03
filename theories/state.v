@@ -97,7 +97,7 @@ Qed.
 Lemma ghost_var_agree γ v w : ⊢ (state γ v ∗ points_to γ w) → ⌜ v = w ⌝.
 Proof.
   iIntros "[H● H◯]".
-  by iDestruct (own_valid_2 with "H● H◯") as %?%excl_auth_agreeL.
+  by iDestruct (own_valid_2 with "H● H◯") as %?%excl_auth_agree_L.
 Qed.
 Lemma ghost_var_update γ w u v :
   state γ u -∗ points_to γ v ==∗ state γ w  ∗ points_to γ w.

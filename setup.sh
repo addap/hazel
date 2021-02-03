@@ -36,7 +36,7 @@ export OPAMYES=true
 opam switch create \
   --no-install \
   --repositories=default,coq-released=https://coq.inria.fr/opam/released,iris-dev=git+https://gitlab.mpi-sws.org/iris/opam.git \
-  . ocaml-base-compiler.4.09.1
+  . ocaml-base-compiler.4.11.1
 
 eval $(opam env)
 
@@ -46,7 +46,7 @@ opam update
 echo "Installing Coq and the necessary Coq libraries."
 echo "This will take a while (perhaps over 10 minutes)..."
 
-opam pin add -n coq 8.11.2
+opam pin add -n coq 8.13.0
 make build-dep
 
 echo "Now compiling the Coq proofs."
