@@ -5,7 +5,7 @@
    handlers as a primitive construct for catching effects.
 
    We also introduce the proposition [deep_handler] for stating
-   the correctness of a handler implmentation.
+   the correctness of a handler implementation.
 
 *)
 
