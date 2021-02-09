@@ -1,14 +1,12 @@
 (* deep_handler.v
 
-   Here, we define a deep single-effect handler as a program
-   named [deep_try_with] written in our language which only
-   has a shallow "try-with" construct for catching effects.
+   Here, we define a deep effect handler as a program of
+   the language [eff_lang] which only provides shallow
+   handlers as a primitive construct for catching effects.
 
-   We also introduce a judgement called [deep_handler] that
-   holds when the branches of the handler are correct.
-   We then use this definition to state and prove a specification
-   for the program [deep_try_with]. This can be seen as a
-   reasoning rule for deep handlers.
+   We also introduce the proposition [deep_handler] for stating
+   the correctness of a handler implmentation.
+
 *)
 
 From stdpp               Require Import list.
@@ -18,7 +16,7 @@ From hazel               Require Import notation weakestpre shallow_handler.
 From hazel               Require Export heap.
 
 
-(** * Deep Single-Effect Handler. *)
+(** * Deep Handler. *)
 
 (* Program definition. *)
 
@@ -116,7 +114,7 @@ Proof.
   { by iApply deep_handler_sum_elim_r. }
 Qed.
 
-(* Deep single-effect handler reasoning rule. *)
+(* Deep handler reasoning rule. *)
 
 Lemma ewp_deep_try_with E Ψ Ψ' Φ Φ' (e : expr) (h r : val) :
   EWP e @ E <| Ψ |> {{ Φ }} -∗ deep_handler E h r Ψ Ψ' Φ Φ' -∗
