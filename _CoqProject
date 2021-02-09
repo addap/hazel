@@ -15,6 +15,7 @@ theories/heap.v
 
 theories/shallow_handler.v
 theories/deep_handler.v
+theories/selective_handler.v
 
 theories/list_lib.v
 theories/queue_lib.v
