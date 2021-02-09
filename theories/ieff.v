@@ -6,7 +6,7 @@
    and the sum of protocols [iEff_sum] are both defined here.
 
    Towards the end of the file, we define the notion of protocol
-   ordering and prove some basic properties.
+   ordering and prove some of its basic properties.
 *)
 
 From iris.proofmode  Require Import tactics.
@@ -222,6 +222,17 @@ Definition iEff_marker_eq : @iEff_marker = @iEff_marker_def :=
 Arguments iEff_marker {_} _ _%ieff.
 Instance: Params (@iEff_marker) 3 := {}.
 
+(* iEff_filter. *)
+Program Definition iEff_filter_def {Σ} (P : val → Prop) (e : iEff Σ) : iEff Σ :=
+  IEff (λ v', λne q', ⌜ P v' ⌝ ∗ iEff_car e v' q')%I.
+Next Obligation. solve_proper. Qed.
+Definition iEff_filter_aux : seal (@iEff_filter_def). by eexists. Qed.
+Definition iEff_filter := iEff_filter_aux.(unseal).
+Definition iEff_filter_eq : @iEff_filter = @iEff_filter_def :=
+  iEff_filter_aux.(seal_eq).
+Arguments iEff_filter {_} _ _%ieff.
+Instance: Params (@iEff_marker) 3 := {}.
+
 (* iEff_sum. *)
 Program Definition iEff_sum_def {Σ} (e1 e2 : iEff Σ) : iEff Σ :=
   IEff (λ w', λne q', (iEff_car e1 w' q') ∨ (iEff_car e2 w' q'))%I.
@@ -241,6 +252,10 @@ Notation "Ψ1 '<+>' Ψ2"  := (iEff_sum Ψ1 Ψ2)
 Notation "f '#>' Ψ"  := (iEff_marker f Ψ)
   (at level 15, right associativity,
    format "f #> Ψ") : ieff_scope.
+
+Notation "P '?>' Ψ"  := (iEff_filter P Ψ)
+  (at level 15, right associativity,
+   format "P ?> Ψ") : ieff_scope.
 
 
 (** * Basic Properties. *)
@@ -301,6 +316,17 @@ Section ieff_proofs.
   Proof.
     intros ???. apply equiv_dist=>n; apply iEff_marker_ne; by apply equiv_dist.
   Qed.
+  Global Instance iEff_filter_ne P n :
+    Proper ((dist n) ==> (dist n)) (iEff_filter (Σ:=Σ) P).
+  Proof.
+    intros ???. rewrite iEff_filter_eq /iEff_filter_def.
+    f_equiv=>v' q' //=. f_equiv; by apply iEff_car_ne.
+  Qed.
+  Global Instance iEff_filter_proper P :
+    Proper ((≡) ==> (≡)) (iEff_filter (Σ:=Σ) P).
+  Proof.
+    intros ???. apply equiv_dist=>n; apply iEff_filter_ne; by apply equiv_dist.
+  Qed.
 
 
   Global Instance iEffPre_exist_ne A n :
@@ -347,6 +373,53 @@ Section ieff_proofs.
   Global Instance iEff_sum_right_id : RightId (≡) (⊥) (iEff_sum (Σ:=Σ)).
   Proof. intros e. rewrite iEff_sum_comm. by apply iEff_sum_left_id. Qed.
 
+
+  Lemma iEff_filter_bottom P : (P ?> ⊥ ≡ (⊥ : iEff Σ))%ieff.
+  Proof.
+    intros v q. rewrite iEff_filter_eq /iEff_filter_def //=.
+    by iSplit; [iIntros "[_ H]"|].
+  Qed.
+  Lemma iEff_filter_true (Ψ : iEff Σ) : ((λ _, True) ?> Ψ ≡ Ψ)%ieff.
+  Proof.
+    intros v q. rewrite iEff_filter_eq /iEff_filter_def //=.
+    iSplit; [iIntros "[_ H]"|iIntros "H"]; by auto.
+  Qed.
+  Lemma iEff_filter_false (Ψ : iEff Σ) : ((λ _, False) ?> Ψ ≡ (⊥ : iEff Σ))%ieff.
+  Proof.
+    intros v q. rewrite iEff_filter_eq /iEff_filter_def //=.
+    iSplit; [iIntros "[H _]"|iIntros "H"]; by auto.
+  Qed.
+  Lemma iEff_filter_filter P Q (Ψ : iEff Σ) :
+    (P ?> (Q ?> Ψ) ≡ (λ (v : val), P v ∧ Q v) ?> Ψ)%ieff.
+  Proof.
+    intros v q. rewrite iEff_filter_eq /iEff_filter_def //=.
+    iSplit; [iIntros "(% & % & H)"|iIntros "[[% %] H]"]; by auto.
+  Qed.
+  Lemma iEff_filter_filter_l (P Q : val → Prop) (Ψ : iEff Σ) :
+    (∀ v, P v → Q v) → (P ?> (Q ?> Ψ) ≡ P ?> Ψ)%ieff.
+  Proof.
+    intros H v q. rewrite iEff_filter_eq /iEff_filter_def //=.
+    iSplit; [iIntros "(% & % & H)"|iIntros "[% H]"]; by auto.
+  Qed.
+  Lemma iEff_filter_filter_r (P Q : val → Prop) (Ψ : iEff Σ) :
+    (∀ v, Q v → P v) → (P ?> (Q ?> Ψ) ≡ Q ?> Ψ)%ieff.
+  Proof.
+    intros H v q. rewrite iEff_filter_eq /iEff_filter_def //=.
+    iSplit; [iIntros "(% & % & H)"|iIntros "[% H]"]; by auto.
+  Qed.
+  Lemma iEff_filter_sum_distr P (Ψ1 Ψ2 : iEff Σ) :
+    ((P ?> (Ψ1 <+> Ψ2)) ≡ (P ?> Ψ1) <+> (P ?> Ψ2))%ieff.
+  Proof.
+    intros v q. rewrite iEff_sum_eq iEff_filter_eq /iEff_sum_def /iEff_filter_def.
+    simpl. iSplit; [iIntros "[% [H|H]]"|iIntros "[[% H]|[% H]]"]; by auto.
+  Qed.
+  Lemma iEff_sum_filter_eq (P : val → Prop) `{!∀ v, Decision (P v)} (Ψ : iEff Σ) :
+    (Ψ ≡ (P ?> Ψ) <+> ((λ v, ¬ P v) ?> Ψ))%ieff.
+  Proof.
+    intros v q. rewrite iEff_sum_eq iEff_filter_eq /iEff_sum_def /iEff_filter_def.
+    simpl. iSplit; [iIntros "H"|iIntros "[[% H]|[% H]]"]; iFrame.
+    iPureIntro. case (decide (P v)); by auto.
+  Qed.
 
   Lemma iEff_marker_bottom f : (f #> ⊥ ≡ (⊥ : iEff Σ))%ieff.
   Proof.

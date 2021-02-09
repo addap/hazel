@@ -1,11 +1,8 @@
 (* protocol_agreement.v
 
-   We introduce the notion of [protocol_agreement] which intuitevely
-   states when a value can be raised as the argument of an effect.
-
-   This definition is very important because it is endowed of a
-   proof theory that when correctly manipulated allows the user
-   to never rely on the semantic model of protocols.
+   We introduce the notion of [protocol_agreement]: a logical
+   proposition describing which values are allowed to be sent
+   as effect arguments when a certain protocol is in place.
 *)
 
 
@@ -121,6 +118,16 @@ Proof.
   iIntros "H". rewrite iEff_marker_eq /protocol_agreement //=.
   iDestruct "H" as (Q) "[HP HQ]". iDestruct "HP" as (w) "[-> HP]".
   iExists w. iSplit; [done|]. iExists Q. by iFrame.
+Qed.
+
+Lemma protocol_agreement_filter v P Ψ Φ :
+  protocol_agreement v (P ?> Ψ) Φ ⊣⊢ ⌜ P v ⌝ ∗ protocol_agreement v Ψ Φ.
+Proof.
+  rewrite iEff_filter_eq /protocol_agreement //=. iSplit.
+  - iIntros "H". iDestruct "H" as (Q) "[[% HP] HQ]".
+    iSplit; [done|]. by eauto with iFrame.
+  - iIntros "[% H]". iDestruct "H" as (Q) "[HP HQ]".
+    by eauto with iFrame.
 Qed.
 
 Lemma protocol_agreement_sum_assoc v Ψ1 Ψ2 Ψ3 Φ :
