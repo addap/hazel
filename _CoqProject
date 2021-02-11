@@ -26,4 +26,6 @@ theories/state.v
 theories/exceptions.v
 theories/scheduler.v
 
+theories/ml_references.v
+
 theories/adequacy.v
