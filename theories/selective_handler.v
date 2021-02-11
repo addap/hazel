@@ -4,15 +4,17 @@
 
 From stdpp               Require Import list.
 From iris.proofmode      Require Import base tactics classes.
+From iris.base_logic.lib Require Import iprop wsat.
 From iris.program_logic  Require Import weakestpre.
 From hazel               Require Import notation weakestpre shallow_handler deep_handler.
+From hazel               Require Export heap.
 
 
 (** * Selective Handler. *)
 
 (* Program definition. *)
 
-Definition selective_try_with : val := λ: "f" "e" "h" "r",
+Definition selective_try_with : val := λ: "e" "f" "h" "r",
   try: "e" #() with
     effect (λ: "v" "k",
       if: "f" "v" then "h" "v" "k" else "k" (do: "v"))
@@ -27,30 +29,32 @@ Context `{!heapG Σ}.
 (* Selective handler judgement. *)
 
 Definition selective_handler_pre :
-  (coPset -d> expr -d> expr -d> (val → Prop) -d>
+  (coPset -d> (val → Prop) -d> expr -d> expr -d>
         iEff Σ -d> iEff Σ -d> (val -d> iPropO Σ) -d> (val -d> iPropO Σ) -d> iPropO Σ) →
-  (coPset -d> expr -d> expr -d> (val → Prop) -d>
+  (coPset -d> (val → Prop) -d> expr -d> expr -d>
         iEff Σ -d> iEff Σ -d> (val -d> iPropO Σ) -d> (val -d> iPropO Σ) -d> iPropO Σ)
-  := λ selective_handler E h r P Ψ Ψ' Φ Φ',
+  := λ selective_handler E P h r Ψ Ψ' Φ Φ',
+
   ((shallow_return_handler E r Ψ' Φ Φ') ∧
 
    (∀ v k,
      protocol_agreement v (P ?> Ψ) (λ w, ∀ Ψ'' Φ'',
-       ( ▷ selective_handler E h r P Ψ Ψ'' Φ Φ'' -∗
+       ( ▷ selective_handler E P h r Ψ Ψ'' Φ Φ'' -∗
          EWP (Val k) (Val w) @ E <| Ψ'' |> {{ Φ'' }})) -∗
      ▷ EWP App (App h (Val v)) (Val k) @ E <| Ψ' |> {{ Φ' }}) ∧
 
    (∀ v k,
      protocol_agreement v ((λ v, ¬ P v : Prop) ?> Ψ) (λ w, ∀ Ψ'' Φ'',
-       ( ▷ selective_handler E h r P Ψ Ψ'' Φ Φ'' -∗
+       ( ▷ selective_handler E P h r Ψ Ψ'' Φ Φ'' -∗
          EWP (Val k) (Val w) @ E <| Ψ'' |> {{ Φ'' }})) -∗
      ▷ protocol_agreement v Ψ' (λ w,
          EWP (Val k) (Val w) @ E <| Ψ' |> {{ Φ' }})))%I.
-Arguments selective_handler_pre _ _%E _%E _ _%ieff _%ieff _%I _%I.
+
+Arguments selective_handler_pre _ _ _%E _%E _%ieff _%ieff _%I _%I.
 
 Local Instance selective_handler_pre_contractive : Contractive selective_handler_pre.
 Proof.
-  rewrite /selective_handler_pre => n hanlder handler' Hhandler E h r P Ψ Ψ' Φ Φ'.
+  rewrite /selective_handler_pre => n hanlder handler' Hhandler E P h r Ψ Ψ' Φ Φ'.
   repeat (f_contractive || f_equiv); intros ?; simpl;
   repeat (f_contractive || f_equiv); apply Hhandler.
 Qed.
@@ -59,20 +63,20 @@ Definition selective_handler_aux : seal selective_handler_def. Proof. by eexists
 Definition selective_handler := selective_handler_aux.(unseal).
 Definition selective_handler_eq : selective_handler = selective_handler_def
   := selective_handler_aux.(seal_eq).
-Arguments selective_handler _ _%E _%E _ _%ieff _%ieff _%I _%I.
+Arguments selective_handler _ _ _%E _%E _%ieff _%ieff _%I _%I.
 
-Global Lemma selective_handler_unfold E h r P Ψ Ψ' Φ Φ' :
-  selective_handler E h r P Ψ Ψ' Φ Φ' ⊣⊢
-  selective_handler_pre selective_handler E h r P Ψ Ψ' Φ Φ'.
+Global Lemma selective_handler_unfold E P h r Ψ Ψ' Φ Φ' :
+  selective_handler E P h r Ψ Ψ' Φ Φ' ⊣⊢
+  selective_handler_pre selective_handler E P h r Ψ Ψ' Φ Φ'.
 Proof.
   rewrite selective_handler_eq /selective_handler_def.
   by apply (fixpoint_unfold selective_handler_pre).
 Qed.
 
-Global Instance selective_handler_ne E h r P n :
+Global Instance selective_handler_ne E P h r n :
   Proper
     ((dist n) ==> (dist n) ==> (dist n) ==> (dist n) ==> (dist n))
-  (selective_handler E h r P).
+  (selective_handler E P h r).
 Proof.
   induction (lt_wf n) as [n _ IH]=> Ψ1 Ψ2 HΨ Ψ'1 Ψ'2 HΨ' Φ1 Φ2 HΦ Φ'1 Φ'2 HΦ'.
   rewrite !selective_handler_unfold /selective_handler_pre.
@@ -84,8 +88,8 @@ Proof.
   apply IH; try lia; eapply dist_le; eauto with lia.
   intros ?. f_equiv; eapply dist_le; eauto with lia.
 Qed.
-Global Instance selective_handler_proper E h r P :
-  Proper ((≡) ==> (≡) ==> (≡) ==> (≡) ==> (≡)) (selective_handler E h r P).
+Global Instance selective_handler_proper E P h r :
+  Proper ((≡) ==> (≡) ==> (≡) ==> (≡) ==> (≡)) (selective_handler E P h r).
 Proof.
   intros ??? ??? ??? ???.
   apply equiv_dist=>n. apply selective_handler_ne; apply equiv_dist; done.
@@ -94,23 +98,23 @@ Qed.
 
 (* Selective handler reasoning rule. *)
 
-Lemma ewp_selective_try_with P `{!∀ x, Decision (P x)}
+Lemma ewp_selective_try_with (P : val → Prop) `{!∀ x, Decision (P x)}
   E Ψ Ψ' Φ Φ' (f : val) (e : expr) (h r : val) :
   EWP e @ E <| Ψ |> {{ Φ }}
     -∗
-      □ (∀ x, EWP f x @ E {{ λ y, ⌜ y = #(bool_decide (P x)) ⌝ }} )
+      □ (∀ (x : val), EWP f x @ E {{ λ y, ⌜ y = #(bool_decide (P x)) ⌝ }} )
         -∗
-          selective_handler E h r P Ψ Ψ' Φ Φ'
+          selective_handler E P h r Ψ Ψ' Φ Φ'
  -∗
-   EWP (selective_try_with f (λ: <>, e) h r) @ E <| Ψ' |> {{ Φ' }}.
+   EWP (selective_try_with (λ: <>, e) f h r) @ E <| Ψ' |> {{ Φ' }}.
 Proof.
   iIntros "He #f_spec Hhandler".  
   unfold selective_try_with.
   iApply (Ectxi_ewp_bind (AppLCtx _)). done.
   iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
   iApply (Ectxi_ewp_bind (AppLCtx _)). done.
+  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
+  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
   iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
   iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
   iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
@@ -163,3 +167,148 @@ Proof.
 Qed.
 
 End selective_handler.
+
+
+Section label_selection.
+Context `{!heapG Σ}.
+
+Definition fresh_label : val := λ: <>, ref #().
+
+Definition label_selection : val := λ: "l" "v", "l" = Fst "v".
+
+Definition label_try_with : val := λ: "e" "l" "h" "r",
+  selective_try_with (λ: <>, "e" #()) (λ: "v", label_selection "l" "v") "h" "r".
+
+
+(* Specification of [fresh_label]. *)
+
+Definition known_labels : list loc → iProp Σ := λ S,
+  ([∗ list] l ∈ S, l ↦□ #())%I.
+
+Global Instance known_labels_persistent S : Persistent (known_labels S).
+Proof. rewrite /ownI. apply _. Qed.
+
+Lemma known_labels_nil : ⊢ known_labels [].
+Proof. done. Qed.
+
+Lemma fresh_label_spec E Ψ S :
+  known_labels S -∗
+    EWP fresh_label #() @ E <| Ψ |> {{ lk, ∃ (l : loc), ⌜ lk = #l ⌝ ∗
+      ⌜ l ∉ S ⌝ ∗ known_labels (l :: S) }}.
+Proof.
+  iIntros "HS". iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+  iApply ewp_mono'; [by iApply ewp_alloc|].
+  iIntros (v) "H". iDestruct "H" as (l) "[-> Hl]".
+
+  iAssert (⌜l ∉ S⌝ ∗ known_labels S ∗ l ↦ #())%I
+    with "[HS Hl]" as "(Haux & HS & Hl)".
+  { iSplit; [|iFrame].
+    iInduction S as [|l' S] "IH".
+    { iPureIntro. by apply not_elem_of_nil. }
+    { rewrite not_elem_of_cons /known_labels big_opL_cons.
+      iDestruct "HS" as "[Hl' HS]". iSplit.
+      { by iApply (mapsto_ne with "Hl Hl'"). }
+      { by iApply ("IH" with "HS Hl"). }
+    }
+  }
+
+  iMod (mapsto_persist with "Hl") as "Hl". iModIntro.
+  iExists l. by iFrame.
+Qed.
+
+Definition known_labels' : gset loc → iProp Σ := λ S,
+  known_labels (elements S).
+
+Lemma known_labels_empty : ⊢ known_labels' ∅.
+Proof. done. Qed.
+
+Lemma fresh_label_spec' E Ψ (S : gset loc) :
+  known_labels' S -∗
+    EWP fresh_label #() @ E <| Ψ |> {{ lk, ∃ (l : loc), ⌜ lk = #l ⌝ ∗
+      ⌜ l ∉ S ⌝ ∗ known_labels' ({[l]} ∪ S) }}.
+Proof.
+  iIntros "HS". iApply ewp_mono; [|iApply (fresh_label_spec with "HS")].
+  iIntros (lk). iDestruct 1 as (l) "(-> & % & Hlabels)". iModIntro.
+  iExists (l). iSplit; [done|]. iSplit.
+  { iPureIntro. by rewrite <-elem_of_elements. }
+  { iApply big_opL_permutation; [|iApply "Hlabels"].
+    apply elements_union_singleton.
+    by rewrite <-elem_of_elements.
+  }
+Qed.
+
+
+(* Specification of [label_selection]. *)
+
+Definition compare_label (l : val) : val → Prop := λ v,
+  match v with PairV r _ => l = r | _ => False end.
+
+Global Instance compare_label_dec l v : Decision (compare_label l v).
+Proof. unfold compare_label. case v; solve_decision. Qed.
+
+(* **************************************************************** *)
+(* FIXME: the lemma bellow is false: if [v] is not a value pair,
+          then [label_selection #l v] blocks. Moreover, there is no
+          implementation written in [eff_lang] that would satisfy
+          this specification, because the language doesn't provide
+          pair deconstructors other than [Fst] and [Snd].
+
+          Here are some ideas for fixing this in the future:
+          (1) Extend [eff_lang] with dynamic pair deconstructors.
+          (2) Add an "and" operation on protocols to describe
+              effect arguments sent in the form of value pairs.
+*)
+
+Lemma label_selection_spec E Ψ (l : val) (v : val) :
+  ⊢ EWP label_selection l v @ E <| Ψ |> {{ b,
+      ⌜ b = #(bool_decide (compare_label l v)) ⌝ }}.
+Admitted.
+(* **************************************************************** *)
+
+
+(* Labelled-effect handler reasoning rule. *)
+
+Lemma ewp_label_try_with E Ψ Ψ' Φ Φ' (l : val) (e : expr) (h r : val) :
+  EWP e @ E <| Ψ |> {{ Φ }}
+    -∗
+      selective_handler E (compare_label l) h r Ψ Ψ' Φ Φ'
+ -∗
+   EWP (label_try_with (λ: <>, e) l h r) @ E <| Ψ' |> {{ Φ' }}.
+Proof.
+  iIntros "He Hhandler".
+  iApply (ewp_bind (ConsCtx (AppLCtx _) (ConsCtx (AppLCtx _)
+                   (ConsCtx (AppLCtx _) (ConsCtx (AppRCtx _) EmptyCtx))))). done.
+  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
+  unfold label_try_with.
+  iApply (ewp_bind (ConsCtx (AppLCtx _) (ConsCtx (AppLCtx _)
+                   (ConsCtx (AppLCtx _) EmptyCtx)))). done.
+  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
+  iApply (ewp_bind (ConsCtx (AppLCtx _) (ConsCtx (AppLCtx _) EmptyCtx))). done.
+  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
+  iApply (ewp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done.
+  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
+  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+  iApply (ewp_bind (ConsCtx (AppLCtx _) (ConsCtx (AppLCtx _)
+                   (ConsCtx (AppRCtx _) (EmptyCtx))))). done.
+  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
+  iApply (ewp_selective_try_with  with "[He] [] [Hhandler]").
+  { iApply ewp_pure_step. apply pure_prim_step_beta. simpl. by iApply "He". }
+  { iModIntro. iIntros (v). iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
+    by iApply label_selection_spec.
+  }
+  { by iApply "Hhandler". }
+Qed.
+
+End label_selection.
+
+
+Notation LabelTryWith e l h r :=
+  (App (App (App (App label_try_with (Lam BAnon e)) l) h) r) (only parsing).
+
+Notation "'try:' e 'with' 'label' l 'effect' h | 'return' r 'end'" :=
+  (LabelTryWith e l h r)
+  (e, l, h, r at level 200, only parsing) : expr_scope.
+
