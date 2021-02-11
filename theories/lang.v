@@ -1060,6 +1060,25 @@ Qed.
 Lemma eff_not_pure' v k e e' : to_eff e = Some (v, k) → ¬ pure_prim_step e e'.
 Proof. intro H1; rewrite <- (of_to_eff _ _ _ H1). by apply eff_not_pure. Qed.
 
+Lemma pure_prim_step_unop op v v' :
+  un_op_eval op v = Some v' →
+    pure_prim_step (UnOp op (Val v)) (Val v').
+Proof.
+  intro Heval. apply pure_prim_stepI'; [intros ?; by apply UnOpS|].
+  intros ??. destruct K as [|Ki K]; try destruct Ki; try naive_solver.
+  intros [=]. destruct (fill_val' _ _ _ (eq_sym H1)) as [-> ->]; by eauto.
+Qed.
+
+Lemma pure_prim_step_binop op v1 v2 v' :
+  bin_op_eval op v1 v2 = Some v' →
+    pure_prim_step (BinOp op (Val v1) (Val v2)) (Val v').
+Proof.
+  intro Heval. apply pure_prim_stepI'; [intros ?; by apply BinOpS|].
+  intros ??. destruct K as [|Ki K]; try destruct Ki; try naive_solver.
+  intros [=]. destruct (fill_val' _ _ _ (eq_sym H1)) as [-> ->]; by eauto.
+  intros [=]. destruct (fill_val' _ _ _ (eq_sym H2)) as [-> ->]; by eauto.
+Qed.
+
 Lemma pure_prim_step_beta f x e v :
   pure_prim_step ((App (Val $ RecV f x e) (Val v)))
                  (subst' x v (subst' f (RecV f x e) e)).
