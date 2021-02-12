@@ -25,17 +25,55 @@ Class ProphLib Σ `{!heapG Σ} := {
   ResolveProph : val;
 
   Proph :
-    val -d> (gset loc) -d> (gset loc) -d> iPropO Σ;
+    loc -d> (list val) -d> iPropO Σ;
 
   ewp_new_proph_spec E Ψ :
-    ⊢ EWP NewProph #() @ E <| Ψ |> {{ p, ∃ L, Proph p ∅ L }};
+    ⊢ EWP NewProph #() @ E <| Ψ |> {{ y,
+        ∃ (p : loc) us, ⌜ y = #p ⌝ ∗ Proph p us }};
 
-  ewp_resolve_proph_spec E Ψ p S L (r : loc) :
-    ⌜ r ∉ S ⌝ -∗ Proph p S L -∗
-      EWP ResolveProph p #r @ E <| Ψ |> {{ _,
-        ∃ L', ⌜ r ∉ L' ⌝ ∗ ⌜ L = {[r]} ∪ L' ⌝ ∗ Proph p ({[r]} ∪ S) L' }};
+  ewp_resolve_proph_spec E Ψ p us (u : val) :
+    Proph p us -∗
+      EWP ResolveProph #p u @ E <| Ψ |> {{ _,
+        ∃ us', ⌜ us = u :: us' ⌝ ∗ Proph p us' }};
 
 }.
+
+Section proph_lib.
+Context `{!heapG Σ} `{!ProphLib Σ}.
+
+Definition to_loc_list : list val → list loc :=
+  fix go (us : list val) {struct us} : list loc :=
+    match us with (LitV (LitLoc r)) :: us' => r :: go us' | _ => [] end.
+
+Definition Proph' (p : loc) (S L : gset (loc)) : iProp Σ :=
+  ∃ us, Proph p us ∗ ⌜ L = (list_to_set (to_loc_list us)) ∖ S ⌝.
+
+Lemma ewp_new_proph_spec' E Ψ :
+  ⊢ EWP NewProph #() @ E <| Ψ |> {{ y, ∃ (p : loc) L, ⌜ y = #p ⌝ ∗ Proph' p ∅ L }}.
+Proof.
+  iApply ewp_mono; [|iApply ewp_new_proph_spec].
+  iIntros (v). iDestruct 1 as (p us) "[-> Hp]". iModIntro.
+  iExists p, (list_to_set (to_loc_list us)). iSplit; [done|].
+  iExists us. iFrame. by rewrite difference_empty_L.
+Qed.
+
+Lemma  ewp_resolve_proph_spec' E Ψ p S L (r : loc) :
+  ⌜ r ∉ S ⌝ -∗ Proph' p S L -∗
+    EWP ResolveProph #p #r @ E <| Ψ |> {{ _,
+      ∃ L', ⌜ r ∉ L' ⌝ ∗ ⌜ L = {[r]} ∪ L' ⌝ ∗ Proph' p ({[r]} ∪ S) L' }}.
+Proof.
+  iIntros (Hnot_in). iDestruct 1 as (us) "[Hp %]". rename H into HL.
+  iApply (ewp_mono' with "[Hp]"); [iApply (ewp_resolve_proph_spec with "Hp")|].
+  iIntros (v). iDestruct 1 as (ls') "[-> Hp]". iModIntro.
+  iExists (L ∖ {[r]}). iSplit; [iPureIntro|iSplit; [iPureIntro|]].
+  { set_solver. }
+  { apply union_difference_L. rewrite HL. simpl.
+    apply subseteq_difference_r; set_solver.
+  }
+  { iExists ls'. iFrame. iPureIntro. rewrite HL. simpl. set_solver. }
+Qed.
+
+End proph_lib.
 
 
 (** Implementation. *)
@@ -201,8 +239,8 @@ Proof. solve_inG. Qed.
 Section ghost_theory.
 Context `{!heapG Σ} `{!stateG Σ} `{!ProphLib Σ}.
 
-Definition handler_inv (M : gmap loc gname) (S L : gset loc) (p : val) : iProp Σ :=
-  known_labels' S ∗ Proph p S L ∗ ⌜ dom (gset loc) M = S ∪ L ⌝ ∗
+Definition handler_inv (M : gmap loc gname) (S L : gset loc) (p : loc) : iProp Σ :=
+  known_labels S ∗ Proph' p S L ∗ ⌜ dom (gset loc) M = S ∪ L ⌝ ∗
   ([∗ set] r ∈ L, ∃ γ, ⌜ M !! r = Some γ ⌝ ∗ own γ (●E #()) ∗ own γ (◯E #()))%I.
 
 Definition mapsto (M : gmap loc gname) (r : loc) (x : val) : iProp Σ :=
@@ -246,19 +284,8 @@ Proof.
   }
 Qed.
 
-(* **************************************************** *)
-(* FIXME: lemma no longer needed. Perhaps add to stdpp. *)
-Lemma list_to_set_elements (L : gset loc) : list_to_set (elements L) = L.
-Proof.
-  induction L as [| l L not_in IH] using set_ind_L; [done|].
-  rewrite (list_to_set_perm_L _ (l :: elements L)).
-  - simpl; by rewrite IH.
-  - by apply elements_union_singleton.
-Qed.
-(* **************************************************** *)
-
-Lemma handler_inv_alloc (p : val) (L : gset loc) :
-  Proph p ∅ L ==∗ ∃ M, handler_inv M ∅ L p.
+Lemma handler_inv_alloc (p : loc) (L : gset loc) :
+  Proph' p ∅ L ==∗ ∃ M, handler_inv M ∅ L p.
 Proof.
   iIntros "Hp". iMod (heap_alloc L) as (M) "[% HM]". iModIntro.
   iExists M. iFrame. rewrite union_empty_l_L. by iSplit; [iApply known_labels_empty|].
@@ -388,7 +415,7 @@ Lemma ref_handler_spec E M S L p Φ :
       (* Effect branch: *) (λ: "v" "k",
         let: "init" := Snd "v" in
         let: "r" := fresh_label #() in
-        ResolveProph p "r";;
+        ResolveProph #p "r";;
         let: "comp" := try: "k" "r" with label (InjR "r")
           effect (λ: "v" "k", match: Snd "v" with
             InjL <>  => λ: "x", ("k" "x") "x"
@@ -427,7 +454,7 @@ Proof.
     iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
     iApply (Ectxi_ewp_bind (AppRCtx _)). done.
     iApply ewp_strong_mono; first done;[
-    iApply (fresh_label_spec' with "Hlabels")|iApply iEff_le_refl|].
+    iApply (fresh_label_spec with "Hlabels")|iApply iEff_le_refl|].
     iIntros (lk). iClear "Hlabels". iDestruct 1 as (r) "[-> [% Hlabels]]".
     simpl. rename H into Hnot_in.
     iModIntro. iApply (Ectxi_ewp_bind (AppLCtx _)). done.
@@ -435,7 +462,7 @@ Proof.
     iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
     iApply (Ectxi_ewp_bind (AppRCtx _)). done.
     iApply (ewp_strong_mono with "[Hp]"); first done; [
-    iApply (ewp_resolve_proph_spec with "[//] Hp")|iApply iEff_le_refl|].
+    iApply (ewp_resolve_proph_spec' with "[//] Hp")|iApply iEff_le_refl|].
     iDestruct (1) as (L') "(% & -> & Hp)". rename H into Hnot_in'. simpl.
     iModIntro. iApply (Ectxi_ewp_bind (AppLCtx _)). done.
     iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
@@ -489,8 +516,8 @@ Lemma run_spec E Φ (client : val) :
 Proof.
   iIntros "Hclient". iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
   iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply ewp_mono'; [by iApply ewp_new_proph_spec|].
-  iIntros (p). iDestruct 1 as (L) "Hp". simpl.
+  iApply ewp_mono'; [by iApply ewp_new_proph_spec'|].
+  iIntros (v). iDestruct 1 as (p L) "[-> Hp]". simpl.
   iMod (handler_inv_alloc with "Hp") as (M) "Hinv". iModIntro.
   iSpecialize ("Hclient" $! (mapsto M)).
   iApply (Ectxi_ewp_bind (AppLCtx _)). done.

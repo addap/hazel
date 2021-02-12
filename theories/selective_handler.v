@@ -182,30 +182,31 @@ Definition label_try_with : val := λ: "e" "l" "h" "r",
 
 (* Specification of [fresh_label]. *)
 
-Definition known_labels : list loc → iProp Σ := λ S,
-  ([∗ list] l ∈ S, l ↦□ #())%I.
+Definition known_labels : gset loc → iProp Σ := λ S,
+  ([∗ set] l ∈ S, l ↦□ #())%I.
 
 Global Instance known_labels_persistent S : Persistent (known_labels S).
 Proof. rewrite /ownI. apply _. Qed.
 
-Lemma known_labels_nil : ⊢ known_labels [].
-Proof. done. Qed.
+Lemma known_labels_empty : ⊢ known_labels ∅.
+Proof. unfold known_labels. by auto. Qed.
 
 Lemma fresh_label_spec E Ψ S :
   known_labels S -∗
     EWP fresh_label #() @ E <| Ψ |> {{ lk, ∃ (l : loc), ⌜ lk = #l ⌝ ∗
-      ⌜ l ∉ S ⌝ ∗ known_labels (l :: S) }}.
+      ⌜ l ∉ S ⌝ ∗ known_labels ({[l]} ∪ S) }}.
 Proof.
   iIntros "HS". iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
   iApply ewp_mono'; [by iApply ewp_alloc|].
   iIntros (v) "H". iDestruct "H" as (l) "[-> Hl]".
 
   iAssert (⌜l ∉ S⌝ ∗ known_labels S ∗ l ↦ #())%I
-    with "[HS Hl]" as "(Haux & HS & Hl)".
+    with "[HS Hl]" as "(% & HS & Hl)".
   { iSplit; [|iFrame].
-    iInduction S as [|l' S] "IH".
-    { iPureIntro. by apply not_elem_of_nil. }
-    { rewrite not_elem_of_cons /known_labels big_opL_cons.
+    iInduction S as [|l' S Hnot_in] "IH" using set_ind_L.
+    { iPureIntro. by apply not_elem_of_empty. }
+    { rewrite not_elem_of_union not_elem_of_singleton /known_labels.
+      rewrite big_opS_insert; [|done].
       iDestruct "HS" as "[Hl' HS]". iSplit.
       { by iApply (mapsto_ne with "Hl Hl'"). }
       { by iApply ("IH" with "HS Hl"). }
@@ -213,28 +214,8 @@ Proof.
   }
 
   iMod (mapsto_persist with "Hl") as "Hl". iModIntro.
-  iExists l. by iFrame.
-Qed.
-
-Definition known_labels' : gset loc → iProp Σ := λ S,
-  known_labels (elements S).
-
-Lemma known_labels_empty : ⊢ known_labels' ∅.
-Proof. done. Qed.
-
-Lemma fresh_label_spec' E Ψ (S : gset loc) :
-  known_labels' S -∗
-    EWP fresh_label #() @ E <| Ψ |> {{ lk, ∃ (l : loc), ⌜ lk = #l ⌝ ∗
-      ⌜ l ∉ S ⌝ ∗ known_labels' ({[l]} ∪ S) }}.
-Proof.
-  iIntros "HS". iApply ewp_mono; [|iApply (fresh_label_spec with "HS")].
-  iIntros (lk). iDestruct 1 as (l) "(-> & % & Hlabels)". iModIntro.
-  iExists (l). iSplit; [done|]. iSplit.
-  { iPureIntro. by rewrite <-elem_of_elements. }
-  { iApply big_opL_permutation; [|iApply "Hlabels"].
-    apply elements_union_singleton.
-    by rewrite <-elem_of_elements.
-  }
+  iExists l. rewrite /known_labels big_opS_insert; [|done].
+  by iFrame.
 Qed.
 
 
