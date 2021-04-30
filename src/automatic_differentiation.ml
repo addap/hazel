@@ -1,6 +1,6 @@
 (* Reverse-Mode Automatic Differentiation with Effect Handlers. *)
 
-(* Rhis code works in Multicore OCaml 4.10.0. *)
+(* This code works in Multicore OCaml 4.10.0. *)
 
 (* This code is based on the code by KC Sivaramakrishnan:
 
