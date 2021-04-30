@@ -1,10 +1,12 @@
-(* Automatic Differentiation in Multicore OCaml 4.10.0 *)
+(* Reverse-Mode Automatic Differentiation with Effect Handlers. *)
 
-(* The code presented here is not original. It was taken from the link bellow:
+(* Rhis code works in Multicore OCaml 4.10.0. *)
 
-       https://github.com/ocaml-multicore/effects-examples/blob/master/algorithmic_differentiation.ml
+(* This code is based on the code by KC Sivaramakrishnan:
 
-*)
+   https://github.com/ocaml-multicore/effects-examples/blob/master/algorithmic_differentiation.ml
+
+ *)
 
 module type Num = sig
   type t
@@ -92,4 +94,3 @@ let _ =
     x * dy) (1, 1))
   in
   assert (dx = 1)
-
