@@ -33,8 +33,8 @@ module RMAD (N : NUM) = struct
   let mk v =
     { v = v; d = zero }
 
-  let run (client : unit -> t) =
-    match client() with
+  let handle f seed =
+    match f seed with
     | effect (Add (a, b)) k ->
         let x = mk (a.v + b.v) in
         continue k x;
@@ -49,10 +49,10 @@ module RMAD (N : NUM) = struct
         r.d <- one
 
   let diff f a =
-    let x = mk a in run (fun () -> f x); x.d
+    let x = mk a in handle f x; x.d
 
   let grad f (a, b) =
-    let (x, y) = (mk a, mk b) in run (fun () -> f (x, y)); (x.d, y.d)
+    let (x, y) = (mk a, mk b) in handle f (x, y); (x.d, y.d)
 
   let zero = mk zero
   let one = mk one
