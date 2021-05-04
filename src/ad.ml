@@ -23,7 +23,7 @@ module type AD = sig
   val grad  : (t * t -> t) -> (n * n -> n * n)
 end
 
-module RMAD (N : NUM) : (AD with type n = N.t) = struct
+module RMAD (N : NUM) = struct
   open N
   type n = t
   type t = { v : n; mutable d : n }
