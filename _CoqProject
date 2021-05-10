@@ -11,6 +11,8 @@ theories/ieff.v
 theories/protocol_agreement.v
 theories/weakestpre.v
 
+theories/tactics.v
+
 theories/heap.v
 
 theories/shallow_handler.v

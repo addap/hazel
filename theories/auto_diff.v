@@ -1,1420 +1,2499 @@
+From iris.algebra   Require Import gmap_view.            (* Definition of [gmap_view] RA. *)
+From iris.proofmode Require Import base tactics classes. (* Iris's tactics.               *)
+
+From hazel          Require Import weakestpre deep_handler.
+From hazel          Require Import notation tactics.
+
+Set Default Proof Using "Type".
+
 (* auto_diff.v *)
 
-From stdpp               Require Import list gmap.
-From iris.proofmode      Require Import base tactics classes.
-From iris.algebra        Require Import excl_auth gset gmap agree gmap_view.
-From iris.base_logic.lib Require Import iprop wsat invariants.
-From iris.program_logic  Require Import weakestpre.
-From hazel               Require Import notation weakestpre deep_handler.
 
-Unset Suggest Proof Using. 
+(** * Implementation. *)
+
+(** In this section, we introduce an implementation of reverse mode automatic
+    differentiation written in our calculus [HH]. This is the code that we are
+    going to study throughout this theory. The idea is to use effects as a way
+    to infer the sequence of arithmetic operations performed by the client
+    during its evaluation. This list is known in the literature as the Wengert
+    list.
+
+    Notice that this idea is not new. Many implementations of reverse mode AD
+    using effect handlers or delimited continuations already exist.
+*)
+
+Section implementation.
+
+(** The typeclass [Num] provides a concrete implementation of a semiring [R]
+    (to be defined later). This means that elements of [R] are accessible in
+    [HH] trough the interface [Num].
+*)
+
+Class Num := {
+  nzero  : val;
+  none   : val; (* <- Not to be confused with [None]! *)
+  nadd   : val;
+  nmul   : val;
+}.
+
+Section RMAD.
+  Context {N : Num}.
+
+  Definition create : val := λ: "n", InjR ("n", ref nzero).
+
+  Definition zero  : val := InjLV (InjLV #()).
+  Definition one   : val := InjLV (InjRV #()).
+  Definition add   : val := λ: "a" "b", do: (InjLV #(), ("a", "b")).
+  Definition mul   : val := λ: "a" "b", do: (InjRV #(), ("a", "b")).
+
+  Definition get_val  : val := λ: "x",
+    match: "x" with
+      (* Constant. *) InjL "x" =>
+       match: "x" with
+         (* Zero. *) InjL <> => nzero
+       | (* One.  *) InjR <> => none
+       end
+    | (* Variable. *) InjR "x" => Fst "x"
+    end.
+
+  Definition get_diff  : val := λ: "x",
+    match: "x" with
+      (* Constant. *) InjL <>  => #() #() (* Unreachable. *)
+    | (* Variable. *) InjR "x" => Load (Snd "x")
+    end.
+
+  Definition update : val := λ: "x" "incr",
+    match: "x" with
+      (* Constant. *) InjL <>  => #()
+    | (* Variable. *) InjR "x" =>
+      let: "xd" := Snd "x" in
+      "xd" <- nadd (Load "xd") "incr"
+    end.
+
+  Definition handle : val := λ: "f" "seed",
+    try: "f" "seed" with
+      effect (λ: "args" "k",
+        let: "op" := Fst      "args"  in
+        let: "a"  := Fst (Snd "args") in
+        let: "b"  := Snd (Snd "args") in
+
+        let: "av" := get_val "a"      in
+        let: "bv" := get_val "b"      in
+
+        match: "op" with
+          (* Add *) InjL <> =>
+           let: "x" := create (nadd "av" "bv") in
+           "k" "x";;
+           let: "xd" := get_diff "x" in
+           update "a" "xd";;
+           update "b" "xd"
+
+        | (* Mul *) InjR <> =>
+           let: "x" := create (nmul "av" "bv") in
+           "k" "x";;
+           let: "xd" := get_diff "x"   in
+           let: "ad" := nmul "bv" "xd" in
+           let: "bd" := nmul "av" "xd" in
+           update "a" "ad";;
+           update "b" "bd"
+        end
+      )
+    | return (λ: "res",
+           update "res" none)
+    end.
+
+  Definition diff : val := λ: "f" "a",
+    let: "x" := create "a" in
+    handle "f" "x";;
+    get_diff "x".
+
+End RMAD.
+
+End implementation.
 
 
-Class DiffRing := {
-  R : Set;
+(** * Mathematics. *)
 
-  rO   : R;
-  rI   : R;
+(** We define the mathematical notions for this case study. These definitions
+    form the basis of a precise language for explaining AD. They appear in the
+    specification of the algorithm and in the arguments conveying its correctness.
+*)
 
+(** The typeclass [RingSig] bundles the operations of a ring and [IsRing]
+    bundles the axioms of a semiring. It will be useful in specifying the
+    interface of numerical values.
+*)
+
+Class RingSig (R : Set) := {
+  rzero : R;
+  rone  : R;
   radd  : R → R → R;
-  rmult : R → R → R;
+  rmul  : R → R → R;
   req   : R → R → Prop;
-
-  DReq :> Equivalence req;
-  DRadd_ext  :> Proper (req ==> req ==> req) radd;
-  DRmult_ext :> Proper (req ==> req ==> req) rmult;
-
-  DRsemi_ring_theory : semi_ring_theory rO rI radd rmult req
 }.
 
+Class IsRing (R : Set) {RS : RingSig R} := {
+  req_equiv :> Equivalence req;
+  radd_ext  :> Proper (req ==> req ==> req) radd;
+  rmul_ext  :> Proper (req ==> req ==> req) rmul;
 
-Declare Scope diff_ring_scope.
-Delimit Scope diff_ring_scope with dring.
+  is_semi_ring : semi_ring_theory rzero rone radd rmul req
+}.
 
-Notation "0" := rO : diff_ring_scope.
-Notation "1" := rI : diff_ring_scope.
+Section definitions.
 
-Infix "==" := req  (at level 70) : diff_ring_scope.
+Inductive Binop : Set := Add | Mul.
 
-Instance diff_ring_inhabited `{DiffRing} : Inhabited R := populate rO.
+Inductive Expr (I : Set) : Set :=
+  Zero | One | Leaf (i : I) | Node (op : Binop) (el er : Expr I).
 
-
-Section mathematical_defs.
-
-Definition name := loc.
-
-Inductive op := Add | Mult.
-
-Definition node : Set := op * name * name.
-
-Definition let_expr : Set := list (name * node).
-
-Inductive expr (A : Set) :=
-  | ENode : op → expr A → expr A → expr A
-  | ELeaf :  A →                   expr A.
-
-Global Arguments ENode {_} _ _ _.
-Global Arguments ELeaf {_} _.
-
-Definition interp (K : let_expr) : name → expr name :=
-  (fix interp (K : let_expr) (y : name) {struct K} : expr name :=
-     match K with [] => ELeaf y | (x, (op, a, b)) :: K =>
-       if (decide (x = y)) then ENode op (interp K a) (interp K b) else (interp K y)
-     end) (reverse K).
-
-Definition variables {A : Set} : expr A → list A :=
-  (fix variables (e : expr A) {struct e} :=
-     match e with ELeaf x => [x] | ENode _ e e' =>
-       variables e ++ variables e'
-     end).
-
-Definition emap {A B : Set} (f : A → B) : expr A → expr B :=
-  fix emap (e : expr A) {struct e} : expr B :=
-    match e with ELeaf x => ELeaf (f x) | ENode op ea eb =>
-      ENode op (emap ea) (emap eb)
-    end.
-
-Definition emap' {A B : Set} `{Countable A, Inhabited B} (E : gmap A B) : expr A → expr B :=
-  emap (λ i, lookup_total i E).
-
-Definition eval_op `{DiffRing} : op → R → R → R :=
-  λ op, match op with Add => radd | Mult => rmult end.
-
-Definition eval `{DiffRing} : expr R → R :=
-  fix eval (e : expr R) {struct e} : R :=
-    match e with ELeaf r => r | ENode op ea eb =>
-       eval_op op (eval ea) (eval eb)
-    end.
-
-Definition diff_var {A : Set} `{EqDecision A, DiffRing} (r u : A) : R :=
-  if (decide (r = u)) then 1%dring else 0%dring.
-
-Definition diff {A : Set} `{EqDecision A, DiffRing} (E : A → R) : expr A → A → R :=
-  fix diff (e : expr A) (u : A) {struct e} : R :=
+Definition vars {I : Set} `{CI : Countable I} : Expr I → gset I :=
+  fix vars (e : Expr I) : gset I :=
     match e with
-    | ELeaf r => diff_var r u
-    | ENode Add ea eb =>
-       let ad := diff ea u in
-       let bd := diff eb u in
-       (radd ad bd)
-    | ENode Mult ea eb =>
-       let av := eval (emap E ea) in
-       let bv := eval (emap E eb) in
-       let ad := diff ea u in
-       let bd := diff eb u in
-       (radd (rmult ad bv) (rmult av bd))
+    | Zero _
+    | One  _         => ∅
+    | Leaf _ i       => {[i]}
+    | Node _ _ el er => vars el ∪ vars er
     end.
 
-Definition diff' {A : Set} `{Countable A, DiffRing} (E : gmap A R) : expr A → A → R :=
-  diff (λ i, lookup_total i E).
+Definition bind {I J : Set} (f : I → Expr J) : Expr I → Expr J :=
+  fix bind (e : Expr I) : Expr J :=
+    match e with
+    | Zero _          => Zero _
+    | One  _          => One  _
+    | Leaf _ i        => f i
+    | Node _ op el er => Node _ op (bind el) (bind er)
+    end.
 
-Global Instance op_eq_dec : EqDecision op.
-Proof. solve_decision. Qed.
+Definition map {I J : Set} (ϱ : I → J) : Expr I → Expr J :=
+  bind (λ i, Leaf _ (ϱ i)).
 
-Global Instance node_eq_dec : EqDecision node.
-Proof. solve_decision. Qed.
+Definition denote {R : Set} {RS : RingSig R} : Binop → R → R → R :=
+  λ op, match op with Add => radd | Mul => rmul end.
 
-Global Instance let_expr_eq_dec : EqDecision let_expr.
-Proof. solve_decision. Qed.
+Definition eval {R : Set} {RS : RingSig R} : Expr R → R :=
+  fix eval (e : Expr R) : R :=
+    match e with
+    | Zero _          => rzero
+    | One  _          => rone
+    | Leaf _ r        => r
+    | Node _ op el er => denote op (eval el) (eval er)
+    end.
 
-Global Instance expr_eq_dec {A : Set} `{EqDecision A} : EqDecision (expr A).
-Proof. solve_decision. Qed.
+Inductive Expr_equiv {I : Set} : Expr I → Expr I → Prop :=
+ (* Equivalence. *)
+ | Expr_equiv_refl  e        :
+     Expr_equiv e e
+ | Expr_equiv_symm  e₁ e₂    :
+     Expr_equiv e₁ e₂ → Expr_equiv e₂ e₁
+ | Expr_equiv_trans e₁ e₂ e₃ :
+     Expr_equiv e₁ e₂ → Expr_equiv e₂ e₃ → Expr_equiv e₁ e₃
 
-Lemma emap_compose {A B C : Set} (f : A → B) (g : B → C) (e : expr A) :
-  emap (g ∘ f) e = emap g (emap f e).
-Proof. by induction e; simpl; [rewrite IHe1 IHe2|]. Qed.
+ (* [Node _ Add] and [Node _ Mul] are instances of [Proper]. *)
+ | Expr_equiv_ext op :
+     Proper (Expr_equiv ==> Expr_equiv ==> Expr_equiv) (Node _ op)
 
-Lemma emap_ext {A B : Set} (f : A → B) (g : A → B) (e : expr A) :
-  (∀ x, x ∈ variables e → f x = g x) →
-    emap f e = emap g  e.
-Proof.
-  induction e as [op a IHa b IHb|].
-  { intros Hvar. rewrite //= IHa; [rewrite IHb; [done|]|]; set_solver. }
-  { intros Hvar. simpl. f_equal. apply Hvar. set_solver. }
-Qed.
+ (* Semiring axioms. *)
+ | (* SRadd_0_l. *)
+   Expr_equiv_add_0_l e :
+     Expr_equiv (Node _ Add (Zero _) e) e
+ | (* SR(add|mul)_comm. *)
+   Expr_equiv_comm op e₁ e₂ :
+     Expr_equiv (Node _ op e₁ e₂) (Node _ op e₂ e₁)
+ | (* SR(add|mul)_assoc. *)
+   Expr_equiv_assoc op e₁ e₂ e₃ :
+     Expr_equiv (Node _ op e₁ (Node _ op e₂ e₃))
+                (Node _ op (Node _ op e₁ e₂) e₃)
+ | (* SRmul_1_l. *)
+   Expr_equiv_mul_1_l e :
+     Expr_equiv (Node _ Mul (One  _) e) e
+ | (* SRmul_0_l. *)
+   Expr_equiv_mul_0_l e :
+     Expr_equiv (Node _ Mul (Zero _) e) (Zero _)
+ | (* SRdistr_l. *)
+   Expr_equiv_distr_l e₁ e₂ e₃ :
+     Expr_equiv (Node _ Mul (Node _ Add e₁ e₂) e₃)
+                (Node _ Add (Node _ Mul e₁ e₃) (Node _ Mul e₂ e₃)).
 
-Lemma interp_snoc K x op a b y :
-  interp (K ++ [(x, (op, a, b))]) y =
-    if (decide (x = y)) then
-      ENode op (interp K a) (interp K b)
-    else
-      interp K y.
-Proof. by rewrite /interp reverse_app. Qed.
-
-Lemma interp_nil y : interp [] y = ELeaf y.
-Proof. done. Qed.
-
-Lemma interp_app K K' x : x ∉ K'.*1 → interp (K ++ K') x = interp K x.
-Proof.
-  revert x. induction K' as [|(y, ((op, a), b)) K'] using rev_ind.
-  { by rewrite app_nil_r. }
-  { intro x. rewrite fmap_app not_elem_of_app not_elem_of_cons app_assoc interp_snoc //=.
-    intros [Hnot_in [Hneq _]]. case (decide (y = x)); [by intros ->|]. by rewrite IHK'.
-  }
-Qed.
-
-Lemma interp_leaf K x : x ∉ K.*1 → interp K x = ELeaf x.
-Proof.
-  revert x. induction K as [|(y, ((op, a), b)) K'] using rev_ind; [done|].
-  intro x. rewrite fmap_app not_elem_of_app not_elem_of_cons interp_snoc //=.
-  intros [Hnot_in [Hneq _]]. case (decide (y = x)); [by intros ->|]. by rewrite IHK'.
-Qed.
-
-Section diff_and_eval.
-
-  Context `{DiffRing}.
-
-  Add Ring DRing : DRsemi_ring_theory.
-
-  Lemma diff_ext {A : Set} `{EqDecision A} (f g : A → R) (e : expr A) (x : A) :
-    (∀ x, x ∈ variables e → f x = g x) →
-      diff f e x = diff g e x.
-  Proof.
-    induction e as [[|] a IHa b IHb|]; [| |done].
-    { intros Hvar. rewrite //= IHa; [rewrite IHb; [done|]|]; set_solver. }
-    { intros Hvar. rewrite //= IHa; [rewrite IHb; [|]|]; [|set_solver|set_solver].
-      rewrite !(emap_ext f g); [done| |]; set_solver.
-    }
-  Qed.
-
-  Lemma diff_var_eq {A : Set} `{EqDecision A} (r : A) :
-    diff_var r r = 1%dring.
-  Proof. by rewrite /diff_var decide_True. Qed.
-
-  Lemma diff_var_neq {A : Set } `{EqDecision A} (r u : A) :
-    r ≠ u → diff_var r u = 0%dring.
-  Proof. intros ?. by rewrite /diff_var decide_False. Qed.
-
-  Lemma eval_interp (E : gmap name R) (K : let_expr) r x op a b av bv :
-    E !! a = Some av →
-    E !! b = Some bv →
-      eval (emap' E (interp ((x, (op, a, b)) :: K) r)) =
-        eval (emap' (<[x:=eval_op op av bv]> E) (interp K r)).
-  Proof.
-    intros Heval_a Heval_b. rewrite -(reverse_involutive K).
-    revert r op; induction (reverse K) as [|(y, ((op', a'), b')) K']; intros r op.
-    { rewrite reverse_nil -(app_nil_l [(x, _)]) interp_snoc //=.
-      case (decide (x = r)).
-      { revert Heval_a Heval_b. simpl. rewrite !lookup_total_alt.
-        intros -> -> ->. by rewrite lookup_insert //=. }
-      { simpl. rewrite !lookup_total_alt.
-        intros ?. by rewrite lookup_insert_ne. }
-    }
-    { rewrite reverse_cons app_comm_cons !interp_snoc.
-      case (decide (y = r)); case op; case op'; try simpl; by rewrite !IHK'.
-    }
-  Qed.
-
-  Lemma diff_interp_cons av bv E K r u x op a b :
-    x ≠ u →
-    E !! a = Some av →
-    E !! b = Some bv →
-      req (diff' E (interp ((x, (op, a, b)) :: K) r) u)
-       (let opd := diff' E (ENode op (ELeaf a) (ELeaf b)) u  in
-        let ud :=  diff' (<[x:=eval_op op av bv]> E) (interp K r) u in
-        let xd :=  diff' (<[x:=eval_op op av bv]> E) (interp K r) x in
-        (radd ud (rmult opd xd))).
-  Proof.
-    revert r u E. induction K as [|(y, ((op', a'), b')) K'] using rev_ind;
-    intros r u E Hneq Heval_a Heval_b.
-    { rewrite /interp //=. case (decide (x = r)).
-      { intros ->. rewrite diff_var_eq (diff_var_neq _ _ Hneq).
-        destruct op; simpl; ring.
-      }
-      { intros Hneq'. rewrite (diff_var_neq r x); [|done].
-        destruct op; simpl; ring.
-      }
-    }
-    { rewrite app_comm_cons !interp_snoc //=.
-      case (decide (y = r)); case op'; try by rewrite !IHK'.
-      { intros ->. simpl. rewrite !IHK'; try done. destruct op; simpl; ring. }
-      { intros ->. simpl. rewrite !IHK'; try done. simpl.
-        rewrite !(eval_interp _ _ _ _ _ _ _ av bv); try done.
-        destruct op; simpl; unfold emap'; simpl; ring.
-      }
-    }
-  Qed.
-
-  Lemma diff_emap (A B : Set) `{EqDecision A, EqDecision B} (f : A → B) (g : B → R) (e : expr A) (x : A) :
-    (∀ y, y ∈ variables e → f x = f y → x = y) →
-        diff g (emap f e) (f x) = diff (g ∘ f) e x.
-  Proof.
-    intros Hf_inj. induction e as [op ea IHea eb IHeb|y].
-    { simpl. rewrite !IHea; [rewrite !IHeb|]; [by rewrite emap_compose emap_compose| |];
-      intros ??; apply Hf_inj; rewrite elem_of_app; [by right|by left]. }
-    { case (decide (f y = f x)) as [Heq|Hneq]; simpl.
-      { specialize (Hf_inj y). rewrite Hf_inj; [by rewrite !diff_var_eq| |done].
-        by apply elem_of_list_singleton. }
-      { case (decide (y = x)) as [->|Hneq']; [done|]. by rewrite !diff_var_neq. }
-    }
-  Qed.
-
-End diff_and_eval.
-
-End mathematical_defs.
-
-
-(** Implementation. *)
-
-Class Numeric `{!irisG eff_lang Σ, !DiffRing} := {
-
-  (* Language-level operations. *)
-
-  nO : val;
-  nI : val;
-
-  nadd  : val;
-  nmult : val;
-
-  repr : val → R → iProp Σ;
-
-  repr_pers a ra :> Persistent (repr a ra);
-  repr_ne a n : Proper (req ==> (dist n)) (repr a);
-
-  effs : iEff Σ;
-
-  nO_spec : ⊢ repr nO rO;
-  (* ⊢ EWP nO #() <| effs |> {{ c, repr c rO }}; *)
-
-  nI_spec : ⊢ repr nI rI;
-  (* ⊢ EWP nI #() <| effs |> {{ c, repr c rI }}; *)
-
-  nadd_spec (a b : val) (ra rb : R) :
-    repr a ra -∗
-      repr b rb -∗
-        EWP nadd a b <| effs |> {{ c, repr c (radd ra rb) }};
-
-  nmult_spec (a b : val) (ra rb : R) :
-    repr a ra -∗
-      repr b rb -∗
-        EWP nmult a b <| effs |> {{ c, repr c (rmult ra rb) }};
-
+Global Instance ExprRing (I : Set) : RingSig (Expr I) := {
+  rzero := Zero I;
+  rone  := One  I;
+  radd  := Node I Add;
+  rmul  := Node I Mul;
+  req   := Expr_equiv;
 }.
 
-Global Instance repr_proper `{!irisG eff_lang Σ, !DiffRing, !Numeric} a :
-  Proper (req ==> (≡)) (repr a).
-Proof. intros ???. apply equiv_dist=>n. by apply repr_ne. Qed.
+Definition diffₑ
+  {R : Set} {RS : RingSig R}
+  {I : Set} {EI : EqDecision I}
+  (ϱ : I → R) : Expr I → I → R :=
+  fix diff (e : Expr I) (i : I) : R :=
+    match e with
+    | Zero _           => rzero
+    | One  _           => rzero
+    | Leaf _ j         => if decide (i = j) then rone else rzero
+    | Node _ Add el er => radd (diff el i) (diff er i)
+    | Node _ Mul el er => radd (rmul (diff el i) (eval (map ϱ er)))
+                               (rmul (eval (map ϱ el)) (diff er i))
+    end.
+
+Definition node : Set := (Binop * val * val)%type.
+
+Definition context : Set := list (val * node)%type.
+
+Definition defs (K : context) : list val := K.*1.
+
+Definition overwrite {A B : Set} {EA : EqDecision A} (f : A → B) (a : A) (b : B) : A → B :=
+  λ x, if decide (a = x) then b else f x.
+
+Definition filling : context → val → Expr val :=
+  foldl
+    (* Inductive case: *) (λ filling '(x, (op, a, b)),
+      overwrite filling x (Node _ op (filling a) (filling b)))
+    (* Base case: *) (λ y, Leaf _ y).
+
+Definition extension {R : Set} {RS : RingSig R} (ϱ : val → R) (K : context) : val → R :=
+  foldl (λ ϱ '(x, (op, a, b)), overwrite ϱ x (denote op (ϱ a) (ϱ b))) ϱ K.
+
+End definitions.
+
+(** Mathematical notation. *)
+
+(* TODO: Better ways to define notation? *)
+Notation "'Oᵣ'" := rzero (at level 50).
+Notation "'Iᵣ'" := rone  (at level 50).
+Infix "+ᵣ" := radd (at level 70).
+Infix "×ᵣ" := rmul (at level 50).
+Infix "=ᵣ" := req  (at level 70).
+
+Notation "'Oₑ'" := (Zero _) (at level 50).
+Notation "'Iₑ'" := (One  _) (at level 50).
+Notation "'Xₑ'" := (Leaf () tt) (at level 50).
+Infix "+ₑ" := (Node _ Add) (at level 70).
+Infix "×ₑ" := (Node _ Mul) (at level 50).
+Infix "=ₑ" := (Expr_equiv) (at level 70).
+
+Notation "'Let' K '.in' y" := (filling K y) (at level 70).
+Notation "f '.{[' a ':=' b ']}'" := (overwrite f a b) (at level 70).
+Notation "ϱ '.{[' K ']}'" := (extension ϱ K) (at level 70).
+Notation "'∂' e './' '∂' i '.at' ϱ" := (diffₑ ϱ e i) (at level 70).
+
+Section properties.
+
+Global Instance Binop_eq_dec : EqDecision Binop.
+Proof. solve_decision. Qed.
+
+Global Instance Expr_eq_dec {I : Set} {EI : EqDecision I} : EqDecision (Expr I).
+Proof. solve_decision. Qed.
+
+Global Instance context_eq_dec : EqDecision context.
+Proof. solve_decision. Qed.
+
+(** [vars]. *)
+
+Section vars.
+  Context {I : Set} `{CI : Countable I}.
+
+  Lemma vars_zero : vars (Oₑ) = (∅ : gset loc).
+  Proof. done. Qed.
+
+  Lemma vars_one : vars (Iₑ) = (∅ : gset loc).
+  Proof. done. Qed.
+
+  Lemma vars_leaf (i : I) : vars (Leaf _ i) = {[i]}.
+  Proof. done. Qed.
+
+  Lemma vars_node (op : Binop) (el er : Expr I) :
+    vars (Node _ op el er) = vars el ∪ vars er.
+  Proof. done. Qed.
+
+  Lemma vars_suppressing (e : Expr I) (f : I → Expr I) (i : I) :
+    vars (f i) = ∅ →
+      (∀ j, vars (f j) ⊆ {[j]}) →
+        vars (bind f e) ⊆ (vars e) ∖ {[i]}.
+  Proof. induction e; [done|done| |]; set_solver. Qed.
+
+  Instance eq_vars_proper (e : Expr I) :
+    Proper (equiv ==> flip impl) (eq (vars e)).
+  Proof. intros ??? [=->]. by apply gset_leibniz. Qed.
+
+End vars.
+
+(** [bind]. *)
+
+Section bind.
+
+  Lemma bind_leaf {I : Set} (e : Expr I) :
+    bind (Leaf _) e = e.
+  Proof. by induction e as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
+
+  Lemma bind_compose {I J K : Set} (e : Expr I) (g : I → Expr J) (f : J → Expr K) :
+    bind f (bind g e) = bind (bind f ∘ g) e.
+  Proof. by induction e as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
+
+  (* From iris.algebra Require Import gset.
+
+  Definition vars_bind
+    {I : Set} `{CI : Countable I}
+    {J : Set} `{CJ : Countable J} (e : Expr I) (f : I → Expr J) : Prop :=
+    vars (bind f e) = [^(∪) set] i ∈ vars e, vars (f i). *)
+
+End bind.
+
+(** [map]. *)
+
+Section map.
+
+  Lemma map_compose {I J K : Set} (ϱ : I → J) (ϑ : J → K) (e : Expr I) :
+    map (ϑ ∘ ϱ) e = map ϑ (map ϱ e).
+  Proof. by induction e as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
+
+  Lemma map_strong_ext
+    {I J : Set} `{CI : Countable I} (ϱ ϑ : I → J) (e : Expr I) :
+    (∀ i, i ∈ vars e → ϱ i = ϑ i) →
+      map ϱ e = map ϑ e.
+  Proof.
+    induction e as [| | |op el IHel er IHer]; [done|done| |].
+    { intros Hvars. simpl. f_equal. apply Hvars. set_solver. }
+    { intros Hvars. rewrite //= IHel; [rewrite IHer; [done|]|]; set_solver. }
+  Qed.
+
+  Lemma map_ext {I J : Set} (ϱ ϑ : I → J) (e : Expr I) :
+    (∀ i, ϱ i = ϑ i) → map ϱ e = map ϑ e.
+  Proof.
+    by intros Hext; induction e as [| | |?? IHl ? IHr];
+    [| |rewrite //= Hext|rewrite //= IHl IHr].
+  Qed.
+
+End map.
+
+(** [defs]. *)
+
+Section defs.
+
+  Lemma defs_cons x n K : defs ((x, n) :: K) = x :: defs K.
+  Proof. done. Qed.
+
+  Lemma defs_singleton x n : defs [(x, n)] = [x].
+  Proof. done. Qed.
+
+  Lemma defs_app K₁ K₂ : defs (K₁ ++ K₂) = defs K₁ ++ defs K₂.
+  Proof. by rewrite /defs fmap_app. Qed.
+
+  Lemma defs_cons_middle K₁ K₂ x n :
+    defs (K₁ ++ (x, n) :: K₂) = defs K₁ ++ x :: defs K₂.
+  Proof. by rewrite defs_app. Qed.
+
+End defs.
+
+(** [overwrite]. *)
+
+Section overwrite.
+  Context {A B : Set} {EA : EqDecision A}.
+
+  Lemma overwrite_eq (f : A → B) (a : A) (b : B) : f.{[a := b]} a = b.
+  Proof. by rewrite /overwrite decide_True. Qed.
+
+  Lemma overwrite_eq' (f : A → B) (a x : A) (b : B) :
+    a = x →
+      f.{[a := b]} x = b.
+  Proof. intros ->. apply overwrite_eq. Qed.
+
+  Lemma overwrite_neq (f : A → B) (a x : A) (b : B) :
+    a ≠ x →
+      f.{[a := b]} x = f x.
+  Proof. intros ?. by rewrite /overwrite decide_False. Qed.
+
+End overwrite.
+
+(** [filling]. *)
+
+Section filling.
+
+  Lemma filling_nil y : Let [] .in y = Leaf _ y.
+  Proof. done. Qed.
+
+  Lemma filling_snoc K x op a b y :
+    Let (K ++ [(x, (op, a, b))]) .in y =
+      if decide (x = y) then
+        Node _ op
+          (Let K .in a)
+          (Let K .in b)
+      else
+        Let K .in y.
+  Proof. rewrite /filling foldl_app -/filling. done. Qed.
+
+  Corollary filling_snoc_eq K x op a b :
+    Let (K ++ [(x, (op, a, b))]) .in x = Node _ op (Let K .in a) (Let K .in b).
+  Proof. by rewrite filling_snoc decide_True. Qed.
+
+  Corollary filling_snoc_eq' K x op a b y :
+    x = y →
+      Let (K ++ [(x, (op, a, b))]) .in y = Node _ op (Let K .in a) (Let K .in b).
+  Proof. intros ->. apply filling_snoc_eq. Qed.
+
+  Corollary filling_snoc_neq K x n y :
+    x ≠ y →
+      Let (K ++ [(x, n)]) .in y = Let K .in y.
+  Proof.
+    intros. destruct n as ((?,?),?).
+    by rewrite filling_snoc decide_False.
+  Qed.
+  
+  Lemma filling_singleton x op a b y :
+    Let [(x, (op, a, b))] .in y =
+      if decide (x = y) then
+        Node _ op (Leaf _ a) (Leaf _ b)
+      else
+        (Leaf _ y).
+  Proof. by rewrite -(app_nil_l [_]) filling_snoc //=. Qed.
+
+  Corollary filling_singleton_eq x op a b :
+    Let [(x, (op, a, b))] .in x = Node _ op (Leaf _ a) (Leaf _ b).
+  Proof. by rewrite filling_singleton decide_True. Qed.
+
+  Corollary filling_singleton_eq' x op a b y :
+    x = y →
+      Let [(x, (op, a, b))] .in y = Node _ op (Leaf _ a) (Leaf _ b).
+  Proof. intros ->. apply filling_singleton_eq. Qed.
+
+  Corollary filling_singleton_neq x n y :
+    x ≠ y → Let [(x, n)] .in y = Leaf _ y.
+  Proof.
+    intros. destruct n as ((?, ?), ?).
+    by rewrite filling_singleton decide_False.
+  Qed.
+  
+  Lemma filling_app K₁ K₂ y :
+    y ∉ defs K₂ →
+      Let (K₁ ++ K₂) .in y = Let K₁ .in y.
+  Proof.
+    induction K₂ as [|(x, ((op, a), b)) K₂ IHK₂] using rev_ind.
+    { by rewrite app_nil_r. }
+    { rewrite defs_app not_elem_of_app not_elem_of_cons
+              app_assoc filling_snoc //=.
+      intros [Hy [Hneq _]].
+      case (decide (x = y)); [by intros ->|]. by rewrite IHK₂.
+    }
+  Qed.
+  
+  Corollary filling_undefined K y : y ∉ defs K → Let K .in y = Leaf _ y.
+  Proof. intros Hy. by rewrite -(app_nil_l K) filling_app. Qed.
+
+  Lemma filling_cons_middle K₁ K₂ x op a b y :
+    y ∉ defs K₂ →
+      Let (K₁ ++ (x, (op, a, b)) :: K₂) .in y =
+        Let (K₁ ++ [(x, (op, a, b))]) .in y.
+  Proof. by rewrite cons_middle app_assoc; apply filling_app. Qed.
+
+  Corollary filling_cons_middle_eq K₁ K₂ x op a b :
+    x ∉ defs K₂ →
+      Let (K₁ ++ (x, (op, a, b)) :: K₂) .in x =
+        Node _ op (Let K₁ .in a) (Let K₁ .in b).
+  Proof. intros. by rewrite filling_cons_middle; [apply filling_snoc_eq|]. Qed.
+
+  Corollary filling_cons_middle_eq' K₁ K₂ x op a b y :
+    x = y → y ∉ defs K₂ →
+      Let (K₁ ++ (x, (op, a, b)) :: K₂) .in y =
+        Node _ op (Let K₁ .in a) (Let K₁ .in b).
+  Proof.
+    intros -> ?. by rewrite filling_cons_middle; [apply filling_snoc_eq|].
+  Qed.
+
+  Corollary filling_cons_middle_neq K₁ K₂ x n y :
+    x ≠ y → y ∉ defs K₂ →
+      Let (K₁ ++ (x, n) :: K₂) .in y = Let K₁ .in y.
+  Proof.
+    intros ??. destruct n as ((?, ?), ?).
+    by rewrite filling_cons_middle; [apply filling_snoc_neq|].
+  Qed.
+
+End filling.
+
+(** [extension]. *)
+
+Section extension.
+  Context {R : Set} {RS : RingSig R}.
+
+  Lemma extension_snoc (ϱ : val → R) (K : context) x op a b :
+    ϱ.{[K ++ [(x, (op, a, b))]]} =
+      let ϱ := ϱ.{[K]} in
+      ϱ.{[x := denote op (ϱ a) (ϱ b)]}.
+  Proof. by rewrite /extension foldl_app. Qed.
+
+  Lemma extension_alt (ϱ : val → R) (K : context) :
+    ∀ y, ϱ.{[K]} y = eval (map ϱ (Let K .in y)).
+  Proof.
+    induction K as [|(x, ((op, a), b)) K IHK] using rev_ind; [done|].
+    intro y. rewrite extension_snoc //=.
+    case (decide (x = y)) as [->|Hneq].
+    { by rewrite filling_snoc_eq overwrite_eq !IHK. }
+    { rewrite filling_snoc_neq; [|done].
+      rewrite overwrite_neq; [|done].
+      by apply IHK. }
+  Qed.
+
+End extension.
+
+(** [eval]. *)
+
+Section eval.
+  Context {R : Set} {RS : RingSig R}.
+
+  Lemma eval_filling (ϱ : val → R) (K : context) x op a b y :
+    let ϑ := ϱ.{[x := denote op (ϱ a) (ϱ b)]} in
+    eval (map ϱ (Let ((x, (op, a, b)) :: K) .in y)) = eval (map ϑ (Let K .in y)).
+  Proof.
+    revert y op. induction K as [|(x', ((op', a'), b')) K IHK] using rev_ind.
+    { intros y op. simpl. rewrite filling_singleton.
+      case (decide (x = y)).
+      - intros ->. simpl. rewrite overwrite_eq. done.
+      - intros ?. simpl. rewrite overwrite_neq; done.
+    }
+    { intros y op. simpl. rewrite app_comm_cons !filling_snoc.
+      case (decide (x' = y)).
+      - intros ->. simpl. f_equal; apply IHK.
+      - intros ?. apply IHK.
+    }
+  Qed.
+
+  Lemma eval_trivial {I : Set} (e : Expr I) :
+    eval (map (λ i, Leaf _ i) e) = e.
+  Proof. induction e as [| |j|[|]]; try done; by rewrite //= IHe1 IHe2. Qed.
+
+End eval.
+
+(** [diff]. *)
+
+Section diff.
+  Context {I : Set} {EI : EqDecision I}
+          {R : Set} {RS : RingSig R}.
+
+  Lemma diff_leaf_eq (i : I) :
+    ∀ (ϱ : I → R),
+      (∂ (Leaf _ i) ./ ∂ i .at ϱ) = Iᵣ.
+  Proof. intros ?. by rewrite //= decide_True. Qed.
+  
+  Corollary diff_leaf_eq' (i j : I) :
+    i = j →
+      ∀ (ϱ : I → R),
+        (∂ (Leaf _ i) ./ ∂ j .at ϱ) = Iᵣ.
+  Proof. intros ->. apply diff_leaf_eq. Qed.
+  
+  Lemma diff_leaf_neq (i j : I) :
+    i ≠ j →
+      ∀ (ϱ : I → R),
+        (∂ (Leaf _ i) ./ ∂ j .at ϱ) = Oᵣ.
+  Proof. intros ??. by rewrite //= decide_False. Qed.
+
+  Lemma diff_bind_overwrite_leaf_id
+    (ϱ : I → R) (e eⱼ : Expr I) (i j : I) :
+    let f := (λ i, Leaf _ i).{[j := eⱼ]} in
+    let ϑ := ϱ.{[j := eval (map ϱ eⱼ)]} in
+    i ≠ j →
+      (∂ eⱼ ./ ∂ i .at ϱ) = (Oᵣ) →
+        (∂ (bind f e) ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+  Proof.
+    intros ?? Hneq Hdiff.
+    assert (∀ e, eval (map ϱ (bind f e)) = (eval (map ϑ e))) as Heval_bind.
+    { clear e.
+      induction e as [| |i'|[|] el IHel er IHer]; simpl;
+      [done|done| |by rewrite IHel IHer|by rewrite IHel IHer].
+      case (decide (i' = j)).
+      - intros ->. unfold f, ϑ. by rewrite !overwrite_eq.
+      - intros  ?. unfold f, ϑ. by rewrite !overwrite_neq.
+    }
+    induction e as [| |i'|[|] el IHel er IHer]; simpl;
+    [done|done| |by rewrite IHel IHer|by rewrite IHel IHer !Heval_bind].
+    { case (decide (j = i')).
+      - intros ->. unfold f. by rewrite overwrite_eq Hdiff decide_False.
+      - intros  ?. unfold f. by rewrite overwrite_neq.
+    }
+  Qed.
+
+  Corollary diff_bind_overwrite_leaf_id_with_zero
+    (ϱ : I → R) (e : Expr I) (i j : I) :
+    let f := (λ i, Leaf _ i).{[j := (Oₑ)]} in
+    let ϑ := ϱ.{[j := (Oᵣ)]} in
+    i ≠ j →
+      (∂ (bind f e) ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+  Proof. intros. by rewrite diff_bind_overwrite_leaf_id; [simpl; fold ϑ| |]. Qed.
+
+  Corollary diff_bind_overwrite_leaf_id_with_one
+    (ϱ : I → R) (e : Expr I) (i j : I) :
+    let f := (λ i, Leaf _ i).{[j := (Iₑ)]} in
+    let ϑ := ϱ.{[j := (Iᵣ)]} in
+    i ≠ j →
+      (∂ (bind f e) ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+  Proof. intros. by rewrite diff_bind_overwrite_leaf_id; [simpl; fold ϑ| |]. Qed.
+
+  Lemma diff_strong_ext {CI : Countable I}
+    (ϱ ϑ : I → R) (e : Expr I) (i : I) :
+    (∀ j, j ∈ vars e → ϱ j = ϑ j) →
+      (∂ e ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+  Proof.
+    induction e as [| | |[|] ? IHl ? IHr]; [done|done|done| |].
+    { intros Hvars. rewrite //= IHl; [rewrite IHr; [done|]|]; set_solver. }
+    { intros Hvars. rewrite //= IHl; [rewrite IHr; [|]|]; [|set_solver|set_solver].
+      rewrite !(map_strong_ext ϱ ϑ); [done| |]; set_solver.
+    }
+  Qed.
+
+  Lemma diff_ext (ϱ ϑ : I → R) (e : Expr I) (i : I) :
+    (∀ j, ϱ j = ϑ j) → (∂ e ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+  Proof.
+    intros Hext. induction e as [| | |[|] ? IHl ? IHr]; [done|done|done| |].
+    { by rewrite //= IHl IHr. }
+    { by rewrite //= IHl IHr !(map_ext ϱ ϑ). }
+  Qed.
+
+  Lemma diff_map
+               {CI : Countable  I}
+    {J : Set}  {EJ : EqDecision J}
+    (ϱ : I → J) (ϑ : J → R) (e : Expr I) (i : I) :
+    (∀ j, j ∈ vars e → ϱ i = ϱ j → i = j) →
+      (∂ (map ϱ e) ./ ∂ (ϱ i) .at ϑ) = (∂ e ./ ∂ i .at (ϑ ∘ ϱ)).
+  Proof.
+    induction e as [| |j|[|] el IHel er IHer]; [done|done| | |].
+    { intros Hϱ. simpl.
+      case (decide (ϱ i = ϱ j)).
+      - intros Heq. rewrite (Hϱ j _ Heq); [|set_solver]. by rewrite decide_True.
+      - case (decide (i = j)); [|done]. intros ->. contradiction.
+    }
+    { intros ?. rewrite //= IHel; [|set_solver]. by rewrite IHer; [|set_solver]. }
+    { intros ?. rewrite //= IHel; [|set_solver]. rewrite IHer; [|set_solver].
+      rewrite map_compose map_compose. done.
+    }
+  Qed.
+
+  Lemma diff_trivial (e : Expr I) (i : I) (r : R) :
+    eval (map (λ _, r) (∂ e ./ ∂ i .at (λ j, Leaf _ j))) = 
+      (∂ e ./ ∂ i .at (λ _, r)).
+  Proof.
+    induction e as [| |j|[|]]; try done.
+    { simpl. by case (decide (i = j)). }
+    { by rewrite //= IHe1 IHe2. }
+    { by rewrite //= IHe1 IHe2 !eval_trivial. }
+  Qed.
+
+End diff.
+
+Section univariate_expr.
+
+  Lemma eval_univariate_expr (e : Expr ()) :
+    eval (map (λ _, Xₑ) e) = e.
+  Proof.
+   evar(e' : Expr ()).
+   transitivity ?e';[|apply (eval_trivial e)].
+   f_equal. apply map_ext. by intros ().
+  Qed.
+
+  Lemma diff_univariate_expr
+    {R : Set} {RS : RingSig R}
+    (e : Expr ()) (r : R) :
+    eval (map (λ _, r) (∂ e ./ ∂ tt .at (λ _, Xₑ))) = 
+      (∂ e ./ ∂ tt .at (λ _, r)).
+  Proof.
+    evar (s : R).
+    transitivity ?s; [| apply (diff_trivial e tt r)].
+    do 2 f_equal. apply diff_ext. by intros ().
+  Qed.
+
+End univariate_expr.
+
+Section proofs_using_ring_tactic.
+  Context {R : Set} {RS : RingSig R} {RA : IsRing R}.
+
+  Add Ring LocalRing : is_semi_ring.
+
+  Lemma diff_filling (ϱ : val → R) (K : context) x op a b y u :
+    let ϑ   := overwrite ϱ x (denote op (ϱ a) (ϱ b)) in
+    let a_b := Node _ op (Leaf _ a) (Leaf _ b) in
+    x ≠ u →
+      (∂ (Let ((x, (op, a, b)) :: K) .in y) ./ ∂ u .at ϱ) =ᵣ
+        ((∂ (Let K .in y) ./ ∂ u .at ϑ) +ᵣ
+         (∂ (Let K .in y) ./ ∂ x .at ϑ) ×ᵣ (∂ a_b ./ ∂ u .at ϱ)).
+  Proof using RA.
+    intros ??. revert y.
+    induction K as [|(x', ((op', a'), b')) K'] using rev_ind.
+    { intros y ?. rewrite filling_singleton filling_nil.
+      case (decide (x = y)).
+      - intros ->. rewrite diff_leaf_eq diff_leaf_neq; [|done]. fold a_b. ring.
+      - intros  ?. rewrite(diff_leaf_neq y x); [|done]. simpl. ring.
+    }
+    { intros y ?. rewrite app_comm_cons !filling_snoc.
+      case (decide (x' = y)); intros ?; [|by apply IHK'].
+      destruct op'.
+      - simpl. rewrite !IHK'; [|done|done]. simpl. ring.
+      - simpl. rewrite !IHK'; [|done|done]. simpl.
+        rewrite -!eval_filling. ring.
+    }
+  Qed.
+
+  Lemma eval_equiv {I : Set} (e₁ e₂ : Expr I) (ϱ : I → R) :
+    e₁ =ₑ e₂ →
+      eval (map ϱ e₁) =ᵣ eval (map ϱ e₂).
+  Proof using RA.
+    induction 1; try done; try (try (destruct op); simpl; ring).
+    { by rewrite IHExpr_equiv1. }
+    { by destruct op; simpl; rewrite IHExpr_equiv1 IHExpr_equiv2. }
+  Qed.
+
+  Lemma diff_equiv
+    {I : Set} {EI : EqDecision I}
+    (e₁ e₂ : Expr I) (ϱ : I → R) (i : I) :
+    e₁ =ₑ e₂ →
+      (∂ e₁ ./ ∂ i .at ϱ) =ᵣ (∂ e₂ ./ ∂ i .at ϱ).
+  Proof using RA.
+    induction 1; try done; try (try (destruct op); simpl; ring).
+    { by rewrite IHExpr_equiv1. }
+    { destruct op; simpl; rewrite IHExpr_equiv1 IHExpr_equiv2; [done|].
+      rewrite eval_equiv; [|done]. by rewrite (eval_equiv x). }
+  Qed.
+
+End proofs_using_ring_tactic.
+
+(** Small detour on the chain rule. *)
+
+Section chain_rule.
+  Context {R : Set} {RS : RingSig R} {RA : IsRing R}
+          {I : Set} `{CI : Countable I}
+          {J : Set}  {EJ : EqDecision J}.
+
+  Definition Sum (f : I → R) : gset I → R :=
+    set_fold (λ i acc, acc +ᵣ f i) (Oᵣ).
+
+  Notation "'Σ' i '.∈' S ';' e" := (Sum (λ i, e) S) (at level 70).
+
+  (* Here is how the chain rule could be stated. The lemmas [diff_map],
+     [diff_bind_overwrite_leaf_id] and [diff_filling] could be proven as
+     corollaries of this property. However, we find that proving them
+     directly ends up being simpler.
+   *)
+  Definition chain_rule_statement (e : Expr I) (f : I → Expr J) (ϱ : J → R) (j : J) :=
+    let ϑ : I → R := λ i, eval (map ϱ (f i)) in
+    (∂ (bind f e) ./ ∂ j .at ϱ) =ᵣ
+      Σ i .∈ (vars e) ;
+        (∂ e ./ ∂ i .at ϑ) ×ᵣ (∂ (f i) ./ ∂ j .at ϱ).
+
+End chain_rule.
+
+End properties.
+
+Section ring_instances.
+
+Global Instance UnitRing : RingSig () := {
+  rzero := tt;
+  rone  := tt;
+  radd  := λ _ _, tt;
+  rmul  := λ _ _, tt;
+  req   := λ _ _, True;
+}.
+
+Global Program Instance UnitIsRing : IsRing ().
+Next Obligation. done. Qed.
+
+Global Instance ZRing : RingSig Z := {
+  rzero := 0;
+  rone  := 1;
+  radd  := Z.add;
+  rmul  := Z.mul;
+  req   := (@eq Z);
+}.
+
+Global Program Instance ZIsRing : IsRing Z.
+Next Obligation. split; simpl; lia. Qed.
+
+Global Instance Expr_equiv_Equivalence {I : Set} :
+  Equivalence (@Expr_equiv I) := {
+    Equivalence_Reflexive  := Expr_equiv_refl;
+    Equivalence_Symmetric  := Expr_equiv_symm;
+    Equivalence_Transitive := Expr_equiv_trans;
+}.
+
+Definition ExprRing_srt {I : Set} :
+  semi_ring_theory (Zero I) (One I) (Node I Add) (Node I Mul) Expr_equiv := {|
+    SRadd_0_l   := Expr_equiv_add_0_l;
+    SRadd_comm  := Expr_equiv_comm  Add;
+    SRadd_assoc := Expr_equiv_assoc Add;
+    SRmul_1_l   := Expr_equiv_mul_1_l;
+    SRmul_0_l   := Expr_equiv_mul_0_l;
+    SRmul_comm  := Expr_equiv_comm  Mul;
+    SRmul_assoc := Expr_equiv_assoc Mul;
+    SRdistr_l   := Expr_equiv_distr_l;
+|}.
+
+Program Instance ExprIsRing {I : Set} : IsRing (Expr I) := {
+  req_equiv    := Expr_equiv_Equivalence;
+  radd_ext     := Expr_equiv_ext Add;
+  rmul_ext     := Expr_equiv_ext Mul;
+  is_semi_ring := ExprRing_srt;
+}.
+
+End ring_instances.
 
 
-Section code.
-Context `{!heapG Σ} `{!DiffRing} `{!Numeric}.
+(** * Specification. *)
 
-Definition add : val := λ: "a" "b",
-  do: InjL ("a", "b").
+Section specification.
 
-Definition mult : val := λ: "a" "b",
-  do: InjR ("a", "b").
+Context `{!irisG eff_lang Σ}.
 
-Definition mk : val := λ: "x",
-  ref ("x", nO).
+Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
+  implements : val → R → iProp Σ;
 
-Definition get_val : val := λ: "x",
-  Fst (Load "x").
+  nzero_spec : ⊢ implements nzero rzero;
+  none_spec  : ⊢ implements none  rone;
 
-Definition get_diff : val := λ: "x",
-  Snd (Load "x").
+  (* The following specifications are an alternative to the above ones.
+     The difference is that [nzero] and [none] would no longer be values.
+     They would be programs that the client could choose to execute to have
+     access to a representation of the neutral elements of the ring.
+     However, doing so leads to trickier internal specifications (the internal
+     definition of [implements]), because the derivative field would not
+     have meaning. It would have to be described by an invariant just so
+     the update operations could go through. The same idea applies if we
+     expose the function [create] to the client.
+   *)
+  (* nzero_spec E : ⊢ EWP nzero @ E <| Ψ |> {{ x, implements x rzero }}; *)
+  (* none_spec  E : ⊢ EWP none  @ E <| Ψ |> {{ x, implements x rone  }}; *)
 
-Definition set_diff : val := λ: "x" "d",
-  "x" <- (Fst (Load "x"), "d").
+  nadd_spec E a b r s :
+    implements a r -∗
+      implements b s -∗
+        EWP nadd a b @ E <| Ψ |> {{ x,
+          implements x (radd r s) }};
 
-Definition run : val := λ: "client",
-  try: "client" #() with
-  (* Effect branch: *)
-    effect (λ: "v" "k",
-      match: "v" with
-        InjL "p" =>
-          let: "a" := Fst "p" in
-          let: "b" := Snd "p" in
-          let: "u" := mk (nadd (get_val "a") (get_val "b")) in
-          "k" "u";;
-          let: "ud" := get_diff "u" in
-          set_diff "a" (nadd (get_diff "a") "ud");;
-          set_diff "b" (nadd (get_diff "b") "ud")
-      | InjR "p" =>
-          let: "a" := Fst "p" in
-          let: "b" := Snd "p" in
-          let: "av" := get_val "a" in
-          let: "bv" := get_val "b" in
-          let: "u" := mk (nmult "av" "bv") in
-          "k" "u";;
-          let: "ud" := get_diff "u" in
-          set_diff "a" (nadd (get_diff "a") (nmult "bv" "ud"));;
-          set_diff "b" (nadd (get_diff "b") (nmult "av" "ud"))
-      end)
-  (* Return branch: *)
-  | return (λ: "r", set_diff "r" nI)
-  end.
+  nmul_spec E a b r s :
+    implements a r -∗
+      implements b s -∗
+        EWP nmul a b @ E <| Ψ |> {{ x,
+          implements x (rmul r s) }};
 
-Definition grad : val := λ: "f" "n",
-  let: "x" := mk "n" in
-  run (λ: <>, "f" "x");;
-  get_diff "x".
+  implements_pers u r :> Persistent (implements u r);
 
-End code.
+  (* See the remark bellow to understand the purpose of the following line. *)
+  (* implements_ne   u n : Proper (req ==> (dist n)) (implements u); *)
+}.
 
+Program Instance ADNum (N : Num) : Num := {
+  nzero := zero;
+  none  := one;
+  nadd  := add;
+  nmul  := mul;
+}.
 
-(** AD protocol. *)
+Definition computes
+  (f : Num → val)
+  (e : Expr ()) : iProp Σ :=
+  (∀ (R : Set) (RS : RingSig R) (RA : IsRing R),
+    (∀ (N : Num) (Ψ : iEff Σ) (NSpec : NumSpec N Ψ RS),
+      (∀ x r,
+        implements x r -∗
+          EWP (f N) x <| Ψ |> {{ y, ∃ s,
+            implements y s ∗ ⌜ s =ᵣ (eval (map (λ _, r) e)) ⌝ }}))).
 
-Section protocol.
-Context `{!heapG Σ}.
+(* Remark:
+   -- The existentially quantified ring element [s] that appears in the
+      postcondition of [diff] could be avoided by asking the predicate
+      [implements] to be non-expansive. However, this would complicate the
+      verification of [diff] because the numerical implementation of symbolic
+      expressions that it provides to the client doesn't satisfy this property.
+      The same trick of the existential quantification might work for turning
+      the [implements] predicate non-expansive, but again, we choose simplicity.
+*)
 
-Definition op_repr : op → name → name → val :=
-  λ op a b, match op with Add => InjLV (PairV #a #b) | Mult => InjRV (PairV #a #b) end.
+Definition diff_spec : iProp Σ :=
+  (∀ (f : Num → val) (e : Expr ()),
+    let diff_f := (λ N, (λ: "x", (@diff N) (f (ADNum N)) "x")%V) in
+    computes f e -∗
+      computes diff_f (∂ e ./ ∂ tt .at (λ _, Xₑ))).
 
-
-Context {A : Set} (represents : name → expr A → iProp Σ).
-
-Definition AD_prot : iEff Σ :=
-  (>> (op : op) (a b : name) (av bv : expr A) >>
-     ! (op_repr op a b) {{ represents a av ∗ represents b bv }};
-   << (x : name) <<
-     ? (#x)             {{ represents x (ENode op av bv) }}).
-
-
-Lemma AD_agreement v Φ : protocol_agreement v AD_prot Φ ≡
-  (∃ (op : op) (a b : name) (av bv : expr A),
-    ⌜ v = op_repr op a b ⌝ ∗ (represents a av ∗ represents b bv) ∗
-    (∀ (x : name), represents x (ENode op av bv) -∗ Φ #x))%I.
+Lemma computes_ext (f : Num → val) (e₁ e₂ : Expr ()) :
+  e₁ =ₑ e₂ →
+    computes f e₁ -∗ computes f e₂.
 Proof.
-  rewrite /AD_prot (protocol_agreement_tele' [tele _ _ _ _ _] [tele _]). by auto.
+  iIntros (He) "Hf". iIntros (R RS RA N Ψ NSpec x r) "Hx".
+  iSpecialize ("Hf" with "Hx").
+  iApply (ewp_mono' with "Hf").
+  iIntros (v). iDestruct 1 as (s) "[Hs %]".
+  iExists s. iModIntro. iFrame. iPureIntro.
+  rewrite H. by apply eval_equiv.
 Qed.
 
+End specification.
 
-Lemma add_spec E (a b : name) (av bv : expr A) :
-  represents a av -∗ represents b bv -∗
-    EWP add #a #b @ E <| AD_prot |> {{ y,
-      ∃ (x : name), ⌜ y = #x ⌝ ∗ represents x (ENode Add av bv) }}.
-Proof.
-  iIntros "Ha Hb". iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind DoCtx). done.
-  iApply (Ectxi_ewp_bind InjLCtx). done.
-  iApply ewp_pure_step. apply pure_prim_step_pair. iApply ewp_value. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_InjL. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_do.
-  iApply ewp_eff.
-  rewrite AD_agreement. iExists Add, a, b, av, bv. iSplit; [done|]. iFrame.
-  iIntros (r) "Hr". iNext. iApply ewp_value. iExists r. by iFrame.
-Qed.
 
-Lemma mult_spec E (a b : name) (av bv : expr A) :
-  represents a av -∗ represents b bv -∗
-    EWP mult #a #b @ E <| AD_prot |> {{ y,
-      ∃ (x : name), ⌜ y = #x ⌝ ∗ represents x (ENode Mult av bv) }}.
-Proof.
-  iIntros "Ha Hb". iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind DoCtx). done.
-  iApply (Ectxi_ewp_bind InjRCtx). done.
-  iApply ewp_pure_step. apply pure_prim_step_pair. iApply ewp_value. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_InjR. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_do.
-  iApply ewp_eff.
-  rewrite AD_agreement. iExists Mult, a, b, av, bv. iSplit; [done|]. iFrame.
-  iIntros (r) "Hr". iNext. iApply ewp_value. iExists r. by iFrame.
-Qed.
+(** * Verification. *)
 
-End protocol.
-
+Section verification.
 
 (** Camera setup. *)
 
-Canonical Structure nodeO := leibnizO node.
+(** We define our personalised notion of resource. This means that we have
+    defined a structure whose elements can be claimed to be owned. We have
+    thus extended the language of logical propositions. Within this newly
+    added fragment of the language, we will be able to write what it means
+    for the current context to be in a certain state or for one to known
+    that it contains a certain entry.
+*)
 
-Class cgraphG Σ := {
-  cgraph_mapG :> inG Σ (gmap_viewR name (leibnizO node));
-}.
+Section camera.
 
-Definition cgraphΣ := #[
-  GFunctor (gmap_viewR name (leibnizO node))
-].
+  Canonical Structure nodeO := leibnizO node.
 
-Instance subG_cgraphΣ {Σ} : subG cgraphΣ Σ → cgraphG Σ.
-Proof. solve_inG. Qed.
+  (* Our personalised resource is [gmap_viewR loc nodeO] and here we define
+     a typeclass claiming for it to be among the underlying resources
+     parameterizing [iProp].
+  *)
+  Class cgraphG Σ := {
+    cgraph_mapG :> inG Σ (gmap_viewR val nodeO);
+  }.
 
+  (* Now we prove that this claim can be satisfied by exhibiting a concrete
+     list of resources containing our personalised one. (This isn't trivial,
+     because the resource definition could depend on the list of resources
+     to which it must belong.)
+   *)
+  Definition cgraphΣ := #[
+    GFunctor (gmap_viewR val nodeO)
+  ].
+
+  Instance subG_cgraphΣ {Σ} : subG cgraphΣ Σ → cgraphG Σ.
+  Proof. solve_inG. Qed.
+
+End camera.
 
 (** Ghost theory. *)
 
-Section ghost_theory_defs.
-Context `{!heapG Σ, !cgraphG Σ, !DiffRing, !Numeric}.
+(** The derived definitions and their properties. *)
 
-Definition to_cgraph : let_expr → gmap name node := list_to_map.
+Section ghost_theory.
+  Context `{!cgraphG Σ}.
 
-Definition let_expr_auth γ (K : let_expr) : iProp Σ :=
-  own γ (gmap_view_auth (V:=leibnizO node) 1%Qp (to_cgraph K : gmap name node)).
+  Definition context_to_map (K : context) : gmap val node :=
+    list_to_map (reverse K).
 
-Definition let_expr_frag γ (x : name) (n : node) : iProp Σ :=
-  own γ (gmap_view_frag (V:=leibnizO node) x DfracDiscarded n).
+  Definition is_current_context (γ : gname) (K : context) : iProp Σ :=
+    own γ (gmap_view_auth (V:=nodeO) 1%Qp (context_to_map K)).
 
-Definition represents γ (x : name) : name → expr unit → iProp Σ :=
-  fix represents (y : name) (yv : expr unit) {struct yv} : iProp Σ :=
-    match yv with
-    | ENode op av bv => ∃ a b,
-        let_expr_frag γ y (op, a, b) ∗ represents a av ∗ represents b bv
-    | ELeaf _ =>
-        ⌜ x = y ⌝
-    end%I.
+  Definition is_entry (γ : gname) (u : val) (n : node) : iProp Σ :=
+    own γ (gmap_view_frag (V:=nodeO) u DfracDiscarded n).
 
-Definition handler_inv γ (x : name) (xv : R) (K : let_expr) : iProp Σ :=
-  (let_expr_auth γ K ∗
-  ⌜ ∀ u, u ∈ K.*1 → variables (interp K u) ⊆ [x] ⌝ ∗
-  ([∗ list] u ∈ x :: K.*1, ∃ uv,
-      repr uv (eval (emap' {[x:=xv]} (interp K u))) ∗
-      u ↦ PairV uv nO))%I.
+  Lemma context_alloc : ⊢ |==> ∃ γ, is_current_context γ [].
+  Proof.
+    iMod (own_alloc (gmap_view_auth (V:=nodeO) 1 ∅)) as (γ) "Hauth".
+    { by apply gmap_view_auth_valid. }
+    { by eauto. }
+  Qed.
 
-Definition env_extension (x : name) (xv : R) (K : let_expr) : gmap name R :=
-  list_to_map ((λ '(u, _),
-    (u, eval (emap' {[x:=xv]} (interp K u)))
-  ) <$> K).
+  Lemma context_lookup (γ : gname) (K : context) (u : val) (n : node) :
+    is_current_context γ K -∗
+      is_entry γ u n -∗
+        ⌜ context_to_map K !! u = Some n ⌝.
+  Proof.
+    iIntros "Hauth Hfrag".
+    by iDestruct (own_valid_2 with "Hauth Hfrag")
+      as %[_[_?]]%gmap_view_both_frac_valid_L.
+  Qed.
 
-Definition backpropagation_inv (x : name) (xv : R) (K : let_expr) (e : expr unit) : iProp Σ :=
-  (∃ K' r,
-     ⌜ interp (K ++ K') r = emap (λ _, x) e ⌝ ∗
-  (* ⌜ ∀ u, u ∈ (x :: K.*1) → u ∈ K'.*1 → False ⌝ ∗ *)
-  (* ⌜ ∀ u, u ∈ K.*1 → variables (interp K u) ⊆ [x] ⌝ ∗ *)
-     let E := env_extension x xv K in
-     [∗ list] u ∈ x :: K.*1, ∃ uv ud,
-        repr uv (eval (emap' {[x:=xv]} (interp K u))) ∗
-        repr ud (diff' (<[x:=xv]> E) (interp K' r) u) ∗
-        u ↦ PairV uv ud)%I.
+  Lemma context_update (γ : gname) (K : context) (u : val) (n : node) :
+    context_to_map K !! u = None →
+      is_current_context γ K ==∗
+        is_current_context γ (K ++ [(u, n)]) ∗ is_entry γ u n.
+  Proof.
+    iIntros (Hlookup) "Hauth". rewrite -own_op.
+    iApply own_update. unfold context_to_map.
+    rewrite reverse_app. simpl.
+    by apply gmap_view_alloc. done.
+  Qed.
 
-End ghost_theory_defs.
+  Global Instance is_entry_pers γ u n : Persistent (is_entry γ u n).
+  Proof. apply _. Qed.
 
+End ghost_theory.
 
-Section ghost_theory_proofs.
-Context `{Hp: !heapG Σ, Cg: !cgraphG Σ, DR: !DiffRing, Num: !Numeric}.
+Section represents.
+  Context `{!cgraphG Σ, !heapG Σ}
+           {R : Set} {RS : RingSig R}
+           {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
-Global Instance represents_persistent γ x u uv : Persistent (represents γ x u uv).
-Proof. revert uv u. induction uv; intros ?; rewrite /ownI; apply _. Qed.
+  Variables (γ  : gname) (* Identifies assertions of the same ghost theory.  *)
+            (ℓₓ : loc)   (* Memory location associated with the input value. *)
+            (r  : R)     (* The point at which the derivative was asked.     *)
+            (nᵣ : val).  (* A value representing [r].                        *)
 
-Lemma handler_inv_alloc (x : name) (uv : val) (xv : R) :
-  repr uv xv -∗
-    x ↦ (uv, nO) ==∗ ∃ γ, handler_inv γ x xv [].
-Proof.
-  iIntros "Hrepr Hx". iMod (own_alloc (gmap_view_auth (V:=leibnizO node) 1 ∅))
-      as (γ) "Hauth". { apply gmap_view_auth_valid. }
-  iModIntro. iExists γ. iFrame. rewrite //= lookup_total_singleton. iFrame.
-  iSplit; [iPureIntro|iSplit; [iExists uv|]; by iFrame].
-  intros u. by rewrite elem_of_nil.
-Qed.
+  Notation a₀ := (InjLV (InjLV #()))%V  (only parsing).
+  Notation a₁ := (InjLV (InjRV #()))%V  (only parsing).
+  Notation aₓ := (InjRV (nᵣ,   #ℓₓ))%V  (only parsing).
 
-Lemma cgraph_lookup γ (G : gmap name node) (x : name) (n : node) :
-  own γ (gmap_view_auth (V:=leibnizO node) 1%Qp G) -∗
-    own γ (gmap_view_frag (V:=leibnizO node) x DfracDiscarded n) -∗
-      ⌜ G !! x = Some n ⌝.
-Proof.
- iIntros "Hauth Hfrag".
- by iDestruct (own_valid_2 with "Hauth Hfrag")
-    as %[_[_?]]%gmap_view_both_frac_valid_L.
-Qed.
+  Definition represents : val → Expr () → iProp Σ :=
+    fix represents (u : val) (e : Expr ()) : iProp Σ :=
+      match e with
+      | Zero _          => ⌜ u = a₀ ⌝
+      | One  _          => ⌜ u = a₁ ⌝
+      | Leaf _ _        => ⌜ u = aₓ ⌝
+      | Node _ op el er => ∃ a b,
+         is_entry γ u (op, a, b) ∗
+         represents a el         ∗
+         represents b er
+      end%I.
 
-Lemma cgraph_update γ (G : gmap name node) (x : name) (n : node) :
-  G !! x = None →
-    own γ (gmap_view_auth (V:=leibnizO node) 1%Qp G) ==∗
-      own γ (gmap_view_auth (V:=leibnizO node) 1%Qp (<[x:=n]>G)) ∗
-      own γ (gmap_view_frag (V:=leibnizO node) x DfracDiscarded n).
-Proof.
- iIntros (Hlookup) "Hauth". rewrite -own_op.
- iApply own_update. by apply gmap_view_alloc. done.
-Qed.
+  Global Instance represents_pers x e : Persistent (represents x e).
+  Proof. revert e x. induction e; apply _. Qed.
 
-Lemma big_sepL_mapsto_NoDup us : ([∗ list] u ∈ us, ∃ v, u ↦ v) -∗ ⌜ NoDup us ⌝.
-Proof.
-  iIntros "Hus". iInduction us as [|u us] "IH".
-  - iPureIntro. by apply NoDup_nil.
-  - iDestruct "Hus" as "[Hu Hus]". iAssert (⌜ u ∉ us ⌝)%I as "%".
-    { iIntros (Hin).
-      iDestruct (big_sepL_elem_of _ _ _ Hin with "Hus") as "Hu'".
-      iDestruct "Hu" as (?) "Hu". iDestruct "Hu'" as (?) "Hu'".
-      by iDestruct (mapsto_ne with "Hu Hu'") as "%".
+End represents.
+
+(* The following section contains general facts that are useful in the
+   subsequent sections.
+*)
+
+Section general_facts.
+
+  Lemma NoDup_cons_middle {A : Type} (y : A) (xs ys : list A) :
+    NoDup (xs ++ y :: ys) →
+      NoDup xs ∧
+      (y ∉ xs) ∧
+      (∀ x, x ∈ xs → x ∉ ys) ∧
+      (y ∉ ys) ∧
+      NoDup ys.
+  Proof.
+    rewrite cons_middle app_assoc !NoDup_app.
+    intros ((HNoDup_xs & Hnot_in_xs & _) & Hnot_in_ys & HNoDup_ys).
+    split; [done|]. split; [|split; [|split; [|done]]].
+    { intro Hin. by apply (Hnot_in_xs _ Hin), elem_of_list_singleton. }
+    { intros x Hin. apply Hnot_in_ys, elem_of_app. by left. }
+    { apply Hnot_in_ys, elem_of_app. right. by apply elem_of_list_singleton. }
+  Qed.
+
+  Lemma NoDup_app_11 {A : Type} (xs ys : list A) : NoDup (xs ++ ys) → NoDup xs.
+  Proof. rewrite NoDup_app. by intros [? _]. Qed.
+
+  Lemma NoDup_app_12 {A : Type} (xs ys : list A) :
+    NoDup (xs ++ ys) → ∀ x, x ∈ xs → x ∉ ys.
+  Proof. rewrite NoDup_app. by intros (_ & ? & _). Qed.
+
+  Lemma NoDup_app_13 {A : Type} (xs ys : list A) : NoDup (xs ++ ys) → NoDup ys.
+  Proof. rewrite NoDup_app. by intros (_ & _ & ?). Qed.
+
+  (* Although very specific, this lemma is useful in
+     combination with the invariants.
+   *)
+  Lemma big_sepL_NoDup `{!heapG Σ} us :
+    ([∗ list] u ∈ us, ∃ v w ℓ,
+       ℓ ↦ w ∗ ⌜ u = InjRV (v, #ℓ)%V ⌝) -∗
+      ⌜ NoDup us ⌝.
+  Proof.
+    iIntros "Hus". iInduction us as [|u us] "IH".
+    { iPureIntro. by apply NoDup_nil. }
+    { iDestruct "Hus" as "[Hu Hus]". iAssert (⌜ u ∉ us ⌝)%I as "%".
+      { iIntros (Hin).
+        iDestruct (big_sepL_elem_of _ _ _ Hin with "Hus") as "Hu'".
+        iDestruct "Hu"  as (???) "[Hu  ->]".
+        iDestruct "Hu'" as (???) "[Hu' %]".
+        rename H into Heq. inversion Heq.
+        by iDestruct (mapsto_ne with "Hu Hu'") as "%".
+      }
+      iDestruct ("IH" with "Hus") as "%". rename H0 into HNoDup.
+      iPureIntro. by apply NoDup_cons_2.
     }
-    iDestruct ("IH" with "Hus") as "%". rename H0 into HNoDup.
-    iPureIntro. by apply NoDup_cons_2.
-Qed.
+  Qed.
 
-Lemma handler_inv_NoDup γ x xv K : handler_inv γ x xv K -∗ ⌜ NoDup (x :: K.*1) ⌝.
-Proof.
-  iIntros "(_ & _ & HK)". iApply big_sepL_mapsto_NoDup.
-  iApply (big_sepL_mono with "HK"). iIntros (i u Hin). simpl.
-  iDestruct 1 as (uv) "[_ Hu]". by iExists _.
-Qed.
+  Lemma big_sepL_strong_mono `{!irisG eff_lang Σ}
+    {A : Type} (us : list A) (Φ₁ Φ₂ : nat → A → iProp Σ) :
+    (∀ i u, us !! i = Some u → Φ₁ i u -∗ Φ₂ i u) →
+      ([∗ list] i ↦ u ∈ us, Φ₁ i u) -∗
+        ([∗ list] i ↦ u ∈ us, Φ₂ i u).
+  Proof.
+    revert Φ₁ Φ₂.
+    induction us as [|u us]; [done|].
+    intros Φ₁ Φ₂ Hmono. simpl. iIntros "[Hu Hus]". iSplitL "Hu".
+    { by iApply (Hmono with "Hu"). }
+    {  iApply (IHus with "Hus"). naive_solver. }
+  Qed.
 
-Lemma backpropagation_inv_NoDup x xv K e :
-  backpropagation_inv x xv K e -∗ ⌜ NoDup (x :: K.*1) ⌝.
-Proof.
-  iDestruct 1 as (r K') "(_ & HK)". iApply big_sepL_mapsto_NoDup.
-  iApply (big_sepL_mono with "HK"). iIntros (i u Hin). simpl.
-  iDestruct 1 as (uv ud) "[_ [_ Hu]]". by iExists _.
-Qed.
+  Lemma big_sepL_strong_mono' `{!irisG eff_lang Σ}
+    {A : Type} (us : list A) (Φ₁ Φ₂ : A → iProp Σ) :
+    (∀ u, u ∈ us → Φ₁ u -∗ Φ₂ u) →
+      ([∗ list] u ∈ us, Φ₁ u) -∗
+        ([∗ list] u ∈ us, Φ₂ u).
+  Proof.
+    intros Hmono. apply big_sepL_strong_mono.
+    intros i u Hlkp. apply Hmono.
+    by apply (elem_of_list_lookup_2 _ i).
+  Qed.
 
-(* FIXME: move this lemma to a proper place (stdpp maybe?). *)
-Lemma NoDup_cons_middle {A : Type} (y : A) (xs ys : list A) :
-  NoDup (xs ++ y :: ys) →
-    NoDup xs ∧
-    (y ∉ xs) ∧
-    (∀ x, x ∈ xs → x ∉ ys) ∧
-    (y ∉ ys) ∧
-    NoDup ys.
-Proof.
-  rewrite cons_middle app_assoc !NoDup_app.
-  intros ((HNoDup_xs & Hnot_in_xs & _) & Hnot_in_ys & HNoDup_ys).
-  split; [done|]. split; [|split; [|split; [|done]]].
-  { intro Hin. by apply (Hnot_in_xs _ Hin), elem_of_list_singleton. }
-  { intros x Hin. apply Hnot_in_ys, elem_of_app. by left. }
-  { apply Hnot_in_ys, elem_of_app. right. by apply elem_of_list_singleton. }
-Qed.
+End general_facts.
 
-Lemma NoDup_app_11 {A : Type} (xs ys : list A) : NoDup (xs ++ ys) → NoDup xs.
-Proof. rewrite NoDup_app. by intros [? _]. Qed.
+(** Forward invariant. *)
 
-Lemma NoDup_app_12 {A : Type} (xs ys : list A) : NoDup (xs ++ ys) → ∀ x, x ∈ xs → x ∉ ys.
-Proof. rewrite NoDup_app. by intros (_ & ? & _). Qed.
+(** The forward invariant is a predicate on contexts. If we imagine the
+    execution of the client as a trace indexed by the sequence of arithmetic
+    operations (that is, a context), then the invariant asserts what holds
+    for each such sequence at each step.
+*)
 
-Lemma NoDup_app_13 {A : Type} (xs ys : list A) : NoDup (xs ++ ys) → NoDup ys.
-Proof. rewrite NoDup_app. by intros (_ & _ & ?). Qed.
-(* ******************************************************** *)
+Section forward_invariant.
+  Context `{!cgraphG Σ, !heapG Σ}
+           {R : Set} {RS : RingSig R}
+           {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
-Lemma handler_inv_let_expr_wf_1 γ x xv K us vs u op a b :
-  K = us ++ (u, (op, a, b)) :: vs →
-    handler_inv γ x xv K -∗ ⌜ a ∉ u :: vs.*1 ⌝.
-Proof.
-  intros ->. iIntros "Hinv" (Hin).
-  iDestruct (handler_inv_NoDup with "Hinv") as %HNoDup.
-  iDestruct "Hinv" as "[_ [% _]]". rename H into Hvar. iPureIntro.
-  specialize (Hvar u). rewrite fmap_app fmap_cons //= in Hvar, HNoDup.
-  apply (NoDup_cons_11 _ _ HNoDup). rewrite elem_of_app. right.
-  cut (a = x); [by intros ->|]. apply elem_of_list_singleton.
-  have Hin': u ∈ (us.*1 ++ u :: vs.*1). { rewrite elem_of_app elem_of_cons. by right; left. }
-  specialize (Hvar Hin'). revert Hvar. rewrite cons_middle app_assoc interp_app;[|
-  by specialize (NoDup_cons_middle _ _ _ (NoDup_cons_12 _ _ HNoDup)) as (_&_&_&Hnot_in&_)].
-  rewrite interp_snoc decide_True; [|done]. rewrite interp_leaf; [set_solver|]. intro Hin''.
-  by apply (NoDup_app_12 _ _ (NoDup_cons_12 _ _ HNoDup) a).
-Qed.
+  Variables (γ  : gname) (* Identifies assertions of the same ghost theory.  *)
+            (ℓₓ : loc)   (* Memory location associated with the input value. *)
+            (r  : R)     (* The point at which the derivative was asked.     *)
+            (nᵣ : val).  (* A value representing [r].                        *)
 
-Lemma handler_inv_let_expr_wf_2 γ x xv K us vs u op a b :
-  K = us ++ (u, (op, a, b)) :: vs →
-    handler_inv γ x xv K -∗ ⌜ b ∉ u :: vs.*1 ⌝.
-Proof.
-  intros ->. iIntros "Hinv" (Hin).
-  iDestruct (handler_inv_NoDup with "Hinv") as %HNoDup.
-  iDestruct "Hinv" as "[_ [% _]]". rename H into Hvar. iPureIntro.
-  specialize (Hvar u). rewrite fmap_app fmap_cons //= in Hvar, HNoDup.
-  apply (NoDup_cons_11 _ _ HNoDup). rewrite elem_of_app. right.
-  cut (b = x); [by intros ->|]. apply elem_of_list_singleton.
-  have Hin': u ∈ (us.*1 ++ u :: vs.*1). { rewrite elem_of_app elem_of_cons. by right; left. }
-  specialize (Hvar Hin'). revert Hvar. rewrite cons_middle app_assoc interp_app;[|
-  by specialize (NoDup_cons_middle _ _ _ (NoDup_cons_12 _ _ HNoDup)) as (_&_&_&Hnot_in&_)].
-  rewrite interp_snoc decide_True; [|done]. rewrite (interp_leaf _ b); [set_solver|]. intro Hin''.
-  by apply (NoDup_app_12 _ _ (NoDup_cons_12 _ _ HNoDup) b).
-Qed.
+  Notation a₀         := (InjLV (InjLV #()))%V (only parsing).
+  Notation a₁         := (InjLV (InjRV #()))%V (only parsing).
+  Notation aₓ         := (InjRV (nᵣ,   #ℓₓ))%V (only parsing).
+  Notation adj_vars   := ([a₀; a₁; aₓ])        (only parsing).
+  Notation represents := (represents γ ℓₓ nᵣ)  (only parsing).
 
-Lemma handler_inv_elem_of γ x xv K u op av bv :
-  handler_inv γ x xv K -∗ represents γ x u (ENode op av bv) -∗ 
-    handler_inv γ x xv K ∗ ∃ a b,
-      represents γ x a av ∗ represents γ x b bv ∗ ⌜ (u, (op, a, b)) ∈ K ⌝.
-Proof.
-  iIntros "[Hauth Hrest]". simpl. iDestruct 1 as (a b) "(Hfrag&Ha&Hb)".
-  iDestruct (cgraph_lookup with "Hauth Hfrag") as %Hlkp. iFrame.
-  iSplitL "Hrest";[done|]. iExists a, b. iFrame.
-  iPureIntro. by apply (elem_of_list_to_map_2 (K:=name) (M:=gmap name)).
-Qed.
+  Definition forward_inv (K : context) : iProp Σ := (
+    let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
 
-Lemma handler_inv_elem_of' γ x xv K u uv :
-  handler_inv γ x xv K -∗ represents γ x u uv -∗ ⌜ u ∈ x :: K.*1 ⌝.
-Proof.
-  iIntros "Hinv Hrepr". destruct uv as [op av bv|()].
-  { iDestruct (handler_inv_elem_of with "Hinv Hrepr") as "[_ Hin]".
+    is_current_context γ K                    ∗
+    ⌜ ∀ u, u ∈ defs K →
+        vars (Let K .in u) ⊆ {[a₀; a₁; aₓ]} ⌝ ∗
+    ( [∗ list] u ∈ defs K ++ [aₓ], ∃ v ℓ,
+        implements v (ϱ.{[K]} u)              ∗
+        ℓ ↦ nzero                             ∗
+        ⌜ u = InjRV (v, #ℓ)%V ⌝               )
+  )%I.
+
+  Lemma NoDup_defs_app_adj_vars K :
+    forward_inv K -∗ ⌜ NoDup (defs K ++ [aₓ]) ⌝.
+  Proof.
+    iIntros "(_ & _ & HK)". iApply big_sepL_NoDup.
+    iApply (big_sepL_mono with "HK"). iIntros (i u _). simpl.
+    iDestruct 1 as (v ℓ) "[_ Hu]". by eauto.
+  Qed.
+
+  Corollary NoDup_defs K :
+    forward_inv K -∗ ⌜ NoDup (defs K) ⌝.
+  Proof.
+    iIntros "Hinv".
+    by iDestruct (NoDup_defs_app_adj_vars with "Hinv")
+      as %?%NoDup_app_11.
+  Qed.
+
+  Lemma distinct_adj_vars_1x : a₁ ≠ aₓ.
+  Proof. done. Qed.
+
+  Lemma distinct_adj_vars_0x : a₀ ≠ aₓ.
+  Proof. done. Qed.
+
+  Lemma elem_of_defs_inv K :
+    forward_inv K -∗ ⌜ ∀ a, a ∈ defs K → ∃ v (ℓ : loc), a = InjRV (v, #ℓ)%V ⌝.
+  Proof.
+    iIntros "[_ [_ Hheap]]" (a Hin).
+    destruct (elem_of_list_lookup_1 _ _ Hin) as [i Hi].
+    rewrite big_sepL_app (big_sepL_delete' _ _ _ _ Hi).
+    iDestruct "Hheap" as "[[Ha _] _]".
+    iDestruct "Ha" as (v ℓ) "(_ & _ & ->)". by eauto.
+  Qed.
+
+  Lemma elem_of_defs_inv' K :
+    forward_inv K -∗
+      ⌜ ∀ a, a ∈ defs K ++ [aₓ] → ∃ v (ℓ : loc), a = InjRV (v, #ℓ)%V ⌝.
+  Proof.
+    iIntros "Hinv". iDestruct (elem_of_defs_inv with "Hinv") as %?.
+    iPureIntro. intros a. rewrite elem_of_app elem_of_cons elem_of_nil.
+    by intros [|[->|]]; eauto.
+  Qed.
+
+  Lemma adj_vars_not_in_defs K :
+    forward_inv K -∗ ⌜ a₀ ∉ defs K ∧ a₁ ∉ defs K ∧ aₓ ∉ defs K ⌝.
+  Proof.
+    iIntros "Hinv".
+    iDestruct (NoDup_defs_app_adj_vars with "Hinv") as %HND.
+    iDestruct (elem_of_defs_inv        with "Hinv") as %Hdefs.
+    revert HND. rewrite NoDup_app. intros (_&Hinter&_).
+    iPureIntro. set_solver.
+  Qed.
+
+  Corollary adj_var_0_not_in_defs K :
+    forward_inv K -∗ ⌜ a₀ ∉ defs K ⌝.
+  Proof.
+    iIntros "Hinv".
+    by iDestruct (adj_vars_not_in_defs with "Hinv") as %(?&_&_).
+  Qed.
+
+  Corollary adj_var_1_not_in_defs K :
+    forward_inv K -∗ ⌜ a₁ ∉ defs K ⌝.
+  Proof.
+    iIntros "Hinv".
+    by iDestruct (adj_vars_not_in_defs with "Hinv") as %(_&?&_).
+  Qed.
+
+  Corollary adj_var_x_not_in_defs K :
+    forward_inv K -∗ ⌜ aₓ ∉ defs K ⌝.
+  Proof.
+    iIntros "Hinv".
+    by iDestruct (adj_vars_not_in_defs with "Hinv") as %(_&_&?).
+  Qed.
+
+  Lemma context_wf_aux K K₁ K₂ x op a b c :
+    c = a ∨ c = b →
+    K = K₁ ++ (x, (op, a, b)) :: K₂ →
+      forward_inv K -∗ ⌜ c ∉ x :: defs K₂ ⌝.
+  Proof.
+    intros Hc ->. iIntros "Hinv" (Hin).
+    iDestruct (adj_vars_not_in_defs with "Hinv") as %(Ha₀&Ha₁&Haₓ).
+    iDestruct (NoDup_defs_app_adj_vars with "Hinv") as %HNoDup.
+    iDestruct "Hinv" as "[_ [% _]]". rename H into Hvars.
+    iPureIntro.
+    rewrite defs_cons_middle in HNoDup, Hvars, Ha₀, Ha₁, Haₓ.
+    cut (c ∈ [a₀; a₁; aₓ]).
+    { rewrite !elem_of_cons elem_of_nil.
+      intros [->|[->|[->|]]]; last done;
+      [apply Ha₀|apply Ha₁|apply Haₓ];
+      rewrite elem_of_app; by right.
+    }
+    { cut (c ∈ ({[a₀; a₁; aₓ]} : gset val)); [set_solver|].
+      have Hx_in: x ∈ defs K₁ ++ x :: defs K₂. { set_solver. }
+      apply (Hvars x Hx_in).
+      have Hc_notin: c ∉ defs K₁.
+      { destruct Hc as [<-|<-]; intros Hin_K₁;
+        by apply (NoDup_app_12 _ _ (NoDup_app_11 _ _ HNoDup) c).
+      }
+      rewrite filling_cons_middle_eq.
+      - destruct Hc as [<-|<-];
+        rewrite //= (filling_undefined _ c Hc_notin); set_solver.
+      - by specialize (NoDup_cons_middle _ _ _
+                      (NoDup_app_11 _ _ HNoDup)) as (_&_&_&?&_).
+    }
+  Qed.
+
+  Corollary context_wf_1 K K₁ K₂ x op a b :
+    K = K₁ ++ (x, (op, a, b)) :: K₂ →
+      forward_inv K -∗ ⌜ a ∉ x :: defs K₂ ⌝.
+  Proof. apply context_wf_aux. by left. Qed.
+
+  Corollary context_wf_2 K K₁ K₂ x op a b :
+    K = K₁ ++ (x, (op, a, b)) :: K₂ →
+      forward_inv K -∗ ⌜ b ∉ x :: defs K₂ ⌝.
+  Proof. apply context_wf_aux. by right. Qed.
+
+  Lemma elem_of_context K x op el er :
+    forward_inv K -∗
+      represents x (Node _ op el er) -∗ 
+        forward_inv K ∗ ∃ a b,
+        represents a el       ∗
+        represents b er       ∗
+        ⌜ (x, (op, a, b)) ∈ K ⌝.
+  Proof.
+    iIntros "[Hauth Hrest]". simpl. iDestruct 1 as (a b) "(Hfrag&Ha&Hb)".
+    iDestruct (context_lookup with "Hauth Hfrag") as %Hlkp. iFrame.
+    iExists a, b. iFrame.
+    iPureIntro. rewrite -elem_of_reverse.
+    by apply (elem_of_list_to_map_2 (K:=val) (M:=gmap val)).
+  Qed.
+
+  Lemma elem_of_defs K x op el er :
+    forward_inv K -∗
+      represents x (Node _ op el er) -∗ 
+        ⌜ x ∈ defs K ⌝.
+  Proof.
+    iIntros "Hinv Hx".
+    iDestruct (elem_of_context with "Hinv Hx") as "[_ Hin]".
     iDestruct "Hin" as (a b) "(_&_&%)". iPureIntro.
-    rewrite elem_of_cons elem_of_list_fmap. right. by exists (u, (op, a, b)).
-  }
-  { iDestruct "Hrepr" as "->". iPureIntro. apply elem_of_cons. by left. }
-Qed.
+    rewrite elem_of_list_fmap.
+    by exists (x, (op, a, b)).
+  Qed.
 
-Lemma handler_inv_agree γ x xv K u uv :
-  handler_inv γ x xv K -∗ represents γ x u uv -∗ ⌜ interp K u = emap (λ _, x) uv ⌝.
-Proof.
-  revert uv u. induction uv as [op av IHa bv IHb|y]; intro u; [|
-  by iIntros "HK ->"; iDestruct (handler_inv_NoDup with "HK")
-      as %?%NoDup_cons_11%interp_leaf].
-  iIntros "HK Hrepr". iDestruct (handler_inv_elem_of with "HK Hrepr") as "[HK Hrepr]".
-  iDestruct "Hrepr" as (a b) "(Ha&Hb&%)". rename H into Helem_of. simpl.
-  iDestruct (IHa with "HK Ha") as %<-.
-  iDestruct (IHb with "HK Hb") as %<-.
-  iDestruct (handler_inv_NoDup with "HK") as %HNoDup.
-  specialize (elem_of_list_split_r _ _ Helem_of) as [us [vs [HK_eq Hu_not_in]]].
-  iDestruct (handler_inv_let_expr_wf_1 with "HK") as %Ha_not_in. { by apply HK_eq. }
-  iDestruct (handler_inv_let_expr_wf_2 with "HK") as %Hb_not_in. { by apply HK_eq. }
-  iDestruct "HK" as "[_ [% _]]". rename H into Hvar.
-  iPureIntro. clear IHa IHb.
-  rewrite HK_eq fmap_app fmap_cons //= in HNoDup.
-  have HNoDup': NoDup ((x :: us.*1) ++ u :: vs.*1); [done|].
-  specialize (NoDup_cons_middle _ _ _ HNoDup') as
-    (HNoDup_xs & Hy_not_in1 & Hinter & Hy_not_in2 & HNoDup_ys).
-  have Hinterp_u: interp K u = ENode op (interp us a) (interp us b).
-  { by rewrite HK_eq cons_middle app_assoc interp_app; [rewrite interp_snoc decide_True|]. }
-  by rewrite Hinterp_u HK_eq !interp_app.
-Qed.
+  Lemma elem_of_defs_app_adj_vars K u e :
+    forward_inv K -∗ represents u e -∗ ⌜ u ∈ defs K ++ adj_vars ⌝.
+  Proof.
+    iIntros "Hinv Hu". destruct e as [| | |op el er]; try (
+    iDestruct "Hu" as "->"; iPureIntro; set_solver).
+    iDestruct (elem_of_defs with "Hinv Hu") as %Hin.
+    iPureIntro. rewrite elem_of_app. by left.
+  Qed.
 
-Lemma handler_inv_fresh_name γ x xv K u v :
-  u ↦ v -∗ handler_inv γ x xv K -∗ ⌜ u ∉ x :: K.*1 ⌝.
-Proof.
-  iIntros "Hu [_ [_ HK]]". iInduction (x :: K.*1) as [|y ys] "IH". 
-  { iPureIntro. by apply not_elem_of_nil. }
-  { rewrite not_elem_of_cons. simpl.
-    iDestruct "HK" as "[Hy HK]". iDestruct "Hy" as (uv) "[_ Hy]". iSplit.
-    { by iApply (mapsto_ne with "Hu Hy"). }
-    { by iApply ("IH" with "Hu HK"). }
-  }
-Qed.
+  Lemma adj_var_cases K u e :
+    forward_inv K -∗
+      represents u e -∗
+        ⌜ u ∈ defs K ++ [aₓ] ∨ u = a₀ ∨ u = a₁ ⌝.
+  Proof.
+    iIntros "Hinv Hu".
+    iDestruct (elem_of_defs_app_adj_vars with "Hinv Hu") as %Hu.
+    iPureIntro.
+    revert Hu; rewrite !elem_of_app !elem_of_cons elem_of_nil.
+    naive_solver.
+  Qed.
 
-Lemma handler_inv_update γ x xv K u op a b av bv uv :
-  repr uv (eval (emap' {[x:=xv]} (ENode op (interp K a) (interp K b)))) -∗
-    u ↦ PairV uv nO -∗
-      handler_inv γ x xv K -∗ represents γ x a av -∗ represents γ x b bv ==∗
-        handler_inv γ x xv (K ++ [(u, (op, a, b))]) ∗ represents γ x u (ENode op av bv).
-Proof.
-  iIntros "Huv Hu Hhandler_inv Ha Hb".
-  iDestruct (handler_inv_elem_of' with "Hhandler_inv Ha") as %Ha_in%elem_of_cons.
-  iDestruct (handler_inv_elem_of' with "Hhandler_inv Hb") as %Hb_in%elem_of_cons.
-  iDestruct (handler_inv_fresh_name with "Hu Hhandler_inv")
-      as %[Hneq Hnot_in]%not_elem_of_cons.
-  iDestruct (handler_inv_NoDup with "Hhandler_inv") as %[Hnot_in' HNoDup]%NoDup_cons.
-  iDestruct "Hhandler_inv" as "[Hauth [% HK]]". rename H into Hvar.
-  iMod ((cgraph_update _ _ u (op, a, b)) with "Hauth") as "[Hauth Hfrag]".
-  { by apply not_elem_of_list_to_map_1. }
-  iModIntro. iSplit; [|iExists a, b; iFrame; by iSplit].
-  iClear "Hfrag". iSplitL "Hauth"; [|iSplit;[iPureIntro|]].
-  { unfold let_expr_auth, to_cgraph. rewrite -list_to_map_cons.
-    rewrite (list_to_map_proper _ (K ++ [(u, (op, a, b))])); [done| |].
-    { rewrite fmap_cons //=. apply NoDup_cons. by split. }
-    { by apply Permutation_cons_append. }
-  }
-  { intros v. rewrite fmap_app interp_snoc //=.
-    case (decide (u = v)); [intros -> _|intros ??; apply Hvar; set_solver].
-    have Hx: (interp K x = ELeaf x); [by apply interp_leaf|]. simpl.
-    case Ha_in as [->|Ha_in]; [rewrite Hx|];
-    case Hb_in as [->|Hb_in]; [rewrite Hx| |rewrite Hx|]; set_solver.
-  }
-  { rewrite fmap_app fmap_cons fmap_nil app_comm_cons big_sepL_app.
-    iSplitL "HK"; [|
-    by rewrite //= interp_snoc decide_True; [iSplit; [iExists uv; iFrame|]|]].
-    have H: u ∉ x :: K.*1; [set_solver|]. clear Hvar HNoDup Hneq Hnot_in.
-    iRevert (H). iInduction (x :: K.*1) as [|y ys] "IH"; [by iIntros (?)|].
-    rewrite not_elem_of_cons. iIntros ([Hneq H]). iDestruct "HK" as "[Hy HK]".
-    iSplitL "Hy"; [|by iApply ("IH" with "HK")].
-    by rewrite interp_snoc decide_False.
-  }
-Qed.
+  Lemma elem_of_adj_vars u :
+    u ∈ adj_vars → u = a₀ ∨ u = a₁ ∨ u = aₓ.
+  Proof. by rewrite !elem_of_cons elem_of_nil; naive_solver. Qed.
 
-Lemma env_extension_app x xv K op u a b :
-  u ∉ K.*1 →
-  let av := eval (emap' {[x:=xv]} (interp K a)) in
-  let bv := eval (emap' {[x:=xv]} (interp K b)) in
-  env_extension x xv (K ++ [(u, (op, a, b))]) =
-   <[u:=eval_op op av bv]> (env_extension x xv K).
-Proof.
-  intros Hnot_in. simpl. unfold env_extension.
-  rewrite fmap_app fmap_cons //= list_to_map_snoc;[|
-  rewrite -list_fmap_compose (list_fmap_ext _ fst K K); [|intros (?,?)|]; done].
-  rewrite interp_snoc decide_True; [|done]. simpl. f_equiv. f_equiv.
-  apply Forall_fmap_ext_1. rewrite Forall_forall. intros (u',uv') Hin. f_equiv.
-  rewrite interp_snoc decide_False; [done|]. intros ->. apply Hnot_in.
-  rewrite elem_of_list_fmap. by exists (u', uv').
-Qed.
+  Lemma vars_subseteq K u e :
+    forward_inv K -∗
+      represents u e -∗
+        ⌜ vars (Let K .in u) ⊆ {[a₀; a₁; aₓ]} ⌝.
+  Proof.
+    iIntros "Hinv #Hu".
+    iDestruct (adj_var_0_not_in_defs with "Hinv") as %Ha₀.
+    iDestruct (adj_var_1_not_in_defs with "Hinv") as %Ha₁.
+    iDestruct (adj_var_x_not_in_defs with "Hinv") as %Haₓ.
+    iDestruct (elem_of_defs_app_adj_vars with "Hinv Hu")
+      as %[Hu|Hu]%elem_of_app; [|
+    destruct (elem_of_adj_vars u Hu) as [Hu'|[Hu'|Hu']];
+    rewrite Hu'; iPureIntro;
+    by rewrite filling_undefined; [set_solver|]].
+    iDestruct "Hinv" as "[_ [% _]]". rename H into Hvars.
+    iPureIntro. by apply Hvars.
+  Qed.
 
-Lemma env_extension_app' x xv K op u a b :
-  u ∉ x :: K.*1 →
-  let av := eval (emap' {[x:=xv]} (interp K a)) in
-  let bv := eval (emap' {[x:=xv]} (interp K b)) in
-  <[x:=xv]> (env_extension x xv (K ++ [(u, (op, a, b))])) =
-   <[u:=eval_op op av bv]> (<[x:=xv]> (env_extension x xv K)).
-Proof.
-  intros [Hneq Hnot_in]%not_elem_of_cons. simpl.
-  rewrite env_extension_app; [|done]. by rewrite insert_commute.
-Qed.
+  Lemma forward_inv_agree_aux e :
+    let f := (Leaf _).{[a₀ := Oₑ]} in
+    let g := (Leaf _).{[a₁ := Iₑ]} in
+    ∀ K₁ K₂ u,
+      u ∉ defs K₂ →
+        forward_inv (K₁ ++ K₂) -∗
+          represents u e -∗
+            ⌜ e = (map (λ _, tt)
+                  (bind f (bind g (Let K₁ .in u)))) ⌝.
+  Proof.
+    intros ??. induction e as [| |()|?? IHl ? IHr].
+    { intros K₁ K₂ u Hnot_in. iIntros "Hinv ->".
+      iDestruct (adj_var_0_not_in_defs with "Hinv") as %Hℓ₀.
+      iPureIntro. rewrite filling_undefined; [|set_solver].
+      simpl. unfold f, g.
+      rewrite overwrite_neq; [|done]. simpl.
+      rewrite overwrite_eq. done.
+    }
+    { intros K₁ K₂ u Hnot_in. iIntros "Hinv ->".
+      iDestruct (adj_var_1_not_in_defs with "Hinv") as %Hℓ₁.
+      iPureIntro. rewrite filling_undefined; [|set_solver].
+      simpl. unfold f, g. rewrite overwrite_eq. done.
+    }
+    { intros K₁ K₂ u Hnot_in. iIntros "Hinv ->".
+      iDestruct (adj_var_x_not_in_defs with "Hinv") as %Hℓₓ.
+      iPureIntro. rewrite filling_undefined; [|set_solver].
+      simpl. unfold f, g.
+      rewrite overwrite_neq; [|done]. simpl.
+      rewrite overwrite_neq; done.
+    }
+    { intros K₁ K₂ u Hnot_in. iIntros "Hinv Hrepr".
+      iDestruct (NoDup_defs with "Hinv") as %HNoDup.
+      iDestruct (elem_of_context with "Hinv Hrepr") as "[Hinv Hrepr]".
+      iDestruct "Hrepr" as (a b) "(Ha & Hb & %)". rename H into Hin.
+      revert Hin. rewrite elem_of_app. intros [Hin|Hin]; [|
+      by cut (u ∈ defs K₂);[|rewrite elem_of_list_fmap; exists (u, (op, a, b))]].
+      destruct (elem_of_list_split_r _ _ Hin) as [K₁₁ [K₁₂ [-> Hnot_in']]].
+      rewrite defs_app defs_cons_middle in HNoDup.
+      destruct (NoDup_cons_middle _ _ _ (NoDup_app_11 _ _ HNoDup))
+        as (_&_&_&?&_).
+      rewrite filling_cons_middle_eq; [|done].
+      rewrite -app_assoc. simpl.
+      iDestruct (context_wf_1 (K₁₁ ++ _) K₁₁ _ with "Hinv") as %Ha; [done|].
+      iDestruct (context_wf_2 (K₁₁ ++ _) K₁₁ _ with "Hinv") as %Hb; [done|].
+      iDestruct (IHl K₁₁ _ a with "Hinv Ha") as %->; [done|].
+      iDestruct (IHr K₁₁ _ b with "Hinv Hb") as %->;  done.
+    }
+  Qed.
 
-Lemma lookup_env_extension x xv K y :
-  NoDup K.*1 → y ∈ K.*1 →
-  let yv := eval (emap' {[x:=xv]} (interp K y)) in
-  (env_extension x xv K) !! y = Some yv.
-Proof.
-  intros HNoDup Hin. simpl. unfold env_extension.
-  apply elem_of_list_to_map_1;[
-  rewrite -list_fmap_compose (list_fmap_ext _ fst K K); [|intros (?,?)|]; done|].
-  revert Hin. rewrite !elem_of_list_fmap.
-  intros [(y',n) [-> Hin]]. by exists (y', n).
-Qed.
+  Corollary forward_inv_agree K u e :
+    let f := (Leaf _).{[a₀ := Oₑ]} in
+    let g := (Leaf _).{[a₁ := Iₑ]} in
+    forward_inv K -∗
+      represents u e -∗
+        ⌜ e = (map (λ _, tt)
+              (bind f (bind g (Let K .in u)))) ⌝.
+  Proof.
+    intros ??. rewrite -{1}(app_nil_r K).
+    apply forward_inv_agree_aux, not_elem_of_nil.
+  Qed.
 
-Lemma lookup_env_extension' x xv K y :
-  NoDup (x :: K.*1) → y ∈ x :: K.*1 →
-  let yv := eval (emap' {[x:=xv]} (interp K y)) in
-  (<[x:=xv]> (env_extension x xv K)) !! y = Some yv.
-Proof.
-  intros [Hnot_in HNoDup]%NoDup_cons [->|Hin]%elem_of_cons; simpl.
-  { by rewrite lookup_insert interp_leaf //= lookup_total_insert. }
-  { by rewrite lookup_insert_ne; [apply lookup_env_extension|intros ->]. }
-Qed.
+  Lemma diff_output K y e :
+    let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
+    forward_inv K -∗
+      represents y e -∗
+        ⌜ ∂ e             ./ ∂ tt .at (λ _, r) =
+          ∂ (Let K .in y) ./ ∂ aₓ .at       ϱ  ⌝.
+  Proof.
+    set f := (Leaf _).{[a₀ := Oₑ]}.
+    set g := (Leaf _).{[a₁ := Iₑ]}.
+    intros ?. iIntros "Hinv Hy".
+    iDestruct (forward_inv_agree with "Hinv Hy") as %->.
+    iDestruct (vars_subseteq with "Hinv Hy") as %Hvars.
+    iPureIntro. fold f g. rewrite (diff_map _ _ _ aₓ).
+    { rewrite (diff_ext ((λ _, r) ∘ (λ _, ())) (λ _, r)); [|done].
+      rewrite diff_bind_overwrite_leaf_id_with_zero; [|done].
+      rewrite diff_bind_overwrite_leaf_id_with_one; done.
+    }
+    { (* TODO: Avoid the duplication of proofs here. *)
+      intros j Hj _.
+      have Hfi: vars (f a₀) = ∅. { by rewrite /f overwrite_eq. }
+      have Hfj: ∀ j, vars (f j) ⊆ {[j]}. {
+       intros k. case (decide (k = a₀)) as[->|Hneq].
+       + unfold f. by rewrite overwrite_eq.
+       + unfold f. by rewrite overwrite_neq.
+      }
+      have Hgi: vars (g a₁) = ∅. { by rewrite /g overwrite_eq. }
+      have Hgj: ∀ j, vars (g j) ⊆ {[j]}. {
+       intros k. case (decide (k = a₁)) as[->|Hneq].
+       + unfold g. by rewrite overwrite_eq.
+       + unfold g. by rewrite overwrite_neq.
+      }
+      specialize (vars_suppressing _ f a₀ Hfi Hfj _ Hj) as Hf.
+      specialize (vars_suppressing (Let K .in y) g a₁ Hgi Hgj) as Hg.
+      cut (j ∈ ({[a₀; a₁; aₓ]} ∖ {[a₁]} ∖ {[a₀]} : gset val)). set_solver.
+      cut (j ∈ (vars (Let K .in y) ∖ {[a₁]} ∖ {[a₀]})). set_solver.
+      cut (j ∈ (vars (bind g (Let K .in y)) ∖ {[a₀]})); set_solver.
+    }
+  Qed.
 
-End ghost_theory_proofs.
+  Lemma forward_inv_fresh_loc K ℓ d :
+    ℓ ↦ d -∗
+      forward_inv K -∗
+        ⌜ ∀ v, InjRV (v, #ℓ)%V ∉ defs K ++ [aₓ] ⌝.
+  Proof.
+    iIntros "Hu [_ [_ Hheap]]" (v).
+    iInduction (defs K ++ [aₓ]) as [|u us] "IH".
+    { iPureIntro. by apply not_elem_of_nil. }
+    { rewrite not_elem_of_cons. simpl.
+      iDestruct "Hheap" as "[Hy Hheap]".
+      iDestruct "Hy" as (v' ℓ') "[_ [Hy ->]]".
+      iSplit.
+      { iDestruct (mapsto_ne with "Hu Hy") as %H.
+        iPureIntro. inversion 1. contradiction. }
+      { by iApply ("IH" with "Hu Hheap"). }
+    }
+  Qed.
 
+  Corollary forward_inv_lookup K ℓ d :
+    ℓ ↦ d -∗
+      forward_inv K -∗
+        ⌜ ∀ v, context_to_map K !! (InjRV (v, #ℓ))%V = None ⌝.
+  Proof.
+    iIntros "Hx Hinv" (v).
+    iDestruct (forward_inv_fresh_loc with "Hx Hinv") as %Hnot_in.
+    iPureIntro. apply not_elem_of_list_to_map_1. set_solver.
+  Qed.
 
-(** Verification. *)
+  Lemma forward_inv_update K x op a b v (ℓ : loc) el er :
+    let ϱ  := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
+    let K' := K ++ [(x, (op, a, b))] in
+    x = InjRV (v, #ℓ)%V →
+      forward_inv K -∗
+        represents a el -∗
+          represents b er -∗
+            implements v (ϱ.{[K']} x) -∗
+              ℓ ↦ nzero ==∗
+                forward_inv K' ∗
+                represents x (Node _ op el er).
+  Proof.
+    intros ??. iIntros (->) "Hinv #Ha #Hb Hv Hx". fold ϱ.
+    iDestruct (forward_inv_fresh_loc with "Hx Hinv") as %Hnot_in.
+    iDestruct (forward_inv_lookup with "Hx Hinv") as %Hlkp.
+    iDestruct (vars_subseteq with "Hinv Ha") as %Hvars_a.
+    iDestruct (vars_subseteq with "Hinv Hb") as %Hvars_b.
+    iDestruct "Hinv" as "(HK & % & Hheap)". rename H into Hvars.
+    iMod (context_update _ _ _ (op,a,b) (Hlkp v) with "HK")
+      as "[HK' Hentry]".
+    iModIntro. iSplitL "HK' Hheap Hx Hv"; [|
+    iExists a, b; iFrame; iSplit; by iFrame ].
+    iSplitL "HK'"; [by iApply "HK'"|]. fold ϱ. iSplit; [iPureIntro|].
+    { intro u. rewrite defs_app elem_of_app //= elem_of_list_singleton.
+      intros [|]; rename H into Hu; [|rewrite Hu].
+      - rewrite filling_snoc_neq; [by apply Hvars|]. set_solver.
+      - rewrite filling_snoc_eq //= union_subseteq. done.
+    }
+    { rewrite (big_opL_permutation _ (defs K' ++ _) (_ :: defs K ++ [aₓ]));[|
+      by rewrite /K' defs_app defs_cons
+         -(Permutation_cons_append _ (InjRV (v, _))%V) //=].
+      iSplitL "Hx Hv"; [iExists v, ℓ; iSplit; by iFrame|].
+      iApply (big_sepL_strong_mono' with "Hheap").
+      intros. unfold K'.
+      by rewrite extension_snoc //= overwrite_neq; [|set_solver].
+    }
+  Qed.
 
-Section verification.
-Context `{Hp: !heapG Σ, Cg: !cgraphG Σ, DR: !DiffRing, Num: !Numeric}.
+End forward_invariant.
 
-Add Ring DRing : DRsemi_ring_theory.
+Section forward_invariant_alloc.
+  Context `{!cgraphG Σ, !heapG Σ}
+           {R : Set} {RS : RingSig R}
+           {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
-Lemma set_diff_spec E Ψ (x : name) (xv xd xd' : val) :
-  x ↦ PairV xv xd -∗
-    EWP set_diff #x xd' @ E <| Ψ |> {{ _, x ↦ PairV xv xd' }}.
-Proof.
-  iIntros "Hx". iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
-  iApply (Ectxi_ewp_bind (PairLCtx _)). done.
-  iApply (Ectxi_ewp_bind FstCtx). done.
-  iApply (ewp_mono' with "[Hx]"). { by iApply (ewp_load with "Hx"). }
-  iIntros (y) "[-> Hx]". iModIntro. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_Fst. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_pair. iApply ewp_value.
-  by iApply (ewp_store with "Hx").
-Qed.
+  Variables (ℓₓ : loc) (r  : R) (nᵣ : val).
 
-Lemma get_diff_spec E Ψ (x : name) (xv xd : val) :
-  x ↦ PairV xv xd -∗
-    EWP get_diff #x @ E <| Ψ |> {{ y, ⌜ y = xd ⌝ ∗ x ↦ PairV xv xd }}.
-  iIntros "Hx".
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind SndCtx). done.
-  iApply (ewp_mono' with "[Hx]"). { by iApply (ewp_load with "Hx"). }
-  iIntros (y) "[-> Hx]". iModIntro. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_Snd. iApply ewp_value.
-  by iFrame.
-Qed.
+  Lemma forward_inv_alloc :
+    implements nᵣ r -∗
+      ℓₓ ↦ nzero ==∗
+        ∃ γ, forward_inv γ ℓₓ r nᵣ [].
+  Proof.
+    iIntros "Hnᵣ Hℓₓ".
+    iMod (context_alloc) as (γ) "Hcontext".
+    iModIntro. iExists γ. iFrame. iSplit.
+    { iPureIntro. intros ?. by rewrite elem_of_nil. }
+    { rewrite //=.
+      iSplit; [|done]. iExists nᵣ, ℓₓ. iFrame.
+      rewrite overwrite_neq; [|done].
+      rewrite overwrite_neq; [|done].
+      by iFrame.
+    }
+  Qed.
 
-Lemma get_val_spec E Ψ γ x xv K u uv :
-  represents γ x u uv -∗
-    handler_inv γ x xv K -∗
-      EWP get_val #u @ E <| Ψ |> {{ y,
-        repr y (eval (emap' {[x:=xv]} (emap (λ _, x) uv))) ∗
-          handler_inv γ x xv K }}.
-Proof.
-  iIntros "Hu Hhinv".
-  iDestruct (handler_inv_agree with "Hhinv Hu") as %Hinterp.
-  iDestruct (handler_inv_elem_of' with "Hhinv Hu") as %Hin.
-  iDestruct "Hhinv" as "[Hauth [Hvar HK]]".
-  specialize (elem_of_list_split _ _ Hin) as [us [vs HK_eq]].
-  rewrite HK_eq. rewrite (big_opL_permutation _ _ (u :: (vs ++ us))); [|
-  by rewrite Permutation_app_comm].
-  iDestruct "HK" as "[Hu' HK]".
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind FstCtx). done.
-  iDestruct "Hu'" as (uv') "[#Hrepr Hu']".
-  iApply (ewp_mono' with "[Hu']"). { by iApply (ewp_load with "Hu'"). }
-  iIntros (y) "[-> Hu']". iModIntro. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_Fst. iApply ewp_value.
-  rewrite -!Hinterp. iFrame. iSplit; [done|]. iFrame.
-  rewrite HK_eq. rewrite (big_opL_permutation _ (us ++ _) (u :: (vs ++ us))); [|
-  by rewrite Permutation_app_comm].
-  iFrame. iExists uv'. by iFrame.
-Qed.
+End forward_invariant_alloc.
 
-Lemma mk_spec E Ψ (xv : val) :
-  ⊢ EWP mk xv @ E <| Ψ |> {{ y, ∃ (x : name), ⌜ y = #x ⌝ ∗ x ↦ (PairV xv nO) }}.
-Proof.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind AllocCtx). done.
-  iApply ewp_pure_step. apply pure_prim_step_pair. iApply ewp_value. simpl.
-  by iApply ewp_alloc.
-Qed.
+(** Backward invariant. *)
 
-Lemma return_spec E Ψ γ x xv K r (e : expr unit) :
-  handler_inv γ x xv K -∗ represents γ x r e -∗ 
-    EWP set_diff #r nI @ E <| Ψ |> {{ _, backpropagation_inv x xv K e }}.
-Proof.
-  iIntros "Hhinv Hrepr".
-  iDestruct (handler_inv_agree with "Hhinv Hrepr") as %Hinterp.
-  iDestruct (handler_inv_elem_of' with "Hhinv Hrepr") as %[i Hin]%elem_of_list_lookup_1.
-  iDestruct (handler_inv_NoDup with "Hhinv") as %HNoDup.
-  iDestruct "Hhinv" as "[_ [Hvar HK]]". iClear "Hrepr".
-  iDestruct (big_sepL_delete' _ _ _ _ Hin with "HK") as "[Hu HK]".
-  iDestruct "Hu" as (uv) "[Huv Hr]".
-  iApply (ewp_mono' with "[Hr]"). { by iApply (set_diff_spec with "Hr"). }
-  iIntros (_) "Hr !>". iExists [], r. rewrite app_nil_r Hinterp.
-  iSplit; [done|].
-  rewrite (big_sepL_delete' (λ _ u, ∃ uv ud, _ ∗ _ ∗ _)%I _ _ _ Hin).
-  iSplitL "Huv Hr".
-  - iExists uv, nI. rewrite //= Hinterp diff_var_eq. iFrame. iApply nI_spec.
-  - iApply (big_sepL_mono with "HK").
-    iIntros (k v Hin') "Hv". iIntros (Hneq).
-    iDestruct ("Hv" $! Hneq) as (vv) "[Hvv Hv]". iExists vv, nO. iFrame.
-    rewrite //= diff_var_neq; [iApply nO_spec|]. intros ->.
-    by destruct (NoDup_lookup _ _ _ _ HNoDup Hin Hin').
-Qed.
+(** After the execution of the client, the handler traverses the complete
+    sequence of operations in reverse order. We can thus split this complete
+    sequence into a pair of contexts, its prefix and suffix, and state what
+    holds at each step of this phase in terms of those.
+*)
 
-Lemma add_update_spec_1 x xv K u a e :
-  NoDup (x :: K.*1) → a ∈ x :: K.*1 → u ∉ x :: K.*1 →
-    backpropagation_inv x xv (K ++ [(u, (Add, a, a))]) e -∗
-      EWP let: "ud" := get_diff #u in
-          set_diff #a (nadd (get_diff #a) "ud");;
-          set_diff #a (nadd (get_diff #a) "ud")
-      <| effs |> {{_, backpropagation_inv x xv K e }}.
-Proof.
-  intros HNoDup Hin Hnot_in.
-  iDestruct 1 as (K' r) "(% & HK)". rename H into Hr.
-  rewrite fmap_app fmap_cons app_comm_cons big_opL_app. iDestruct "HK" as "[HK [Hu _]]".
-  assert (∃ l, l = (x :: K.*1)) as [l Hl]; [by eauto|].
-  destruct (elem_of_list_lookup_1 _ _ Hin) as [i Hlkp].
-  iDestruct (big_sepL_delete' _ _ _ _ Hlkp with "HK") as "[Ha HK]".
-  iDestruct "Hu" as (uv ud) "(#Hrepr_uv & #Hrepr_ud & Hu)".
-  iDestruct "Ha" as (av ad) "(#Hrepr_av & #Hrepr_ad & Ha)".
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done. rewrite -Hl //=.
-  iApply (ewp_mono' with "[Hu]"). { by iApply (get_diff_spec with "Hu"). }
-  iIntros (v) "[-> Hu]". iModIntro.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (ewp_bind (ConsCtx (AppLCtx _)
-                   (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (get_diff_spec with "Ha"). }
-  iIntros (y) "[-> Ha]". iModIntro. simpl.
-  iApply ewp_mono'. { by iApply (nadd_spec with "Hrepr_ad Hrepr_ud"). }
-  iIntros (ad') "#Hrepr_ad'". iModIntro. iClear "Hrepr_ad".
-  iApply (ewp_mono' with "[Ha]"). { by iApply (set_diff_spec with "Ha"). }
-  iIntros (v) "Ha". iModIntro.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (ewp_bind (ConsCtx (AppLCtx _)
-                   (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (get_diff_spec with "Ha"). }
-  iIntros (y) "[-> Ha]". iModIntro. simpl.
-  iApply ewp_mono'. { by iApply (nadd_spec with "Hrepr_ad' Hrepr_ud"). }
-  iIntros (ad'') "#Hrepr_ad''". iModIntro. iClear "Hrepr_ad'".
-  iApply (ewp_mono' with "[Ha]"). { by iApply (set_diff_spec with "Ha"). }
-  clear v. iIntros (v) "Ha". iModIntro.
-  iExists ((u, (Add, a, a)) :: K'), r.
-  iSplit; [iPureIntro; by rewrite cons_middle app_assoc Hr|].
-  rewrite (big_sepL_delete' _ _ _ _ Hlkp).
-  have Hneq: a ≠ u. { by intros ->. }
-  iClear "Hu". iSplitL "Ha"; [|rewrite Hl; iApply (big_sepL_mono with "HK")].
-  { iExists av, ad''. iFrame. iClear "Hrepr_uv Hrepr_ud".
-    iSplit; [by rewrite interp_snoc decide_False|]. iClear "Hrepr_av".
-    iApply (repr_proper with "Hrepr_ad''").
-    rewrite (diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                              (eval (emap' {[x:=xv]} (interp K a))));
-    try (by apply lookup_env_extension'); try done.
-    rewrite -env_extension_app'; [|done]. simpl. rewrite diff_var_eq //=.
-    rewrite (_ : ∀ x y,
-      radd x (rmult (radd 1 1) y) == radd (radd x y) y)%dring; [done|].
-    intros ??. ring.
-  }
-  { intros k y Hlkp'. simpl. iIntros "Hy". iIntros (Hneq').
-    have Hneq'': u ≠ y; [
-    intros ->; by apply Hnot_in, (elem_of_list_lookup_2 _ k)|].
-    iDestruct ("Hy" $! Hneq') as (yv yd) "(Hrepr_yv & Hrepr_yd & Hy)".
-    iExists yv, yd. iFrame.
-    rewrite interp_snoc decide_False; [|done]. iFrame.
-    iApply (repr_proper with "Hrepr_yd").
-    rewrite (diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                              (eval (emap' {[x:=xv]} (interp K a))));
-    try (by apply lookup_env_extension'); try done.
-    rewrite -env_extension_app'; [|done]. simpl. rewrite diff_var_neq //=;[|
-    by intros ->; destruct (NoDup_lookup _ _ _ _ HNoDup Hlkp Hlkp')].
-    rewrite (_ : ∀ x y, radd x (rmult (radd 0 0) y) == x)%dring; [done|].
-    intros ??. ring.
-  }
-Qed.
+Section backward_invariant.
+  Context `{!cgraphG Σ, !heapG Σ}
+           {R : Set} {RS : RingSig R} {RA : IsRing R}
+           {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
-Lemma add_update_spec_2 x xv K u a b e :
-  NoDup (x :: K.*1) → a ∈ x :: K.*1 → b ∈ x :: K.*1 → a ≠ b → u ∉ x :: K.*1 →
-    backpropagation_inv x xv (K ++ [(u, (Add, a, b))]) e -∗
-      EWP let: "ud" := get_diff #u in
-          set_diff #a (nadd (get_diff #a) "ud");;
-          set_diff #b (nadd (get_diff #b) "ud")
-      <| effs |> {{_, backpropagation_inv x xv K e }}.
-Proof.
-  intros HNoDup Ha_in Hb_in Hab Hnot_in.
-  iDestruct 1 as (K' r) "(% & HK)". rename H into Hr.
-  rewrite fmap_app fmap_cons app_comm_cons big_opL_app. iDestruct "HK" as "[HK [Hu _]]".
-  assert (∃ l, l = (x :: K.*1)) as [l Hl]; [by eauto|].
-  destruct (elem_of_list_lookup_1 _ _ Ha_in) as [i Hlkp_a].
-  destruct (elem_of_list_lookup_1 _ _ Hb_in) as [j Hlkp_b].
-  iDestruct (big_sepL_delete' _ _ _ _ Hlkp_a with "HK") as "[Ha HK]".
-  iDestruct (big_sepL_delete' _ _ _ _ Hlkp_b with "HK") as "[Hb HK]".
-  have Hij: i ≠ j; [
-  by intros ->; cut (Some a = Some b); [inversion 1|rewrite -Hlkp_a -Hlkp_b]|].
-  iSpecialize ("Hb" with "[]"); [done|].
-  iDestruct "Hu" as (uv ud) "(#Hrepr_uv & #Hrepr_ud & Hu)".
-  iDestruct "Ha" as (av ad) "(#Hrepr_av & #Hrepr_ad & Ha)".
-  iDestruct "Hb" as (bv bd) "(#Hrepr_bv & #Hrepr_bd & Hb)".
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done. rewrite -Hl //=.
-  iApply (ewp_mono' with "[Hu]"). { by iApply (get_diff_spec with "Hu"). }
-  iIntros (v) "[-> Hu]". iModIntro.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (ewp_bind (ConsCtx (AppLCtx _)
-                   (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (get_diff_spec with "Ha"). }
-  iIntros (y) "[-> Ha]". iModIntro. simpl.
-  iApply ewp_mono'. { by iApply (nadd_spec with "Hrepr_ad Hrepr_ud"). }
-  iIntros (ad') "#Hrepr_ad'". iModIntro. iClear "Hrepr_ad".
-  iApply (ewp_mono' with "[Ha]"). { by iApply (set_diff_spec with "Ha"). }
-  iIntros (v) "Ha". iModIntro.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (ewp_bind (ConsCtx (AppLCtx _)
-                   (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply (ewp_mono' with "[Hb]"). { by iApply (get_diff_spec with "Hb"). }
-  iIntros (y) "[-> Hb]". iModIntro. simpl.
-  iApply ewp_mono'. { by iApply (nadd_spec with "Hrepr_bd Hrepr_ud"). }
-  iIntros (bd') "#Hrepr_bd'". iModIntro. iClear "Hrepr_bd".
-  iApply (ewp_mono' with "[Hb]"). { by iApply (set_diff_spec with "Hb"). }
-  clear v. iIntros (v) "Hb". iModIntro.
-  iExists ((u, (Add, a, b)) :: K'), r.
-  iSplit; [iPureIntro; by rewrite cons_middle app_assoc Hr|].
-  rewrite (big_sepL_delete' _ _ _ _ Hlkp_a).
-  rewrite (big_sepL_delete' _ _ _ _ Hlkp_b).
-  have Hau: a ≠ u. { by intros ->. }
-  have Hbu: b ≠ u. { by intros ->. }
-  iClear "Hu". rewrite interp_snoc decide_True;[|done].
-  rewrite !interp_snoc !decide_False; try done.
-  iSplitL "Ha"; [|iSplitL "Hb"; [|rewrite Hl; iApply (big_sepL_mono with "HK")]].
-  { iExists av, ad'. iFrame. iSplit; [iApply "Hrepr_av"|].
-    iApply (repr_proper with "Hrepr_ad'").
-    rewrite !(diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                               (eval (emap' {[x:=xv]} (interp K b))));
-    try (by apply lookup_env_extension'); try done. simpl.
-    rewrite diff_var_eq diff_var_neq; [|done].
-    rewrite env_extension_app'; [|done]; simpl. ring.
-  }
-  { iIntros (_). iExists bv, bd'. iFrame. iSplit; [iApply "Hrepr_bv"|].
-    iApply (repr_proper with "Hrepr_bd'").
-    rewrite !(diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                               (eval (emap' {[x:=xv]} (interp K b))));
-    try (by apply lookup_env_extension'); try done. simpl.
-    rewrite diff_var_eq diff_var_neq; [|done].
-    rewrite env_extension_app'; [|done]; simpl. ring.
-  }
-  { intros k y Hlkp'. simpl. iIntros "Hy". iIntros (Hkj Hki).
-    iDestruct ("Hy" $! Hkj Hki) as (yv yd) "(Hyv & Hyd & Hy)".
-    iExists yv, yd.
-    have Hneq'': u ≠ y; [
-    intros ->; by apply Hnot_in, (elem_of_list_lookup_2 _ k)|].
-    rewrite interp_snoc decide_False; [|done]. iFrame.
-    iApply (repr_proper with "Hyd").
-    rewrite (diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                              (eval (emap' {[x:=xv]} (interp K b))));
-    try (by apply lookup_env_extension'); try done.
-    rewrite -env_extension_app'; [|done]. simpl.
-    rewrite diff_var_neq //=;[|
-    by intros ->; destruct (NoDup_lookup _ _ _ _ HNoDup Hlkp_a Hlkp')].
-    rewrite diff_var_neq //=;[|
-    by intros ->; destruct (NoDup_lookup _ _ _ _ HNoDup Hlkp_b Hlkp')].
-    rewrite (_ : ∀ x y, radd x (rmult (radd 0 0) y) == x)%dring; [done|].
-    intros ??. ring.
-  }
-Qed.
+  Variables (γ  : gname)
+            (ℓₓ : loc)
+            (r  : R)
+            (nᵣ : val)
+            (e : Expr ()). (* The expression implemented by the client. *)
 
-Lemma mult_update_spec_1 x xv K u a e e_av e_bv :
-  NoDup (x :: K.*1) → a ∈ x :: K.*1 → u ∉ x :: K.*1 →
-  repr e_av (eval (emap' {[x:=xv]} (interp K a))) -∗
-  repr e_bv (eval (emap' {[x:=xv]} (interp K a))) -∗
-    backpropagation_inv x xv (K ++ [(u, (Mult, a, a))]) e -∗
-      EWP let: "ud" := get_diff #u in
-          set_diff #a (nadd (get_diff #a) (nmult e_bv "ud"));;
-          set_diff #a (nadd (get_diff #a) (nmult e_av "ud"))
-      <| effs |> {{_, backpropagation_inv x xv K e }}.
-Proof.
-  simpl. intros HNoDup Hin Hnot_in. iIntros "#Heval_a #Heval_b".
-  iDestruct 1 as (K' r) "(% & HK)". rename H into Hr.
-  rewrite fmap_app fmap_cons app_comm_cons big_opL_app. iDestruct "HK" as "[HK [Hu _]]".
-  assert (∃ l, l = (x :: K.*1)) as [l Hl]; [by eauto|].
-  destruct (elem_of_list_lookup_1 _ _ Hin) as [i Hlkp].
-  iDestruct (big_sepL_delete' _ _ _ _ Hlkp with "HK") as "[Ha HK]".
-  iDestruct "Hu" as (uv ud) "(#Hrepr_uv & #Hrepr_ud & Hu)".
-  iDestruct "Ha" as (av ad) "(#Hrepr_av & #Hrepr_ad & Ha)".
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done. rewrite -Hl //=.
-  iApply (ewp_mono' with "[Hu]"). { by iApply (get_diff_spec with "Hu"). }
-  iIntros (v) "[-> Hu]". iModIntro.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply ewp_mono'. { by iApply (nmult_spec with "Heval_b Hrepr_ud"). }
-  iIntros (c) "#Hc". iModIntro. simpl.
-  iApply (ewp_bind (ConsCtx (AppLCtx _)
-                   (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (get_diff_spec with "Ha"). }
-  iIntros (y) "[-> Ha]". iModIntro. simpl.
-  iApply ewp_mono'. { by iApply (nadd_spec with "Hrepr_ad Hc"). }
-  iIntros (ad') "#Hrepr_ad'". iModIntro.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (set_diff_spec with "Ha"). }
-  iIntros (v) "Ha". iModIntro. iClear "Hrepr_ad Hc". clear c ad.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply ewp_mono'. { by iApply (nmult_spec with "Heval_a Hrepr_ud"). }
-  iIntros (c) "#Hc". iModIntro. simpl.
-  iApply (ewp_bind (ConsCtx (AppLCtx _)
-                   (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (get_diff_spec with "Ha"). }
-  iIntros (y) "[-> Ha]". iModIntro. simpl.
-  iApply ewp_mono'. { by iApply (nadd_spec with "Hrepr_ad' Hc"). }
-  iIntros (ad'') "#Hrepr_ad''". iModIntro.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (set_diff_spec with "Ha"). }
-  clear v. iIntros (v) "Ha". iModIntro. iClear "Hrepr_ad' Hc". clear c v ad'.
-  iExists ((u, (Mult, a, a)) :: K'), r.
-  iSplit; [iPureIntro; by rewrite cons_middle app_assoc Hr|].
-  rewrite (big_sepL_delete' _ _ _ _ Hlkp).
-  have Hau: a ≠ u. { by intros ->. }
-  iClear "Hu Hrepr_uv Hrepr_ud Heval_a".
-  rewrite interp_snoc decide_False; try done.
-  iSplitL "Ha"; [|rewrite Hl; iApply (big_sepL_mono with "HK")].
-  { iExists av, ad''. iFrame. iSplit; [done|].
-    iApply (repr_proper with "Hrepr_ad''").
-    rewrite !(diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                               (eval (emap' {[x:=xv]} (interp K a))));
-    try (by apply lookup_env_extension'); try done.
-    rewrite -!env_extension_app'; [|done].
-    rewrite //= diff_var_eq lookup_total_alt lookup_env_extension' //=. ring.
-  }
-  { intros k y Hlkp'. simpl. iIntros "Hy". iIntros (Hki).
-    iDestruct ("Hy" $! Hki) as (yv yd) "(Hyv & Hyd & Hy)".
-    iExists yv, yd. iFrame.
-    have Hneq'': u ≠ y; [
-    intros ->; by apply Hnot_in, (elem_of_list_lookup_2 _ k)|].
-    rewrite interp_snoc decide_False; [|done]. iFrame.
-    iApply (repr_proper with "Hyd").
-    rewrite (diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                              (eval (emap' {[x:=xv]} (interp K a))));
-    try (by apply lookup_env_extension'); try done.
-    rewrite -env_extension_app'; [|done]. simpl.
-    rewrite diff_var_neq //=;[|
-    by intros ->; destruct (NoDup_lookup _ _ _ _ HNoDup Hlkp Hlkp')].
-    ring.
-  }
-Qed.
+  Notation a₀         := (InjLV (InjLV #()))%V (only parsing).
+  Notation a₁         := (InjLV (InjRV #()))%V (only parsing).
+  Notation aₓ         := (InjRV (nᵣ,   #ℓₓ))%V (only parsing).
+  Notation adj_vars   := ([a₀; a₁; aₓ])        (only parsing).
+  Notation represents := (represents γ ℓₓ nᵣ)  (only parsing).
 
-Lemma mult_update_spec_2 x xv K u a b e e_av e_bv :
-  NoDup (x :: K.*1) → a ∈ x :: K.*1 → b ∈ x :: K.*1 → a ≠ b → u ∉ x :: K.*1 →
-  repr e_av (eval (emap' {[x:=xv]} (interp K a))) -∗
-  repr e_bv (eval (emap' {[x:=xv]} (interp K b))) -∗
-    backpropagation_inv x xv (K ++ [(u, (Mult, a, b))]) e -∗
-      EWP let: "ud" := get_diff #u in
-          set_diff #a (nadd (get_diff #a) (nmult e_bv "ud"));;
-          set_diff #b (nadd (get_diff #b) (nmult e_av "ud"))
-      <| effs |> {{_, backpropagation_inv x xv K e }}.
-Proof.
-  simpl. intros HNoDup Ha_in Hb_in Hab Hnot_in. iIntros "#Heval_a #Heval_b".
-  iDestruct 1 as (K' r) "(% & HK)". rename H into Hr.
-  rewrite fmap_app fmap_cons app_comm_cons big_opL_app. iDestruct "HK" as "[HK [Hu _]]".
-  assert (∃ l, l = (x :: K.*1)) as [l Hl]; [by eauto|].
-  destruct (elem_of_list_lookup_1 _ _ Ha_in) as [i Hlkp_a].
-  destruct (elem_of_list_lookup_1 _ _ Hb_in) as [j Hlkp_b].
-  iDestruct (big_sepL_delete' _ _ _ _ Hlkp_a with "HK") as "[Ha HK]".
-  iDestruct (big_sepL_delete' _ _ _ _ Hlkp_b with "HK") as "[Hb HK]".
-  have Hij: i ≠ j; [
-  by intros ->; cut (Some a = Some b); [inversion 1|rewrite -Hlkp_a -Hlkp_b]|].
-  iSpecialize ("Hb" with "[]"); [done|].
-  iDestruct "Hu" as (uv ud) "(#Hrepr_uv & #Hrepr_ud & Hu)".
-  iDestruct "Ha" as (av ad) "(#Hrepr_av & #Hrepr_ad & Ha)".
-  iDestruct "Hb" as (bv bd) "(#Hrepr_bv & #Hrepr_bd & Hb)".
+  Definition mapsto_diff (K₁ K₂ : context) (y u : val) : iProp Σ :=
+    let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
+    let ϑ := ϱ.{[K₁]} in
+    (∀ v (ℓ : loc), ⌜ u = InjRV (v, #ℓ)%V ⌝ →
+      (∃ d s,
+        implements d s                         ∗
+        ⌜ s =ᵣ ∂ (Let K₂ .in y) ./ ∂ u .at ϑ ⌝ ∗
+        ℓ ↦ d                                  )
+    )%I.
 
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done. rewrite -Hl //=.
-  iApply (ewp_mono' with "[Hu]"). { by iApply (get_diff_spec with "Hu"). }
-  iIntros (v) "[-> Hu]". iModIntro.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
+  Definition backward_inv (K₁ K₂ : context) (y : val) : iProp Σ := (
+    let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
+    ⌜ ∂ e                      ./ ∂ tt .at (λ _, r) =ᵣ
+      ∂ (Let (K₁ ++ K₂) .in y) ./ ∂ aₓ .at       ϱ    ⌝ ∗
+    ( [∗ list] u ∈ defs K₁ ++ [aₓ], ∃ v (ℓ : loc),
+        mapsto_diff K₁ K₂ y u                           ∗
+        ⌜ u = InjRV (v, #ℓ)%V ⌝                         )
+  )%I.
 
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply ewp_mono'. { by iApply (nmult_spec with "Heval_b Hrepr_ud"). }
-  iIntros (c) "#Hc". iModIntro. simpl.
-  iApply (ewp_bind (ConsCtx (AppLCtx _)
-                   (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (get_diff_spec with "Ha"). }
-  iIntros (y) "[-> Ha]". iModIntro. simpl.
-  iApply ewp_mono'. { by iApply (nadd_spec with "Hrepr_ad Hc"). }
-  iIntros (ad') "#Hrepr_ad'". iModIntro.
-  iApply (ewp_mono' with "[Ha]"). { by iApply (set_diff_spec with "Ha"). }
-  iIntros (v) "Ha". iModIntro. iClear "Hrepr_ad Hc". clear c ad.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply ewp_mono'. { by iApply (nmult_spec with "Heval_a Hrepr_ud"). }
-  iIntros (c) "#Hc". iModIntro. simpl.
-  iApply (ewp_bind (ConsCtx (AppLCtx _)
-                   (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply (ewp_mono' with "[Hb]"). { by iApply (get_diff_spec with "Hb"). }
-  iIntros (y) "[-> Hb]". iModIntro. simpl.
-  iApply ewp_mono'. { by iApply (nadd_spec with "Hrepr_bd Hc"). }
-  iIntros (bd') "#Hrepr_bd'". iModIntro.
-  iApply (ewp_mono' with "[Hb]"). { by iApply (set_diff_spec with "Hb"). }
-  clear v. iIntros (v) "Hb". iModIntro. iClear "Hrepr_bd Hc". clear c v.
-  iExists ((u, (Mult, a, b)) :: K'), r.
-  iSplit; [iPureIntro; by rewrite cons_middle app_assoc Hr|].
-  rewrite (big_sepL_delete' _ _ _ _ Hlkp_a).
-  rewrite (big_sepL_delete' _ _ _ _ Hlkp_b).
-  have Hau: a ≠ u. { by intros ->. }
-  have Hbu: b ≠ u. { by intros ->. }
-  iClear "Hu Hrepr_uv Hrepr_ud". rewrite !interp_snoc !decide_False; try done.
-  iSplitL "Ha"; [|iSplitL "Hb"; [|rewrite Hl; iApply (big_sepL_mono with "HK")]].
-  { iExists av, ad'. iFrame. iSplit; [done|]. iApply (repr_proper with "Hrepr_ad'").
-    rewrite !(diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                               (eval (emap' {[x:=xv]} (interp K b))));
-    try (by apply lookup_env_extension'); try done.
-    rewrite -!env_extension_app'; [|done]. simpl.
-    rewrite //= diff_var_eq diff_var_neq //=.
-    rewrite lookup_total_alt lookup_env_extension' //=. ring.
-  }
-  { iIntros (_). iExists bv, bd'. iFrame. iSplit; [done|].
-    iApply (repr_proper with "Hrepr_bd'").
-    rewrite !(diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                               (eval (emap' {[x:=xv]} (interp K b))));
-    try (by apply lookup_env_extension'); try done.
-    rewrite -!env_extension_app'; [|done]. simpl.
-    rewrite //= diff_var_eq diff_var_neq //=.
-    rewrite (_ : ∀ y, rmult 0 y == 0)%dring; [|intros ?; ring].
-    rewrite lookup_total_alt lookup_env_extension' //=. ring.
-  }
-  { intros k y Hlkp'. simpl. iIntros "Hy". iIntros (Hkj Hki).
-    iDestruct ("Hy" $! Hkj Hki) as (yv yd) "(Hyv & Hyd & Hy)".
-    iExists yv, yd. iFrame.
-    have Hneq'': u ≠ y; [
-    intros ->; by apply Hnot_in, (elem_of_list_lookup_2 _ k)|].
-    rewrite interp_snoc decide_False; [|done]. iFrame.
-    iApply (repr_proper with "Hyd").
-    rewrite (diff_interp_cons (eval (emap' {[x:=xv]} (interp K a)))
-                              (eval (emap' {[x:=xv]} (interp K b))));
-    try (by apply lookup_env_extension'); try done.
-    rewrite -env_extension_app'; [|done]. simpl.
-    rewrite diff_var_neq //=;[|
-    by intros ->; destruct (NoDup_lookup _ _ _ _ HNoDup Hlkp_a Hlkp')].
-    rewrite diff_var_neq //=;[|
-    by intros ->; destruct (NoDup_lookup _ _ _ _ HNoDup Hlkp_b Hlkp')].
-    ring.
-  }
-Qed.
+  Definition is_adj_var (a : val) : iProp Σ :=
+    ⌜ (∃ (w : val),           a = InjLV  w       ) ∨
+      (∃ (n : val) (ℓ : loc), a = InjRV (n, #ℓ)%V) ⌝.
 
-Lemma run_spec γ x xv (client : val) K (e : expr unit) :
-  EWP client #() <| AD_prot (represents γ x) |> {{ y,
-    ∃ (r : name), ⌜ y = #r ⌝ ∗ represents γ x r e }} -∗
-      handler_inv γ x xv K -∗
-        EWP run client <| effs |> {{ _, backpropagation_inv x xv K e }}.
-Proof.
-  iIntros "Hclient Hhandler".
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (ewp_bind (ConsCtx (AppRCtx _) EmptyCtx)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply (ewp_bind (ConsCtx (AppLCtx _) (ConsCtx (AppRCtx _) EmptyCtx))). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply (ewp_deep_try_with with "Hclient").
-  iLöb as "IH" forall (γ K).
+  Definition both_mapto_diff (K₁ K₂ : context) (y a b : val) : iProp Σ :=
+    (is_adj_var a ∗ mapsto_diff K₁ K₂ y a) ∗ (⌜ a ≠ b ⌝ -∗
+    (is_adj_var b ∗ mapsto_diff K₁ K₂ y b)).
 
-  (* Return branch. *)
-  rewrite deep_handler_unfold. iSplit.
-  { iClear "IH". iIntros (v). iDestruct 1 as (r) "[-> Hrepr]". iNext.
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    iApply (return_spec with "Hhandler Hrepr").
-  }
+  Lemma mapsto_diff_update (K₁ K₂ : context) y x op a b u v (ℓ : loc) :
+    u = InjRV (v, #ℓ)%V → x ≠ u → a ≠ u → b ≠ u →
+      mapsto_diff (K₁ ++ [(x, (op, a, b))]) K₂ y u -∗
+        mapsto_diff  K₁    ((x, (op, a, b)) :: K₂) y u.
+  Proof using RA.
+    set ϱ := (λ _ : val, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]}.
+    iIntros (Hu Hux Hua Hub) "Hu".
+    iDestruct ("Hu" with "[//]") as (d s) "(Hd & % & HH)".
+    rename H into Hs.
+    iIntros (v' ℓ' Hu').
+    assert (v' = v ∧ ℓ' = ℓ) as [-> ->]; [naive_solver|].
+    iExists d, s. iFrame. iPureIntro. fold ϱ.
+    rewrite Hs diff_filling; [|done].
+    rewrite (_ :
+      ∂ (Node val op (Leaf val a) (Leaf val b)) ./ ∂ u .at _ =ᵣ Oᵣ).
+    { rewrite (SRmul_comm is_semi_ring).
+      rewrite (SRmul_0_l  is_semi_ring).
+      rewrite (SRadd_comm is_semi_ring).
+      rewrite (SRadd_0_l  is_semi_ring).
+      rewrite extension_snoc //=; done.
+    }
+    { destruct op; try (do 2 (rewrite //= decide_False; [|done])).
+      - rewrite (SRadd_0_l  is_semi_ring); done.
+      - rewrite (SRmul_0_l  is_semi_ring).
+        rewrite (SRmul_comm is_semi_ring).
+        rewrite (SRmul_0_l  is_semi_ring).
+        rewrite (SRadd_0_l  is_semi_ring); done.
+    }
+  Qed.
 
-  (* Effect branch. *)
-  { iIntros (v k) "Hprot". iNext.
-    iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    rewrite AD_agreement. iDestruct "Hprot" as (op a b av bv) "(-> & [#Ha #Hb] & Hk)".
-    case op.
+  (* Remark: the first assumptions could be suppressed,
+             but in the actual proof they are easily met.
+   *)
+  Lemma backward_inv_update (K₁ K₂ : context) y x op a b :
+    (∀ a, a ∈ (defs K₁ ++ [aₓ]) → ∃ v (ℓ : loc), a = InjRV (v, #ℓ)%V) →
+      NoDup (defs K₁ ++ [aₓ]) →
+        x ∉ defs K₁ ++ [aₓ] →
+          a ∈ defs K₁ ++ adj_vars →
+            b ∈ defs K₁ ++ adj_vars →
+              backward_inv (K₁ ++ [(x, (op, a, b))]) K₂ y -∗
+                (    mapsto_diff (K₁ ++ [(x, (op, a, b))])  K₂  y x  ) ∗
+                (both_mapto_diff (K₁ ++ [(x, (op, a, b))])  K₂  y a b) ∗
+                (both_mapto_diff  K₁    ((x, (op, a, b)) :: K₂) y a b -∗
+                     backward_inv K₁    ((x, (op, a, b)) :: K₂) y).
+  Proof using RA.
+    set aₓ := aₓ.
+    set ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]}.
+    intros Hdefs HND Hx Ha Hb. iIntros "[% HK₁]".
+    rename H into Hdiff.
+    fold aₓ ϱ in Hdiff. fold aₓ.
+    rewrite defs_app defs_cons //=.
+    rewrite (big_opL_permutation _ _ (x :: defs K₁ ++ [aₓ])); [|
+    by rewrite -(Permutation_cons_append _ x)].
+    iDestruct "HK₁" as "[Hx HK₁]".
+    iDestruct "Hx" as (v ℓ) "[$ _]".
+    (* TODO: cleanup. *)
+    assert ((a ∈ defs K₁ ++ [aₓ] ∨ a = a₀ ∨ a = a₁) ∧
+            (b ∈ defs K₁ ++ [aₓ] ∨ b = a₀ ∨ b = a₁)) as [Ha' Hb'].
+    { revert Ha Hb.
+      rewrite !elem_of_app !elem_of_cons; naive_solver.
+    }
+    destruct Ha' as [Ha'|Ha']; destruct Hb' as [Hb'|Hb'].
+    { destruct (elem_of_list_lookup_1 _ _ Ha') as [i Hi].
+      destruct (elem_of_list_lookup_1 _ _ Hb') as [j Hj].
+      rewrite (big_sepL_delete' _ _ _ _ Hi).
+      rewrite (big_sepL_delete' _ _ _ _ Hj).
+      iDestruct "HK₁" as "(Ha & Hb & HK₁)".
+      iSplitR "HK₁"; [iSplitL "Ha"|].
+      - iDestruct "Ha" as (w ℓ') "[Hy ->]". iFrame.
+        iPureIntro; right; naive_solver.
+      - iIntros (Hab).
+        iSpecialize ("Hb" with "[]"); [
+        iPureIntro; naive_solver|].
+        iDestruct "Hb" as (w ℓ') "[Hy ->]". iFrame.
+        iPureIntro; right; naive_solver.
+      - destruct (Hdefs _ Ha') as [av [ℓa Ha'']].
+        destruct (Hdefs _ Hb') as [bv [ℓb Hb'']].
+        iIntros "[[_ Ha] Hb]". iSplit; [iPureIntro;
+        fold ϱ; by rewrite cons_middle app_assoc|].
+        rewrite (big_sepL_delete' (λ _ _,     ∃ _, _)%I _ _ _ Hi).
+        rewrite (big_sepL_delete' (λ _ _, _ → ∃ _, _)%I _ _ _ Hj).
+        iSplitL "Ha"; [by iExists av, ℓa; iFrame|iSplitL "Hb"].
+        + iIntros (Hij). iDestruct ("Hb" with "[]") as "[_ Hb]"; [
+          iIntros (->); by destruct (NoDup_lookup _ _ _ _ HND Hi Hj)|].
+          by iExists bv, ℓb; iFrame.
+        + iApply (big_sepL_mono with "HK₁").
+          iIntros (k u Hk) "Hu". iIntros (Hkj Hki).
+          specialize (elem_of_list_lookup_2 _ _ _ Hk) as ?.
+          iDestruct ("Hu" with "[//] [//]") as (w ℓ') "[Hu ->]".
+          iExists w, ℓ'. iSplit; [|done].
+          iApply (mapsto_diff_update with "Hu"); [done| | | ];
+          intros ->; [done                             |
+          by destruct (NoDup_lookup _ _ _ _ HND Hk Hi) |
+          by destruct (NoDup_lookup _ _ _ _ HND Hk Hj) ].
+    }
+    { destruct (elem_of_list_lookup_1 _ _ Ha') as [i Hi].
+      rewrite (big_sepL_delete' _ _ _ _ Hi).
+      destruct (Hdefs _ Ha') as [av [ℓa Ha'']].
+      iDestruct "HK₁" as "(Ha & HK₁)".
+      iSplitR "HK₁"; [iSplitL "Ha"|].
+      - iDestruct "Ha" as (w ℓ') "[Hy ->]". iFrame.
+        iPureIntro; right; naive_solver.
+      - iIntros (_). iSplit;[
+        by iPureIntro; left; naive_solver |
+        by iIntros (v' ℓ' Heq); inversion Heq; naive_solver].
+      - iIntros "[[_ Ha] _]". iSplit; [iPureIntro;
+        fold ϱ; by rewrite cons_middle app_assoc|].
+        rewrite (big_sepL_delete' (λ _ _, ∃ _, _)%I _ _ _ Hi).
+        iSplitL "Ha"; [by iExists av, ℓa; iFrame|].
+        iApply (big_sepL_mono with "HK₁").
+        iIntros (k u Hk) "Hu". iIntros (Hki).
+        specialize (elem_of_list_lookup_2 _ _ _ Hk) as ?.
+        iDestruct ("Hu" with "[//]") as (w ℓ') "[Hu ->]".
+        iExists w, ℓ'. iSplit; [|done].
+        iApply (mapsto_diff_update with "Hu"); [done| | | ];
+        intros ->; [done                             |
+        by destruct (NoDup_lookup _ _ _ _ HND Hk Hi) |
+        naive_solver                                 ].
+    }
+    { destruct (elem_of_list_lookup_1 _ _ Hb') as [i Hi].
+      rewrite (big_sepL_delete' _ _ _ _ Hi).
+      destruct (Hdefs _ Hb') as [bv [ℓb Hb'']].
+      iDestruct "HK₁" as "(Hb & HK₁)".
+      iSplitR "HK₁"; [iSplitR "Hb"|].
+      - iSplit;[
+        by iPureIntro; left; naive_solver |
+        by iIntros (v' ℓ' Heq); inversion Heq; naive_solver].
+      - iDestruct "Hb" as (w ℓ') "[Hy ->]". iFrame.
+        iPureIntro; right; naive_solver.
+      - iIntros "[_ Hb]". iSplit; [iPureIntro;
+        fold ϱ; by rewrite cons_middle app_assoc|].
+        rewrite (big_sepL_delete' (λ _ _, ∃ _, _)%I _ _ _ Hi).
+        iDestruct ("Hb" with "[]") as "[_ Hb]"; [naive_solver|].
+        iSplitL "Hb"; [by iExists bv, ℓb; iFrame|].
+        iApply (big_sepL_mono with "HK₁").
+        iIntros (k u Hk) "Hu". iIntros (Hki).
+        specialize (elem_of_list_lookup_2 _ _ _ Hk) as ?.
+        iDestruct ("Hu" with "[//]") as (w ℓ') "[Hu ->]".
+        iExists w, ℓ'. iSplit; [|done].
+        iApply (mapsto_diff_update with "Hu"); [done| | | ];
+        intros ->; [done                             |
+        naive_solver                                 |
+        by destruct (NoDup_lookup _ _ _ _ HND Hk Hi) ].
+    }
+    { iSplitR "HK₁".
+      - iSplitL; [|iIntros "_"]; iSplit; try (
+        by iIntros (v' ℓ' Heq); inversion Heq; naive_solver);
+        iPureIntro; left; naive_solver.
+      - iIntros "_". iSplitR "HK₁"; [
+        fold ϱ; by rewrite cons_middle app_assoc|].
+        iApply (big_sepL_mono with "HK₁").
+        iIntros (k y' Hk). simpl.
+        specialize (elem_of_list_lookup_2 _ _ _ Hk) as ?.
+        iDestruct 1 as (w ℓ') "[Hy ->]".
+        iExists w, ℓ'. iSplit; [|done].
+        iApply (mapsto_diff_update with "Hy");
+        [done|by intros ->| |];
+        intros ->; naive_solver.
+    }
+  Qed.
 
-    (* Add. *)
-    { iDestruct (handler_inv_agree with "Hhandler Ha") as %Hinterp_a.
-      iDestruct (handler_inv_agree with "Hhandler Hb") as %Hinterp_b.
-      iDestruct (handler_inv_elem_of' with "Hhandler Ha") as %Ha_in.
-      iDestruct (handler_inv_elem_of' with "Hhandler Hb") as %Hb_in.
-      iDestruct (handler_inv_NoDup with "Hhandler") as %HNoDup.
-      iApply ewp_pure_step. apply pure_prim_step_case_InjL.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_Fst. iApply ewp_value. simpl.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_Snd. iApply ewp_value. simpl.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply (ewp_mono' with "[Hhandler]").
-      { by iApply (get_val_spec with "Hb Hhandler"). }
-      iIntros (e_bv) "[#Heval_b Hhandler]". iModIntro. simpl.
-      iApply (ewp_bind (ConsCtx (AppLCtx _)
-                       (ConsCtx (AppRCtx _) EmptyCtx))). done.
-      iApply (ewp_mono' with "[Hhandler]").
-      { by iApply (get_val_spec with "Ha Hhandler"). }
-      iIntros (e_av) "[#Heval_a Hhandler]". iModIntro. simpl.
-      iApply ewp_mono'. { by iApply (nadd_spec with "Heval_a Heval_b"). }
-      iIntros (uv) "#Huv". iModIntro. simpl.
-      iApply ewp_mono'. { by iApply mk_spec. }
-      iIntros (y). iDestruct 1 as (u) "[-> Hu]".
-      iDestruct (handler_inv_fresh_name with "Hu Hhandler") as %Hu_not_in.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done. simpl.
-      iMod (handler_inv_update _ x xv K u Add a b av bv uv with "[] Hu Hhandler Ha Hb")
-        as "[Hhandler #Hu]"; [by rewrite Hinterp_a Hinterp_b //=|].
+End backward_invariant.
 
-      (* Continuation. *)
-      iModIntro. iApply (ewp_mono' with "[Hhandler Hk]").
-      { iApply ("Hk" with "Hu"). by iApply ("IH" with "Hhandler"). }
-      iClear "IH".
+Section library_implementation_of_expressions.
+  Context `{!cgraphG Σ, !heapG Σ}
+           {R : Set} {RS : RingSig R}
+           {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
-      iIntros (v) "Hback_inv". iModIntro.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      case (decide (a = b)) as [->|Hab];[
-      by iApply (add_update_spec_1 with "Hback_inv")|
-      by iApply (add_update_spec_2 with "Hback_inv")].
+  Variables (γ  : gname)
+            (ℓₓ : loc)
+            (r  : R)
+            (nᵣ : val).
+
+  Notation a₀         := (InjLV (InjLV #()))%V.
+  Notation a₁         := (InjLV (InjRV #()))%V.
+  Notation aₓ         := (InjRV (nᵣ,   #ℓₓ))%V.
+  Notation adj_vars   := ([a₀; a₁; aₓ])        (only parsing).
+  Notation represents := (represents γ ℓₓ nᵣ)  (only parsing).
+
+  (* If we give the predicate [represents] directly in the definition
+     of [ExprNumSpec], then some unsolved goals remain. With this
+     silly definition they don't.
+   *)
+  Definition implements_expr : val → Expr () → iProp Σ :=
+    represents.
+
+  Definition to_val : Binop → val :=
+    λ op, match op with Add => InjLV #() | Mul => InjRV #() end.
+
+  Definition args : Binop → val → val → val :=
+    λ op a b, ((to_val op), (a, b)%V)%V.
+
+  Definition AD : iEff Σ :=
+    (>> (op : Binop) (a b : val) (el er : Expr ()) >>
+       ! (args op a b) {{ represents a el ∗ represents b er }};
+     << (x : val) <<
+       ? (x)           {{ represents x (Node _ op el er)    }}).
+
+  Lemma AD_agreement v Φ : protocol_agreement v AD Φ ≡
+    (∃ (op : Binop) (a b : val) (el er : Expr ()),
+      ⌜ v = args op a b ⌝                          ∗
+      (represents a el ∗ represents b er)          ∗
+      (∀ x, represents x (Node _ op el er) -∗ Φ x))%I.
+  Proof.
+    rewrite /AD (protocol_agreement_tele' [tele _ _ _ _ _] [tele _]). by auto.
+  Qed.
+
+  Definition perform (op : Binop) : val := λ: "a" "b",
+    do: (to_val op, ("a", "b")).
+
+  Lemma perform_spec E (op : Binop) (a b : val) (el er : Expr ()) :
+    implements_expr a el -∗
+      implements_expr b er -∗
+        EWP (perform op) a b @ E <| AD |> {{ x,
+          implements_expr x (Node _ op el er) }}.
+  Proof.
+    iIntros "Ha Hb".
+    unfold perform. ewp_pure_steps.
+    iApply ewp_eff.
+    rewrite AD_agreement.
+    iExists op, a, b, el, er.
+    iFrame. iSplit; [done|].
+    iIntros (x) "Hx". iNext.
+    iApply ewp_value. iFrame.
+  Qed.
+
+  Corollary add_spec E (a b : val) (el er : Expr ()) :
+    implements_expr a el -∗
+      implements_expr b er -∗
+        EWP add a b @ E <| AD |> {{ x,
+          implements_expr x (el +ₑ er) }}.
+  Proof. apply (perform_spec E Add). Qed.
+
+  Corollary mul_spec E (a b : val) (el er : Expr ()) :
+    implements_expr a el -∗
+      implements_expr b er -∗
+        EWP mul a b @ E <| AD |> {{ x,
+          implements_expr x (el ×ₑ er) }}.
+  Proof. apply (perform_spec E Mul). Qed.
+
+  Lemma adj_var_0_spec : ⊢ implements_expr a₀ (Oₑ).
+  Proof. by iPureIntro. Qed.
+
+  Lemma adj_var_1_spec : ⊢ implements_expr a₁ (Iₑ).
+  Proof. by iPureIntro. Qed.
+
+  Program Instance ADNumSpec : NumSpec (ADNum N) AD (ExprRing ()) := {
+    implements := implements_expr;
+
+    nzero_spec := adj_var_0_spec;
+    none_spec  := adj_var_1_spec;
+
+    nadd_spec  := add_spec;
+    nmul_spec  := mul_spec;
+  }.
+
+End library_implementation_of_expressions.
+
+Section proof_of_handle.
+  Context `{!cgraphG Σ, !heapG Σ}
+           {R : Set} {RS : RingSig R} {RA : IsRing R}
+           {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
+
+  Variables (γ  : gname)
+            (ℓₓ : loc)
+            (r  : R)
+            (nᵣ : val)
+            (e : Expr ()). (* The expression implemented by the client. *)
+
+  Notation a₀         := (InjLV (InjLV #()))%V.
+  Notation a₁         := (InjLV (InjRV #()))%V.
+  Notation aₓ         := (InjRV (nᵣ,   #ℓₓ))%V.
+
+  Notation adj_vars        := ([a₀; a₁; aₓ])             (only parsing).
+  Notation represents      := (represents   γ ℓₓ   nᵣ)   (only parsing).
+  Notation AD              := (AD           γ ℓₓ   nᵣ)   (only parsing).
+  Notation mapsto_diff     := (mapsto_diff       r)      (only parsing).
+  Notation both_mapto_diff := (both_mapto_diff   r)      (only parsing).
+  Notation forward_inv     := (forward_inv  γ ℓₓ r nᵣ)   (only parsing).
+  Notation backward_inv    := (backward_inv   ℓₓ r nᵣ e) (only parsing).
+
+  Lemma create_spec (v : val) :
+    ⊢ EWP create v <| Ψ |> {{ w, ∃ (ℓ : loc),
+        ⌜ w = InjRV (v, #ℓ)%V ⌝ ∗ ℓ ↦ nzero }}.
+  Proof.
+    unfold create. ewp_pure_steps. ewp_bind_rule.
+    iApply ewp_mono'; [by iApply ewp_alloc|].
+    iIntros (l) "Hl".
+    iDestruct "Hl" as (ℓ) "[-> Hℓ]". iModIntro.
+    simpl. ewp_pure_steps.
+    by iExists ℓ; eauto.
+  Qed.
+
+  Lemma get_val_spec K u eᵤ :
+    let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
+    forward_inv K -∗
+      represents u eᵤ -∗
+        EWP get_val u <| Ψ |> {{ v,
+          forward_inv K            ∗
+          implements v (ϱ.{[K]} u) }}.
+  Proof.
+    iIntros (?) "Hinv Hu".
+    iDestruct (adj_var_0_not_in_defs with "Hinv") as %Ha₀.
+    iDestruct (adj_var_1_not_in_defs with "Hinv") as %Ha₁.
+    iDestruct (adj_var_cases with "Hinv Hu") as %Hcases.
+    unfold get_val. ewp_pure_steps.
+    destruct Hcases as [Hu|[Hu|Hu]]; try rewrite Hu.
+    (* TODO: cleanup. *)
+    { iDestruct "Hinv" as "(? & ? & Hheap)".
+      destruct (elem_of_list_lookup_1 _ _ Hu) as [i Hi].
+      rewrite (big_sepL_delete' _ _ _ _ Hi).
+      iDestruct "Hheap" as "[Hu' Hheap]".
+      iDestruct "Hu'" as (v ℓ) "(#? & ? & ->)".
+      ewp_pure_steps. iFrame.
+      rewrite (big_sepL_delete' (λ _ u, ∃ _ _, _)%I _ _ _ Hi).
+      iFrame. fold ϱ. iSplit; [|done].
+      iExists v, ℓ. iFrame. by auto.
+    }
+    { ewp_pure_steps. iFrame.
+      rewrite extension_alt filling_undefined; [|done]. simpl.
+      unfold ϱ.
+      rewrite overwrite_neq; [|done].
+      rewrite overwrite_eq.
+      by iApply nzero_spec.
+    }
+    { ewp_pure_steps. iFrame.
+      rewrite extension_alt filling_undefined; [|done]. simpl.
+      unfold ϱ.
+      rewrite overwrite_eq.
+      by iApply none_spec.
+    }
+  Qed.
+
+  Corollary get_diff_spec K₁ K₂ y x v (ℓ : loc) :
+    let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
+    let ϑ := ϱ.{[K₁]} in
+    x = InjRV (v, #ℓ)%V →
+      mapsto_diff K₁ K₂ y x -∗
+        EWP get_diff x <| Ψ |> {{ d,
+          mapsto_diff K₁ K₂ y x ∗ ∃ (s : R),
+          implements d s ∗
+          ⌜ s =ᵣ ∂ (Let K₂ .in y) ./ ∂ x .at ϑ ⌝ }}.
+  Proof.
+    iIntros (?? Hx) "Hx".
+    iDestruct ("Hx" $! v ℓ Hx) as (d s) "(#Hs & % & Hℓ)".
+    rename H into Hs.
+    unfold get_diff. ewp_pure_steps.
+    rewrite_strat outermost Hx.
+    ewp_pure_steps.
+    iApply (ewp_mono' with "[Hℓ]"); [iApply (ewp_load with "Hℓ")|].
+    iIntros (d') "[-> Hℓ]". iModIntro.
+    iSplitL "Hℓ".
+    { iIntros (v' ℓ' ->).
+      inversion Hx. simplify_eq.
+      iExists d, s. by auto.
+    }
+    { iExists s. unfold ϑ. by iSplit. }
+  Qed.
+
+  Lemma update_spec_crude x v (ℓ : loc) (d i : val) (s ds : R) :
+    x = InjRV (v, #ℓ)%V →
+      ℓ ↦ d -∗
+        implements d  s -∗
+          implements i ds -∗
+            EWP update x i <| Ψ |> {{ _, ∃ d,
+              ℓ ↦ d ∗ implements d (s +ᵣ ds) }}.
+  Proof.
+    iIntros (->) "Hℓ #Hd #Hi".
+    unfold update.
+    ewp_pure_steps.
+    ewp_bind_rule.
+    iApply (ewp_mono' with "[Hℓ]"); [iApply (ewp_load with "Hℓ")|].
+    iIntros (w) "[-> Hℓ]". iModIntro. simpl.
+    iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
+    iApply ewp_mono'; [iApply (nadd_spec with "Hd Hi")|].
+    iIntros (w) "Hw". iModIntro.
+    iApply (ewp_mono' with "[Hℓ]"); [iApply (ewp_store with "Hℓ")|].
+    iIntros (u) "Hℓ". iModIntro. by eauto.
+  Qed.
+
+  Lemma update_constant_spec (x w i : val) :
+    x = InjLV w →
+      ⊢ EWP update x i <| Ψ |> {{ _, True }}.
+  Proof. intros ->. unfold update. by ewp_pure_steps. Qed.
+
+  (* This lemma will be useful in the verification of the return branch. *)
+  Lemma trigger_backward_phase K y s :
+    e =ₑ s →
+      forward_inv K -∗
+        represents y s -∗
+          EWP update y none <| Ψ |> {{_,
+            backward_inv K [] y }}.
+  Proof using RA.
+    iIntros (He) "Hinv Hy".
+    iDestruct (diff_output               with "Hinv Hy") as %Hs.
+    iDestruct (adj_var_cases             with "Hinv Hy") as %Hcases.
+    iDestruct (NoDup_defs_app_adj_vars   with "Hinv")    as %HND.
+    iDestruct (elem_of_defs_inv'         with "Hinv")    as %Hdefs.
+    iDestruct "Hinv" as "(_ & _ & Hheap)". iClear "Hy".
+    destruct Hcases as [Hin|Hy].
+    { specialize (elem_of_list_lookup_1 _ _ Hin) as [i Hi].
+      rewrite (big_sepL_delete' _ _ _ _ Hi).
+      iDestruct "Hheap" as       "[Hy Hheap]".
+      iDestruct "Hy"    as (v ℓ) "(_ & Hℓ & ->)".
+      iApply (ewp_mono' with "[Hℓ]"); [
+      iApply (update_spec_crude with "Hℓ"); [done|
+        iApply nzero_spec |
+        iApply none_spec  ]|].
+      iIntros (_). iDestruct 1 as (d) "[Hℓ #Hd]".
+      iModIntro. iSplit; [iPureIntro;
+      by rewrite (diff_equiv e s); [
+      rewrite app_nil_r Hs|apply He]|].
+      rewrite (big_sepL_delete' (λ _ u, ∃ _, _)%I _ _ _ Hi).
+      iSplitL "Hℓ".
+      { iExists v, ℓ. iSplit; [|done].
+        iIntros (v' ℓ' ?). simplify_eq.
+        iExists d, (Oᵣ +ᵣ Iᵣ). iFrame. iSplit; [done|].
+        iPureIntro. rewrite //= decide_True; [|done].
+        rewrite (SRadd_0_l is_semi_ring); done.
+      }
+      { iApply (big_sepL_mono with "Hheap").
+        intros k x Hk. clear d.
+        iIntros "Hx %".
+        iDestruct ("Hx" with "[//]") as (v' ℓ') "[_ [Hx ->]]".
+        iExists v', ℓ'. iSplit; [|done].
+        iIntros (w ℓ'' ?). simplify_eq.
+        iExists nzero, (Oᵣ). iFrame.
+        iSplit; [iApply nzero_spec|]. simpl.
+        rewrite decide_False; [done|].
+        intros [=-> ->]. by destruct (NoDup_lookup _ _ _ _ HND Hi Hk).
+      }
+    }
+    { iApply ewp_mono'; [
+      by destruct Hy as [|]; iApply update_constant_spec|].
+      iIntros (v) "_". iModIntro.
+      iSplit; [iPureIntro;
+      by rewrite (diff_equiv e s); [
+      rewrite app_nil_r Hs|apply He]|].
+      iApply (big_sepL_mono with "Hheap").
+      intros k x Hk.
+      iIntros "Hx".
+      iDestruct "Hx" as (v' ℓ') "[_ [Hx ->]]".
+      iExists v', ℓ'. iSplit; [|done].
+      iIntros (w ℓ'' ?). simplify_eq.
+      iExists nzero, (Oᵣ). iFrame.
+      iSplit; [iApply nzero_spec|]. simpl.
+      rewrite decide_False; [done|].
+      by destruct Hy as [Hy|Hy]; rewrite Hy.
+    }
+  Qed.
+
+  Section update_twice_spec.
+
+    Add Ring LocalRing : is_semi_ring.  
+
+    Lemma update_twice_spec K₁ K₂ y x (op : Binop) a b ia ib da db :
+      let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
+      let ϑ := ϱ.{[K₁ ++ [(x, (op, a, b))]]} in
+      x ≠ a → x ≠ b →
+        da =ᵣ (if op then               (∂ (Let K₂ .in y) ./ ∂ x .at ϑ)
+                     else ϱ.{[K₁]} b ×ᵣ (∂ (Let K₂ .in y) ./ ∂ x .at ϑ)) →
+        db =ᵣ (if op then               (∂ (Let K₂ .in y) ./ ∂ x .at ϑ)
+                     else ϱ.{[K₁]} a ×ᵣ (∂ (Let K₂ .in y) ./ ∂ x .at ϑ)) →
+          implements ia da -∗
+            implements ib db -∗
+              both_mapto_diff (K₁ ++ [(x, (op, a, b))]) K₂ y a b -∗
+                EWP update a ia;;
+                    update b ib  <| Ψ |> {{ _,
+                  both_mapto_diff K₁ ((x, (op, a, b)) :: K₂) y a b }}.
+    Proof using RA.
+      intros ?? Hxa Hxb Hda Hdb.
+      iIntros "#Hia #Hib". iDestruct 1 as "[[% Ha] Hb]".
+      rename H into Ha.
+      iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+      case Ha as [[w Ha]|[v [ℓ Ha]]].
+      { iApply ewp_mono'; [
+        iApply update_constant_spec|]; [done|].
+        iIntros (v') "_". iModIntro. simpl.
+        iApply (Ectxi_ewp_bind (AppLCtx _)); [done|].
+        iApply ewp_pure_step; [apply pure_prim_step_rec |].
+        iApply ewp_value. simpl.
+        iApply ewp_pure_step; [apply pure_prim_step_beta|]. simpl.
+        case (decide (a = b)) as [<-|Hab].
+        { iApply ewp_mono'; [
+          iApply update_constant_spec|]; [done|].
+          iIntros (_) "_". iModIntro.
+          iSplitL; [|iIntros "_"];
+          try (iSplitL; [iPureIntro; naive_solver|]);
+          by iIntros (w' ℓ' ?); simplify_eq.
+        }
+        { iDestruct ("Hb" with "[//]") as "[% Hb]".
+          rename H into Hb. clear v'.
+          case Hb as [[w' Hb]|[v' [ℓ' Hb]]].
+          { iApply ewp_mono'; [
+            iApply update_constant_spec|]; [done|].
+            iIntros (_) "_". iModIntro.
+            iSplitL; [|iIntros "_"];
+            try (iSplitL; [iPureIntro; naive_solver|]);
+            by iIntros (w'' ℓ'' ?); simplify_eq.
+          }
+          { iDestruct ("Hb" with "[//]") as (d s) "(#Hd & % & Hℓ')".
+            rename H into Hs. iClear "Ha".
+            iApply (ewp_mono' with "[Hℓ']"); [
+            by iApply (update_spec_crude with "Hℓ' Hd Hib")|].
+            iIntros (_). iClear "Hd". clear d.
+            iDestruct 1 as (d) "[Hℓ' #Hd]". iModIntro.
+            iSplitR; [|iIntros "_"];
+            try (iSplit; [iPureIntro; naive_solver|]);
+            iIntros (???); [by simplify_eq|].
+            iExists d, (s +ᵣ db). iSplit; [done|].
+            iSplitR "Hℓ'";[|by simplify_eq].
+            iPureIntro.
+            rewrite Hs Hdb. fold ϱ. unfold ϑ.
+            rewrite diff_filling; [|done].
+            rewrite extension_snoc //=.
+            destruct op; try (
+              rewrite decide_False; [|done];
+              rewrite decide_True;  [|done]);
+            ring.
+          }
+        }
+      }
+      { iDestruct ("Ha" with "[//]") as (d s) "(#Hd & % & Hℓ)".
+        rename H into Hs.
+        iApply (ewp_mono' with "[Hℓ]"); [
+        by iApply (update_spec_crude with "Hℓ Hd Hia")|].
+        iIntros (w). iClear "Hd". clear d.
+        iDestruct 1 as (d) "[Hℓ #Hd]". iModIntro. simpl.
+        iApply (Ectxi_ewp_bind (AppLCtx _)); [done|].
+        iApply ewp_pure_step; [apply pure_prim_step_rec |].
+        iApply ewp_value.
+        iApply ewp_pure_step; [apply pure_prim_step_beta|]. simpl.
+        clear w.
+        case (decide (a = b)) as [<-|Hab].
+        { iApply (ewp_mono' with "[Hℓ]"); [
+          by iApply (update_spec_crude with "Hℓ Hd Hib")|].
+          iIntros (w). iClear "Hd". clear d.
+          iDestruct 1 as (d) "[Hℓ #Hd]". iModIntro. simpl.
+          iSplitL; [|by iIntros (?)].
+          iSplit; [iPureIntro; naive_solver|].
+          iIntros (v' ℓ' ?).
+          assert (v' = v) as ->. { by simplify_eq. }
+          assert (ℓ' = ℓ) as ->. { by simplify_eq. }
+          iExists d, ((s +ᵣ da) +ᵣ db).
+          iSplit; [done|]. iFrame. iPureIntro.
+          rewrite Hs Hda Hdb. fold ϱ. unfold ϑ.
+          rewrite diff_filling; [|done].
+          rewrite extension_snoc //=.
+          by destruct op; repeat (rewrite decide_True; [|done]); ring.
+        }
+        { iDestruct ("Hb" with "[//]") as "[% Hb]". rename H into Hb.
+          case Hb as [[w' Hb]|[v' [ℓ' Hb]]].
+          { iApply ewp_mono'; [by iApply update_constant_spec|].
+            iIntros (_) "_". iModIntro.
+            iSplitL "Hℓ"; [|iIntros "_"];
+            try (iSplit; [iPureIntro; naive_solver|]);
+            iIntros (w l ?); [|by simplify_eq].
+            assert (w = v) as ->. { by simplify_eq. }
+            assert (l = ℓ) as ->. { by simplify_eq. }
+            iExists d, (s +ᵣ da). iSplit; [done|].
+            iSplitR "Hℓ";[|by simplify_eq].
+            iPureIntro.
+            rewrite Hs Hda. fold ϱ. unfold ϑ.
+            rewrite diff_filling; [|done].
+            rewrite extension_snoc //=.
+            destruct op; try (
+              rewrite decide_True;  [|done];
+              rewrite decide_False; [|done]);
+            ring.
+          }
+          { iDestruct ("Hb" with "[//]") as (d' s') "(#Hd' & % & Hℓ')".
+            rename H into Hs'.
+            iApply (ewp_mono' with "[Hℓ']"); [
+            by iApply (update_spec_crude with "Hℓ' Hd' Hib")|].
+            iIntros (w). iClear "Hd'". clear d'.
+            iDestruct 1 as (d') "[Hℓ' #Hd']". iModIntro.
+            iSplitL "Hℓ"; [|iIntros "_"]; iSplit;
+            try (iPureIntro; naive_solver);
+            iIntros (???); simplify_eq; [
+            iExists d , (s  +ᵣ da)| iExists d', (s' +ᵣ db)];
+            iFrame; try (iSplit; [done|]); iPureIntro; [
+            rewrite Hs  Hda| rewrite Hs' Hdb]; fold ϱ; unfold ϑ;
+            try (rewrite diff_filling; [|done]);
+            rewrite extension_snoc //=.
+            - destruct op; try (
+                rewrite decide_True;  [|done];
+                rewrite decide_False; [|done]);
+              ring.
+            - destruct op; try (
+                rewrite decide_False; [|done];
+                rewrite decide_True;  [|done]);
+              ring.
+          }
+        }
+      }
+    Qed.
+
+  End update_twice_spec.
+
+  Lemma handle_spec K₁ (f : val) :
+    EWP f aₓ <| AD |> {{ y, ∃ s, represents y s ∗ ⌜ e =ₑ s ⌝ }} -∗
+      forward_inv K₁ -∗
+        EWP handle f aₓ <| Ψ |> {{_, ∃ K₂ y,
+          backward_inv K₁ K₂ y }}.
+  Proof using RA.
+    set ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]}.
+    iIntros "Hf Hinv".
+    unfold handle.
+    do 8 (ewp_bind_rule; ewp_pure_step; try iNext; simpl).
+    iApply (ewp_deep_try_with with "Hf").
+
+    iLöb as "IH" forall (K₁).
+    rewrite deep_handler_unfold. iSplit.
+
+    (* Return branch. *)
+    { iClear "IH". iIntros (y) "#Hy". iNext.
+      iDestruct "Hy" as (s) "[Hs %]". rename H into He.
+      ewp_pure_steps.
+      iApply (ewp_mono' with "[Hinv]"); [
+      by iApply (trigger_backward_phase with "Hinv Hs")|].
+      by eauto.
     }
 
-    (* Mult. *)
-    { iDestruct (handler_inv_agree with "Hhandler Ha") as %Hinterp_a.
-      iDestruct (handler_inv_agree with "Hhandler Hb") as %Hinterp_b.
-      iDestruct (handler_inv_elem_of' with "Hhandler Ha") as %Ha_in.
-      iDestruct (handler_inv_elem_of' with "Hhandler Hb") as %Hb_in.
-      iDestruct (handler_inv_NoDup with "Hhandler") as %HNoDup.
-      iApply ewp_pure_step. apply pure_prim_step_case_InjR.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_Fst. iApply ewp_value. simpl.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_Snd. iApply ewp_value. simpl.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply (ewp_mono' with "[Hhandler]").
-      { by iApply (get_val_spec with "Ha Hhandler"). }
-      iIntros (e_av) "[#Heval_a Hhandler]". iModIntro. simpl.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply (ewp_mono' with "[Hhandler]").
-      { by iApply (get_val_spec with "Hb Hhandler"). }
-      iIntros (e_bv) "[#Heval_b Hhandler]". iModIntro. simpl.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-      iApply ewp_mono'. { by iApply (nmult_spec with "Heval_a Heval_b"). }
-      iIntros (uv) "#Huv". iModIntro. simpl.
-      iApply ewp_mono'. { by iApply mk_spec. }
-      iIntros (y). iDestruct 1 as (u) "[-> Hu]". simpl.
-      iDestruct (handler_inv_fresh_name with "Hu Hhandler") as %Hu_not_in.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      iApply (Ectxi_ewp_bind (AppRCtx _)). done. simpl.
-      iMod (handler_inv_update _ x xv K u Mult a b av bv uv with "[] Hu Hhandler Ha Hb")
-        as "[Hhandler #Hu]"; [by rewrite Hinterp_a Hinterp_b //=|].
+    (* Effect branch. *)
+    { iIntros (args k) "Hprot". iNext.
+      ewp_pure_steps.
+      rewrite AD_agreement.
+      iDestruct "Hprot" as (op a b el er) "(-> & [#Ha #Hb] & Hk)".
+      unfold args.
+      ewp_pure_steps.
+      iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+      iApply (ewp_mono' with "[Hinv]"); [
+      iApply (get_val_spec with "Hinv Ha")|]. fold ϱ.
+      iIntros (av) "[Hinv #Hav]". iModIntro. simpl.
+      ewp_pure_steps.
+      iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+      iApply (ewp_mono' with "[Hinv]"); [
+      iApply (get_val_spec with "Hinv Hb")|]. fold ϱ.
+      iIntros (bv) "[Hinv #Hbv]". iModIntro. simpl.
+      ewp_pure_steps.
+      iDestruct   (NoDup_defs_app_adj_vars with "Hinv"   ) as %HND.
+      iDestruct (elem_of_defs_app_adj_vars with "Hinv Ha") as %Ha.
+      iDestruct (elem_of_defs_app_adj_vars with "Hinv Hb") as %Hb.
+      iDestruct (elem_of_defs_inv'         with "Hinv")    as %Hdefs.
+      destruct op.
 
-      (* Continuation. *)
-      iModIntro. iApply (ewp_mono' with "[Hhandler Hk]").
-      { iApply ("Hk" with "Hu"). by iApply ("IH" with "Hhandler"). }
-      iClear "IH".
+      (* Add. *)
+      { ewp_pure_steps.
+        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+        iApply ewp_mono'; [
+        iApply (nadd_spec with "Hav Hbv")|].
+        iIntros (xv) "#Hxv". iModIntro. simpl.
+        iApply ewp_mono'; [iApply create_spec|].
+        iIntros (x'). iDestruct 1 as (x) "[-> Hx]".
+        iDestruct (forward_inv_fresh_loc with "Hx Hinv") as %Hx.
+        iMod ((forward_inv_update _ _ _ _ _ _ Add)
+          with "Hinv Ha Hb [] Hx") as "[Hinv #Hx']"; [done| |].
+        { fold ϱ. rewrite extension_snoc //= overwrite_eq. by iApply "Hxv". }
+        iModIntro.
+        ewp_pure_steps.
 
-      iIntros (v) "Hback_inv". iModIntro.
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-      iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-      rewrite -Hinterp_a -Hinterp_b.
-      case (decide (a = b)) as [->|Hab];[
-      by iApply (mult_update_spec_1 with "Heval_a Heval_b Hback_inv")|
-      by iApply (mult_update_spec_2 with "Heval_a Heval_b Hback_inv")].
+        (* Continuation call. *)
+        ewp_bind_rule.
+        iApply (ewp_mono' with "[Hinv Hk]").
+        { iApply ("Hk" with "Hx'"). by iApply ("IH" with "Hinv"). }
+        iClear "IH Hx' Ha Hb Hav Hbv Hxv".
+
+        iIntros (w). iDestruct 1 as (K₂ y) "Hinv".
+        iModIntro. simpl.
+        ewp_pure_steps.
+        iDestruct (backward_inv_update with "Hinv")
+          as "(Hx & Hab & Hfinisher)"; try done.
+        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+        iApply (ewp_mono' with "[Hx]"); [
+        by iApply (get_diff_spec with "Hx")|].
+        iIntros (xd) "[_ Hxd]". fold ϱ.
+        iDestruct "Hxd" as (s) "[#Hxd %]". rename H into Hs.
+        iModIntro. simpl.
+        ewp_pure_steps.
+        iApply (ewp_mono' with "[Hab]");[
+        iApply (update_twice_spec K₁ K₂ y _ Add with "Hxd Hxd Hab");
+        try done; set_solver|].
+        iIntros (_) "Hinv !>".
+        iExists ((_, (Add, a ,b)) :: K₂), y.
+        by iApply "Hfinisher".
+      }
+
+      (* Mul. *)
+      { ewp_pure_steps.
+        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+        iApply ewp_mono'; [
+        iApply (nmul_spec with "Hav Hbv")|].
+        iIntros (xv) "#Hxv". iModIntro. simpl.
+        iApply ewp_mono'; [iApply create_spec|].
+        iIntros (x'). iDestruct 1 as (x) "[-> Hx]".
+        iDestruct (forward_inv_fresh_loc with "Hx Hinv") as %Hx.
+        iMod ((forward_inv_update _ _ _ _ _ _ Mul)
+          with "Hinv Ha Hb [] Hx") as "[Hinv #Hx']"; [done| |].
+        { fold ϱ. rewrite extension_snoc //= overwrite_eq. by iApply "Hxv". }
+        iModIntro. ewp_pure_steps.
+    
+        (* Continuation call. *)
+        ewp_bind_rule.
+        iApply (ewp_mono' with "[Hinv Hk]").
+        { iApply ("Hk" with "Hx'"). by iApply ("IH" with "Hinv"). }
+        iClear "IH Hx' Ha Hb Hxv".
+
+        iIntros (w). iDestruct 1 as (K₂ y) "Hinv".
+        iModIntro. simpl.
+        ewp_pure_steps. ewp_bind_rule.
+        iDestruct (backward_inv_update with "Hinv")
+          as "(Hx & Hab & Hfinisher)"; try done.
+        iApply (ewp_mono' with "[Hx]"); [
+        by iApply (get_diff_spec with "Hx")|].
+        iIntros (xd) "[_ Hxd]". fold ϱ.
+        iDestruct "Hxd" as (s) "[#Hxd %]". rename H into Hs.
+        iModIntro. simpl.
+        ewp_pure_steps.
+        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+        iApply ewp_mono'; [iApply (nmul_spec with "Hbv Hxd")|].
+        iIntros (ad) "#Had". iModIntro. simpl.
+        ewp_pure_steps.
+        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+        iApply ewp_mono'; [iApply (nmul_spec with "Hav Hxd")|].
+        iIntros (bd) "#Hbd". iModIntro. simpl.
+        ewp_pure_steps.
+        iApply (ewp_mono' with "[Hab]"); [
+        iApply (update_twice_spec K₁ K₂ y _ Mul with "Had Hbd Hab");
+        try (fold ϱ; by rewrite Hs); set_solver|].
+        iIntros (_) "Hinv !>".
+        iExists ((_, (Mul, a ,b)) :: K₂), y.
+        by iApply "Hfinisher".
+      }
     }
-  }
-Qed.
+  Qed.
 
-Lemma grad_spec (f : val) (e : expr unit) :
-  (∀ (represents : name → expr unit → iProp Σ) (x : name),
-    represents x (ELeaf ()) -∗
-      EWP f #x <| AD_prot represents |> {{ y,
-        ∃ (r : name), ⌜ y = #r ⌝ ∗ represents r e }})
-    -∗
-  (∀ (n : val) (rn : R),
-    repr n rn -∗
-      EWP grad f n <| effs |> {{ y, repr y (diff (λ _, rn) e tt) }}).
-Proof.
-  iIntros "f_spec". iIntros (n rn) "#Hn".
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply ewp_mono'. { by iApply mk_spec. }
-  iIntros (y). iDestruct 1 as (x) "[-> Hx]". iModIntro. simpl.
-  iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-  iApply (ewp_mono' with "[f_spec Hx]").
-  { iApply fupd_ewp. iMod (handler_inv_alloc with "Hn Hx") as (γ) "Hhandler".
-    iModIntro. iApply (run_spec with "[f_spec] Hhandler").
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    by iApply "f_spec".
-  }
-  { iIntros (?). iDestruct 1 as (K' r) "[% [Hx _]]". rename H into Hr. iModIntro.
-    iDestruct "Hx" as (uv ud) "(Huv & Hud & Hx)".
-    iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-    iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value. simpl.
-    iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-    iApply (ewp_mono' with "[Hx]"). { by iApply (get_diff_spec with "Hx"). }
-    iIntros (y) "[-> _]". iModIntro. iApply (repr_proper with "Hud").
-    rewrite Hr. unfold env_extension, diff'. simpl.
-    rewrite (diff_emap unit name (λ _, x) _ e tt); [|by intros ()].
-    rewrite -(diff_ext (λ _ : (), rn)); [done|]. intros () _.
-    simpl. by rewrite lookup_total_alt lookup_insert.
-  }
-Qed.
+End proof_of_handle.
+
+Section proof_of_diff.
+  Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
+
+  Theorem diff_correct : ⊢ diff_spec.
+  Proof using R₁ R₂.
+    iIntros (f e) "Hclient".
+    iIntros (R RS RA N Ψ NSpec x r) "Hx".
+    unfold diff. ewp_pure_steps.
+    iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+    iApply ewp_mono'; [iApply create_spec|].
+    iIntros (ℓₓ') "Hℓₓ !>".
+    iDestruct "Hℓₓ" as (ℓₓ) "[-> Hℓₓ]". simpl.
+    ewp_pure_steps.
+    iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+    iApply fupd_ewp.
+    iMod (forward_inv_alloc with "Hx Hℓₓ") as (γ) "Hinv".
+    iModIntro.
+    set Ψ_client := AD γ ℓₓ x.
+    set NSpec_client := ADNumSpec γ ℓₓ x.
+    set aₓ := InjRV (x, #ℓₓ)%V.
+    iSpecialize ("Hclient" $! (Expr ()) (ExprRing ()) ExprIsRing).
+    iSpecialize ("Hclient" $! (ADNum N) Ψ_client NSpec_client aₓ (Xₑ) with "[//]").
+    iApply (ewp_mono' with "[Hinv Hclient]").
+    { iApply (handle_spec with "[Hclient] Hinv").
+      iApply (ewp_mono' with "Hclient"). iIntros (y).
+      iDestruct 1 as (s) "[Hs %]". rename H into He.
+      iModIntro. iExists s. iFrame. iPureIntro.
+      symmetry. by apply He.
+    }
+    iIntros (w).
+    iDestruct 1 as (K y) "Hinv". iModIntro. simpl.
+    iDestruct "Hinv" as "[% Hheap]". rename H into Hdiff_output.
+    iDestruct "Hheap" as "(_ & Hx & _)".
+    iDestruct "Hx" as (v ℓ) "[Hx %]". simplify_eq. fold aₓ.
+    ewp_pure_steps.
+    iApply (ewp_mono' with "[Hx]");[
+    by iApply (get_diff_spec with "Hx")|].
+    iIntros (d). iIntros "[_ Hd] !>". 
+    iDestruct "Hd" as (s) "[Hs %]".
+    iExists s. iFrame. iPureIntro.
+    rewrite eval_univariate_expr in Hdiff_output.
+    rewrite diff_univariate_expr.
+    by rewrite Hdiff_output.
+  Qed.
+
+End proof_of_diff.
 
 End verification.
+
+
+(** * Clients. *)
+
+(** We have proved that [diff] satisfies a given specification.
+    Now, we implement some clients of [diff] to see what kind of
+    results we can derive from that.
+*)
+
+Section clients.
+
+  (* First, we provide a concrete implementation of integers. (Integers are
+     unbounded in our calculus.) This will unlock the derivation functionality
+     where arithmetical operators are interpreted as the standard addition and
+     multiplication on integers.
+   *)
+
+  Section ring_of_integers.
+    Context `{!irisG eff_lang Σ}.
+
+    Program Instance ZNum : Num := {
+      nzero := #0%Z;
+      none  := #1%Z;
+      nadd  := (λ: "a" "b", "a" + "b")%V;
+      nmul  := (λ: "a" "b", "a" * "b")%V;
+    }.
+
+    Program Instance ZNumSpec : NumSpec ZNum ⊥%ieff ZRing := {
+      implements := λ v n, ⌜ v = #n ⌝%I;
+    }.
+    (* Implements Oᵣ. *)
+    Next Obligation. auto. Qed.
+    (* Implements Iᵣ. *)
+    Next Obligation. auto. Qed.
+    (* Implements +ᵣ. *)
+    Next Obligation. iIntros (E a b r s) "-> ->". by ewp_pure_steps. Qed.
+    (* Implements ×ᵣ. *)
+    Next Obligation. iIntros (E a b r s) "-> ->". by ewp_pure_steps. Qed.
+
+
+  End ring_of_integers.
+
+  Section x_cube.
+    Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
+
+    Definition x_cube {N : Num} : val := λ: "x",
+      nmul "x" (nmul "x" "x").
+
+    Lemma x_cube_spec :
+      ⊢ computes (@x_cube) (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)).
+    Proof.
+      iIntros (??? ??? ??) "#Hx". unfold x_cube. ewp_pure_steps.
+      iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+      iApply ewp_mono'; [iApply (nmul_spec with "Hx Hx")|].
+      iIntros (y) "#Hy". iModIntro. simpl.
+      iApply ewp_mono'; [iApply (nmul_spec with "Hx Hy")|].
+      iIntros (z) "Hz". iModIntro.
+      iExists (r ×ᵣ (r ×ᵣ r)). by iFrame.
+    Qed.
+
+    Lemma x_cube'_spec :
+      ⊢ computes (λ N, (λ: "x",
+          (@diff N
+            (@x_cube (ADNum N))) "x")%V)
+          (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)).
+    Proof using R₁ R₂.
+      iPoseProof (diff_correct $! (@x_cube) (Xₑ ×ₑ (Xₑ ×ₑ Xₑ))) as "Hdiff".
+      iApply "Hdiff". by iApply x_cube_spec.
+    Qed.
+
+    Lemma x_cube''_spec :
+      ⊢ computes (λ N, (λ: "x",
+          (@diff N (λ: "x",
+            (@diff (ADNum N)
+              (@x_cube (ADNum (ADNum N)))) "x")%V "x"))%V)
+          (∂ (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)) ./ ∂ tt .at (λ _, Xₑ)).
+    Proof using R₁ R₂.
+      iPoseProof (diff_correct $!
+        (λ N, (λ: "x", (@diff N) (@x_cube (ADNum N)) "x")%V)
+        (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)))
+      as "Hdiff".
+      iApply "Hdiff". by iApply x_cube'_spec.
+    Qed.
+
+    Lemma x_cube'_int_spec (n : Z) :
+      let x_cube   := (@x_cube (ADNum ZNum))              in
+      let x_cube'  := (λ: "x", (@diff ZNum x_cube) "x")%V in
+      ⊢ EWP x_cube' #n {{ y, ⌜ y = #(3 * (n * n))%Z ⌝ }}.
+    Proof using R₁ R₂.
+      intros ??.
+      iPoseProof (x_cube'_spec $!
+        Z ZRing ZIsRing ZNum ⊥%ieff ZNumSpec #n%Z n with "[//]") as "Hdiff".
+      iApply (ewp_mono' with "Hdiff").
+      iIntros (v). iDestruct 1 as (s) "[-> ->]". iPureIntro. simpl. f_equal.
+      rewrite (_: (∀ (n : Z), 3 * n = n + n + n)%Z); [|lia].
+      by rewrite !Z.mul_1_l Z.mul_1_r Z.mul_add_distr_l Z.add_assoc.
+    Qed.
+
+    Lemma x_cube''_int_spec (n : Z) :
+      let x_cube   := (@x_cube (ADNum (ADNum ZNum))) in
+      let x_cube'  := (λ: "x", (@diff (ADNum ZNum) x_cube ) "x")%V in
+      let x_cube'' := (λ: "x", (@diff        ZNum  x_cube') "x")%V in
+      ⊢ EWP x_cube'' #n {{ y, ⌜ y = #(6 * n)%Z ⌝ }}.
+    Proof using R₁ R₂.
+      intros ???.
+      iPoseProof (x_cube''_spec $!
+        Z ZRing ZIsRing ZNum ⊥%ieff ZNumSpec #n%Z n with "[//]") as "Hdiff".
+      iApply (ewp_mono' with "Hdiff").
+      iIntros (v). iDestruct 1 as (s) "[-> ->]". iPureIntro. simpl. f_equal.
+      rewrite !Z.mul_1_l Z.mul_add_distr_l //=.
+      rewrite !Z.mul_0_l !Z.mul_0_r !Z.add_0_l !Z.add_0_r !Z.mul_1_r //=.
+      rewrite (_: (∀ (n : Z), 6 * n = n + n + n + n + n + n)%Z); [|lia].
+      by rewrite !Z.add_assoc.
+    Qed.
+
+  End x_cube.
+
+End clients.
