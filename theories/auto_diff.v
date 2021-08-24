@@ -37,16 +37,15 @@ Class Num := {
 }.
 
 Section RMAD.
-  Context {N : Num}.
 
-  Definition create : val := λ: "n", InjR ("n", ref nzero).
+  Definition create {N : Num} : val := λ: "n", InjR ("n", ref nzero).
 
   Definition zero  : val := InjLV (InjLV #()).
   Definition one   : val := InjLV (InjRV #()).
   Definition add   : val := λ: "a" "b", do: (InjLV #(), ("a", "b")).
   Definition mul   : val := λ: "a" "b", do: (InjRV #(), ("a", "b")).
 
-  Definition get_val  : val := λ: "x",
+  Definition get_val {N : Num} : val := λ: "x",
     match: "x" with
       (* Constant. *) InjL "x" =>
        match: "x" with
@@ -56,13 +55,13 @@ Section RMAD.
     | (* Variable. *) InjR "x" => Fst "x"
     end.
 
-  Definition get_diff  : val := λ: "x",
+  Definition get_diff : val := λ: "x",
     match: "x" with
       (* Constant. *) InjL <>  => #() #() (* Unreachable. *)
     | (* Variable. *) InjR "x" => Load (Snd "x")
     end.
 
-  Definition update : val := λ: "x" "incr",
+  Definition update {N : Num} : val := λ: "x" "incr",
     match: "x" with
       (* Constant. *) InjL <>  => #()
     | (* Variable. *) InjR "x" =>
@@ -70,7 +69,7 @@ Section RMAD.
       "xd" <- nadd (Load "xd") "incr"
     end.
 
-  Definition handle : val := λ: "f" "seed",
+  Definition handle {N : Num} : val := λ: "f" "seed",
     try: "f" "seed" with
       effect (λ: "args" "k",
         let: "op" := Fst      "args"  in
@@ -102,9 +101,17 @@ Section RMAD.
            update "res" none)
     end.
 
-  Definition diff : val := λ: "f" "a",
+
+  Program Instance ADNum (N : Num) : Num := {
+    nzero := zero;
+    none  := one;
+    nadd  := add;
+    nmul  := mul;
+  }.
+
+  Definition diff (f : Num → val) (N : Num) : val := λ: "a",
     let: "x" := create "a" in
-    handle "f" "x";;
+    handle (f (ADNum N)) "x";;
     get_diff "x".
 
 End RMAD.
@@ -876,16 +883,7 @@ Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
   (* implements_ne   u n : Proper (req ==> (dist n)) (implements u); *)
 }.
 
-Program Instance ADNum (N : Num) : Num := {
-  nzero := zero;
-  none  := one;
-  nadd  := add;
-  nmul  := mul;
-}.
-
-Definition computes
-  (f : Num → val)
-  (e : Expr ()) : iProp Σ :=
+Definition isExp (f : Num → val) (e : Expr ()) : iProp Σ :=
   (∀ (R : Set) (RS : RingSig R) (RA : IsRing R),
     (∀ (N : Num) (Ψ : iEff Σ) (NSpec : NumSpec N Ψ RS),
       (∀ x r,
@@ -905,13 +903,12 @@ Definition computes
 
 Definition diff_spec : iProp Σ :=
   (∀ (f : Num → val) (e : Expr ()),
-    let diff_f := (λ N, (λ: "x", (@diff N) (f (ADNum N)) "x")%V) in
-    computes f e -∗
-      computes diff_f (∂ e ./ ∂ tt .at (λ _, Xₑ))).
+    isExp f e -∗
+      isExp (diff f) (∂ e ./ ∂ tt .at (λ _, Xₑ))).
 
-Lemma computes_ext (f : Num → val) (e₁ e₂ : Expr ()) :
+Lemma isExp_ext (f : Num → val) (e₁ e₂ : Expr ()) :
   e₁ =ₑ e₂ →
-    computes f e₁ -∗ computes f e₂.
+    isExp f e₁ -∗ isExp f e₂.
 Proof.
   iIntros (He) "Hf". iIntros (R RS RA N Ψ NSpec x r) "Hx".
   iSpecialize ("Hf" with "Hx").
@@ -2424,11 +2421,11 @@ Section clients.
   Section x_cube.
     Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
 
-    Definition x_cube {N : Num} : val := λ: "x",
+    Definition x_cube (N : Num) : val := λ: "x",
       nmul "x" (nmul "x" "x").
 
     Lemma x_cube_spec :
-      ⊢ computes (@x_cube) (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)).
+      ⊢ isExp (@x_cube) (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)).
     Proof.
       iIntros (??? ??? ??) "#Hx". unfold x_cube. ewp_pure_steps.
       iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
@@ -2440,9 +2437,7 @@ Section clients.
     Qed.
 
     Lemma x_cube'_spec :
-      ⊢ computes (λ N, (λ: "x",
-          (@diff N
-            (@x_cube (ADNum N))) "x")%V)
+      ⊢ isExp (diff x_cube)
           (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)).
     Proof using R₁ R₂.
       iPoseProof (diff_correct $! (@x_cube) (Xₑ ×ₑ (Xₑ ×ₑ Xₑ))) as "Hdiff".
@@ -2450,25 +2445,19 @@ Section clients.
     Qed.
 
     Lemma x_cube''_spec :
-      ⊢ computes (λ N, (λ: "x",
-          (@diff N (λ: "x",
-            (@diff (ADNum N)
-              (@x_cube (ADNum (ADNum N)))) "x")%V "x"))%V)
+      ⊢ isExp
+          (diff (diff x_cube))
           (∂ (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)) ./ ∂ tt .at (λ _, Xₑ)).
     Proof using R₁ R₂.
-      iPoseProof (diff_correct $!
-        (λ N, (λ: "x", (@diff N) (@x_cube (ADNum N)) "x")%V)
+      iPoseProof (diff_correct $! _
         (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)))
       as "Hdiff".
       iApply "Hdiff". by iApply x_cube'_spec.
     Qed.
 
     Lemma x_cube'_int_spec (n : Z) :
-      let x_cube   := (@x_cube (ADNum ZNum))              in
-      let x_cube'  := (λ: "x", (@diff ZNum x_cube) "x")%V in
-      ⊢ EWP x_cube' #n {{ y, ⌜ y = #(3 * (n * n))%Z ⌝ }}.
+      ⊢ EWP (diff (x_cube)) ZNum #n {{ y, ⌜ y = #(3 * (n * n))%Z ⌝ }}.
     Proof using R₁ R₂.
-      intros ??.
       iPoseProof (x_cube'_spec $!
         Z ZRing ZIsRing ZNum ⊥%ieff ZNumSpec #n%Z n with "[//]") as "Hdiff".
       iApply (ewp_mono' with "Hdiff").
@@ -2478,12 +2467,8 @@ Section clients.
     Qed.
 
     Lemma x_cube''_int_spec (n : Z) :
-      let x_cube   := (@x_cube (ADNum (ADNum ZNum))) in
-      let x_cube'  := (λ: "x", (@diff (ADNum ZNum) x_cube ) "x")%V in
-      let x_cube'' := (λ: "x", (@diff        ZNum  x_cube') "x")%V in
-      ⊢ EWP x_cube'' #n {{ y, ⌜ y = #(6 * n)%Z ⌝ }}.
+      ⊢ EWP (diff (diff (x_cube))) ZNum #n {{ y, ⌜ y = #(6 * n)%Z ⌝ }}.
     Proof using R₁ R₂.
-      intros ???.
       iPoseProof (x_cube''_spec $!
         Z ZRing ZIsRing ZNum ⊥%ieff ZNumSpec #n%Z n with "[//]") as "Hdiff".
       iApply (ewp_mono' with "Hdiff").
