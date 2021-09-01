@@ -101,18 +101,19 @@ Section RMAD.
            update "res" none)
     end.
 
-
-  Program Instance ADNum (N : Num) : Num := {
+  Program Instance ADNum : Num := {
     nzero := zero;
     none  := one;
     nadd  := add;
     nmul  := mul;
   }.
 
-  Definition diff (f : Num → val) (N : Num) : val := λ: "a",
-    let: "x" := create "a" in
-    handle (f (ADNum N)) "x";;
-    get_diff "x".
+  Definition diff (f : Num → expr) (N : Num) : expr :=
+    let: "vf" := f ADNum in
+    λ: "a",
+      let: "x" := @create N "a" in
+      @handle N "vf" "x";;
+      get_diff "x".
 
 End RMAD.
 
@@ -883,13 +884,15 @@ Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
   (* implements_ne   u n : Proper (req ==> (dist n)) (implements u); *)
 }.
 
-Definition isExp (f : Num → val) (e : Expr ()) : iProp Σ :=
-  (∀ (R : Set) (RS : RingSig R) (RA : IsRing R),
-    (∀ (N : Num) (Ψ : iEff Σ) (NSpec : NumSpec N Ψ RS),
-      (∀ x r,
-        implements x r -∗
-          EWP (f N) x <| Ψ |> {{ y, ∃ s,
-            implements y s ∗ ⌜ s =ᵣ (eval (map (λ _, r) e)) ⌝ }}))).
+Definition isExp (f : Num → expr) (e : Expr ()) : iProp Σ :=
+  (∀ (N : Num),
+    EWP (f N) <| ⊥ |> {{ vf,
+      (∀ (R : Set) (RS : RingSig R) (RA : IsRing R),
+        (∀ (Ψ : iEff Σ) (NSpec : NumSpec N Ψ RS),
+          (∀ x r,
+            implements x r -∗
+              EWP vf x <| Ψ |> {{ y, ∃ s,
+                implements y s ∗ ⌜ s =ᵣ (eval (map (λ _, r) e)) ⌝ }})))}}).
 
 (* Remark:
    -- The existentially quantified ring element [s] that appears in the
@@ -902,18 +905,21 @@ Definition isExp (f : Num → val) (e : Expr ()) : iProp Σ :=
 *)
 
 Definition diff_spec : iProp Σ :=
-  (∀ (f : Num → val) (e : Expr ()),
+  (∀ (f : Num → expr) (e : Expr ()),
     isExp f e -∗
       isExp (diff f) (∂ e ./ ∂ tt .at (λ _, Xₑ))).
 
-Lemma isExp_ext (f : Num → val) (e₁ e₂ : Expr ()) :
+Lemma isExp_ext (f : Num → expr) (e₁ e₂ : Expr ()) :
   e₁ =ₑ e₂ →
     isExp f e₁ -∗ isExp f e₂.
 Proof.
-  iIntros (He) "Hf". iIntros (R RS RA N Ψ NSpec x r) "Hx".
-  iSpecialize ("Hf" with "Hx").
+  iIntros (He) "Hf". iIntros (N).
   iApply (ewp_mono' with "Hf").
-  iIntros (v). iDestruct 1 as (s) "[Hs %]".
+  iIntros (vf) "Hvf". iModIntro.
+  iIntros (R RS RA Ψ NSpec x r) "Hx".
+  iSpecialize ("Hvf" with "Hx").
+  iApply (ewp_mono' with "Hvf").
+  iIntros (y) . iDestruct 1 as (s) "[Hs %]".
   iExists s. iModIntro. iFrame. iPureIntro.
   rewrite H. by apply eval_equiv.
 Qed.
@@ -1834,7 +1840,7 @@ Section library_implementation_of_expressions.
   Lemma adj_var_1_spec : ⊢ implements_expr a₁ (Iₑ).
   Proof. by iPureIntro. Qed.
 
-  Program Instance ADNumSpec : NumSpec (ADNum N) AD (ExprRing ()) := {
+  Program Instance ADNumSpec : NumSpec ADNum AD (ExprRing ()) := {
     implements := implements_expr;
 
     nzero_spec := adj_var_0_spec;
@@ -2334,8 +2340,15 @@ Section proof_of_diff.
   Theorem diff_correct : ⊢ diff_spec.
   Proof using R₁ R₂.
     iIntros (f e) "Hclient".
-    iIntros (R RS RA N Ψ NSpec x r) "Hx".
-    unfold diff. ewp_pure_steps.
+    iIntros (N).
+    unfold diff.
+    iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+    iSpecialize ("Hclient" $! ADNum).
+    iApply (ewp_mono' with "Hclient").
+    iIntros (vf) "Hvf". iModIntro. simpl.
+    ewp_pure_steps.
+    iIntros (R RS RA Ψ NSpec x r) "Hx".
+    ewp_pure_steps.
     iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
     iApply ewp_mono'; [iApply create_spec|].
     iIntros (ℓₓ') "Hℓₓ !>".
@@ -2348,11 +2361,11 @@ Section proof_of_diff.
     set Ψ_client := AD γ ℓₓ x.
     set NSpec_client := ADNumSpec γ ℓₓ x.
     set aₓ := InjRV (x, #ℓₓ)%V.
-    iSpecialize ("Hclient" $! (Expr ()) (ExprRing ()) ExprIsRing).
-    iSpecialize ("Hclient" $! (ADNum N) Ψ_client NSpec_client aₓ (Xₑ) with "[//]").
-    iApply (ewp_mono' with "[Hinv Hclient]").
-    { iApply (handle_spec with "[Hclient] Hinv").
-      iApply (ewp_mono' with "Hclient"). iIntros (y).
+    iSpecialize ("Hvf" $! (Expr ()) (ExprRing ()) ExprIsRing).
+    iSpecialize ("Hvf" $! Ψ_client NSpec_client aₓ (Xₑ) with "[//]").
+    iApply (ewp_mono' with "[Hinv Hvf]").
+    { iApply (handle_spec with "[Hvf] Hinv").
+      iApply (ewp_mono' with "Hvf"). iIntros (y).
       iDestruct 1 as (s) "[Hs %]". rename H into He.
       iModIntro. iExists s. iFrame. iPureIntro.
       symmetry. by apply He.
@@ -2427,7 +2440,8 @@ Section clients.
     Lemma x_cube_spec :
       ⊢ isExp (@x_cube) (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)).
     Proof.
-      iIntros (??? ??? ??) "#Hx". unfold x_cube. ewp_pure_steps.
+      iIntros (?). iApply ewp_value.
+      iIntros (?? ??? ??) "#Hx". unfold x_cube. ewp_pure_steps.
       iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
       iApply ewp_mono'; [iApply (nmul_spec with "Hx Hx")|].
       iIntros (y) "#Hy". iModIntro. simpl.
@@ -2458,9 +2472,14 @@ Section clients.
     Lemma x_cube'_int_spec (n : Z) :
       ⊢ EWP (diff (x_cube)) ZNum #n {{ y, ⌜ y = #(3 * (n * n))%Z ⌝ }}.
     Proof using R₁ R₂.
-      iPoseProof (x_cube'_spec $!
-        Z ZRing ZIsRing ZNum ⊥%ieff ZNumSpec #n%Z n with "[//]") as "Hdiff".
+      iPoseProof (x_cube'_spec $! ZNum) as "Hdiff".
+      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
       iApply (ewp_mono' with "Hdiff").
+      iClear "Hdiff".
+      iIntros (vdiff) "Hdiff".
+      iSpecialize ("Hdiff" $!
+        Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
+      iApply (ewp_mono' with "Hdiff"). iModIntro.
       iIntros (v). iDestruct 1 as (s) "[-> ->]". iPureIntro. simpl. f_equal.
       rewrite (_: (∀ (n : Z), 3 * n = n + n + n)%Z); [|lia].
       by rewrite !Z.mul_1_l Z.mul_1_r Z.mul_add_distr_l Z.add_assoc.
@@ -2469,9 +2488,13 @@ Section clients.
     Lemma x_cube''_int_spec (n : Z) :
       ⊢ EWP (diff (diff (x_cube))) ZNum #n {{ y, ⌜ y = #(6 * n)%Z ⌝ }}.
     Proof using R₁ R₂.
-      iPoseProof (x_cube''_spec $!
-        Z ZRing ZIsRing ZNum ⊥%ieff ZNumSpec #n%Z n with "[//]") as "Hdiff".
+      iPoseProof (x_cube''_spec $! ZNum) as "Hdiff".
+      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
       iApply (ewp_mono' with "Hdiff").
+      iClear "Hdiff". iIntros (vdiff) "Hdiff".
+      iSpecialize ("Hdiff" $!
+        Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
+      iApply (ewp_mono' with "Hdiff"). iModIntro.
       iIntros (v). iDestruct 1 as (s) "[-> ->]". iPureIntro. simpl. f_equal.
       rewrite !Z.mul_1_l Z.mul_add_distr_l //=.
       rewrite !Z.mul_0_l !Z.mul_0_r !Z.add_0_l !Z.add_0_r !Z.mul_1_r //=.
@@ -2482,3 +2505,125 @@ Section clients.
   End x_cube.
 
 End clients.
+
+
+(** * Implementation in HH. *)
+
+(** An attentive reader might have noticed that the algorithm we verified
+    in the previous sections was not entirely written in [HH]. Indeed,
+    the function [diff] is a Coq function of two arguments. One of its
+    arguments, for example, is a record of type [Num], which is used in
+    the definition of [diff] as the provider of arithmetical operations and
+    constants. This diverges from the actual code that we would write in [HH]
+    or in another programming language, because that is not how these numerical
+    operations would be accessed. A program that takes such record as one of
+    its arguments would have to deconstruct it and bind its components using
+    binders of the language itself, not meta-level ones.
+
+    Writing the code with constructors and deconstrutors for these record
+    values would make it harder to decompose the implementation of [diff]
+    as separate functions -- [handle], [update], [create] -- which would
+    consequently complicate the Coq proofs. Nevertheless, in the following
+    section, we show that our effort from previous sections was not in vain:
+    we can reuse what was proven for [diff] in verifying a full [HH]
+    implementation of automatic differentiation.
+*)
+
+Section hh_implementation.
+  Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
+
+  Definition to_struct (N : Num) : val :=
+    (nzero, (none, (nadd, nmul)))%V.
+
+  Definition hh_diff : val := λ: "f" "num",
+    let: "nzero" := Fst "num" in
+    let: "none"  := Fst (Snd "num") in
+    let: "nadd"  := Fst (Snd (Snd "num")) in
+    let: "nmul"  := Snd (Snd (Snd "num")) in
+
+    let: "create" := λ: "n", InjR ("n", ref "nzero") in
+
+    let: "get_val" := λ: "x",
+      match: "x" with
+        (* Constant. *) InjL "x" =>
+         match: "x" with
+           (* Zero. *) InjL <> => "nzero"
+         | (* One.  *) InjR <> => "none"
+         end
+      | (* Variable. *) InjR "x" => Fst "x"
+      end
+    in
+
+    let: "update" := λ: "x" "incr",
+      match: "x" with
+        (* Constant. *) InjL <>  => #()
+      | (* Variable. *) InjR "x" =>
+        let: "xd" := Snd "x" in
+        "xd" <- "nadd" (Load "xd") "incr"
+      end
+    in
+
+    let: "handle" := λ: "f" "seed",
+      try: "f" "seed" with
+        effect (λ: "args" "k",
+          let: "op" := Fst      "args"  in
+          let: "a"  := Fst (Snd "args") in
+          let: "b"  := Snd (Snd "args") in
+
+          let: "av" := "get_val" "a"      in
+          let: "bv" := "get_val" "b"      in
+
+          match: "op" with
+            (* Add *) InjL <> =>
+             let: "x" := "create" ("nadd" "av" "bv") in
+             "k" "x";;
+             let: "xd" := get_diff "x" in
+             "update" "a" "xd";;
+             "update" "b" "xd"
+
+          | (* Mul *) InjR <> =>
+             let: "x" := "create" ("nmul" "av" "bv") in
+             "k" "x";;
+             let: "xd" := get_diff "x"   in
+             let: "ad" := "nmul" "bv" "xd" in
+             let: "bd" := "nmul" "av" "xd" in
+             "update" "a" "ad";;
+             "update" "b" "bd"
+          end
+        )
+      | return (λ: "res",
+             "update" "res" "none")
+      end
+    in
+
+    let: "vf" := "f" (to_struct ADNum) in
+    λ: "a",
+      let: "x" := "create" "a" in
+      "handle" "vf" "x";;
+      get_diff "x".
+
+
+  Definition IsExp (f : val) (e : Expr ()) : iProp Σ :=
+    isExp (λ N, f (to_struct N)) e.
+
+  Definition hh_diff_spec : Prop :=
+    ⊢ ∀ (f : val) (e : Expr ()),
+        IsExp f e -∗
+          EWP hh_diff f {{ f', IsExp f' (∂ e ./ ∂ tt .at (λ _, Xₑ)) }}.
+
+  Theorem hh_diff_correct : hh_diff_spec.
+  Proof using R₁ R₂ Σ.
+    iIntros (f e) "Hf".
+    unfold hh_diff. ewp_pure_steps.
+    iIntros (N).
+    destruct N as [nzero none nadd nmul].
+    rewrite /to_struct //=.
+    ewp_pure_steps.
+    iPoseProof (diff_correct) as "Hdiff".
+    iSpecialize ("Hdiff" $! (λ N, f (to_struct N)) e).
+    iSpecialize ("Hdiff" with "Hf").
+    set N := {|nzero:=nzero;none:=none;nadd:=nadd;nmul:=nmul|}.
+    by iApply ("Hdiff" $! N).
+  Qed.
+
+End hh_implementation.
