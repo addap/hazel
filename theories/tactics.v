@@ -79,6 +79,8 @@ Ltac ewp_pure_step_tac _ e _ _ :=
   match e with
   | Val _ =>
      iApply ewp_value
+  | Do (Val _) =>
+     iApply (ewp_pure_step'); [apply pure_prim_step_do|]
   | TryWith (Val _) _ _ =>
      iApply (ewp_pure_step'); [apply pure_prim_step_try_with_val|]
   | Rec _ _ _ =>
