@@ -2535,6 +2535,9 @@ Section hh_implementation.
   Definition to_struct (N : Num) : val :=
     (nzero, (none, (nadd, nmul)))%V.
 
+  Definition to_Num (zero one add mul : val) : Num :=
+    {| nzero := zero; none := one; nadd := add; nmul := mul |}.
+
   Definition hh_diff : val := λ: "f" "num",
     let: "nzero" := Fst "num" in
     let: "none"  := Fst (Snd "num") in
@@ -2602,28 +2605,117 @@ Section hh_implementation.
       "handle" "vf" "x";;
       get_diff "x".
 
+  (* The class [NumSpec N Ψ RS] can be seen as the domain of predicates
+     [implements : val → R → iProp Σ] for which the assertions [nzero_spec],
+     [none_spec], [nadd_spec], [nmul_spec] and [implements_pers] are provable.
 
-  Definition IsExp (f : val) (e : Expr ()) : iProp Σ :=
-    isExp (λ N, f (to_struct N)) e.
+     In the following, we detach the type of predicates, [val → R → iProp Σ],
+     from its restrictions, which will be bundled in the new typeclass [numSpec].
+
+     This allows the specification of [hh_diff] to quantify directly over
+     predicates (instead of quantifying over terms of type [NumSpec N Ψ RS]),
+     which leads to a more readable final statement.
+   *)
+
+  Class numSpec {R : Set}
+    (zero one add mul : val)
+    (implements : val → R → iProp Σ)
+    (Ψ : iEff Σ)
+    (RS : RingSig R) :=
+  {
+    nzero_spec' : ⊢ implements zero (Oᵣ);
+    none_spec'  : ⊢ implements one  (Iᵣ);
+
+    nadd_spec' E a b r s :
+      implements a r -∗
+        implements b s -∗
+          EWP add a b @ E <| Ψ |> {{ x,
+            implements x (radd r s) }};
+
+    nmul_spec' E a b r s :
+      implements a r -∗
+        implements b s -∗
+          EWP mul a b @ E <| Ψ |> {{ x,
+            implements x (rmul r s) }};
+
+    implements_pers' u r :> Persistent (implements u r);
+  }.
+
+  Program Instance NumSpec' {R : Set} (RS : RingSig R)
+    (zero one add mul : val)
+    (implements : val → R → iProp Σ)
+    (Ψ : iEff Σ)
+    (nSpec : numSpec zero one add mul implements Ψ RS) :
+    NumSpec (to_Num zero one add mul) Ψ RS :=
+  {|
+    implements := implements;
+    nzero_spec := nzero_spec';
+    none_spec  := none_spec';
+    nadd_spec  := nadd_spec';
+    nmul_spec  := nmul_spec';
+    implements_pers := implements_pers'
+  |}.
+
+  Program Instance numSpec'  {R : Set}
+    (RS : RingSig R) (N : Num) (Ψ : iEff Σ)
+    (NSpec : NumSpec N Ψ RS) :
+    numSpec nzero none nadd nmul implements Ψ RS :=
+  {|
+    nzero_spec' := nzero_spec;
+    none_spec'  := none_spec;
+    nadd_spec'  := nadd_spec;
+    nmul_spec'  := nmul_spec;
+    implements_pers' := implements_pers
+  |}.
+
+  Definition IsExp (e : val) (E : Expr ()) : iProp Σ :=
+    ∀ (zero one add mul : val),
+      EWP (e (zero, (one, (add, mul)))%V) {{ f,
+        ∀ (R : Set) (RS : RingSig R) (RA : IsRing R) (Ψ : iEff Σ),
+          ∀ (implements : val → R → iProp Σ),
+            ⌜ numSpec zero one add mul implements Ψ RS ⌝ -∗
+              ∀ (x : val) (r : R),
+                implements x r -∗
+                  EWP (f x) <| Ψ |> {{ y, ∃ s,
+                    implements y s ∗
+                      ⌜ s =ᵣ eval (map (λ _, r) E) ⌝ }} }}.
 
   Definition hh_diff_spec : Prop :=
-    ⊢ ∀ (f : val) (e : Expr ()),
-        IsExp f e -∗
-          EWP hh_diff f {{ f', IsExp f' (∂ e ./ ∂ tt .at (λ _, Xₑ)) }}.
+    ⊢ ∀ (e : val) (E : Expr ()),
+        IsExp e E -∗
+          EWP hh_diff e {{ e',
+            IsExp e' (∂ E ./ ∂ tt .at (λ _, Xₑ)) }}.
 
   Theorem hh_diff_correct : hh_diff_spec.
   Proof using R₁ R₂ Σ.
-    iIntros (f e) "Hf".
+    iIntros (e E) "He".
     unfold hh_diff. ewp_pure_steps.
-    iIntros (N).
-    destruct N as [nzero none nadd nmul].
-    rewrite /to_struct //=.
-    ewp_pure_steps.
+    iIntros (zero one add mul). ewp_pure_steps.
     iPoseProof (diff_correct) as "Hdiff".
-    iSpecialize ("Hdiff" $! (λ N, f (to_struct N)) e).
-    iSpecialize ("Hdiff" with "Hf").
-    set N := {|nzero:=nzero;none:=none;nadd:=nadd;nmul:=nmul|}.
-    by iApply ("Hdiff" $! N).
+    iSpecialize ("Hdiff" $! (λ N, e (to_struct N)) E).
+    iSpecialize ("Hdiff" with "[He]").
+    { iIntros (N). destruct N as [nzero none nadd nmul].
+      rewrite /to_struct //=.
+      iSpecialize ("He" $! nzero none nadd nmul).
+      iApply (ewp_mono with "He").
+      iIntros (f) "Hf". simpl. iModIntro.
+      iIntros (R RS RA Ψ NSpec).
+      set N := to_Num nzero none nadd nmul.
+      by iApply ("Hf" $! R RS RA Ψ implements
+        (numSpec' RS N Ψ NSpec)).
+    }
+    set N := to_Num zero one add mul.
+    iSpecialize ("Hdiff" $! N).
+    iApply (ewp_mono with "Hdiff").
+    iIntros (f) "Hf". simpl. iModIntro.
+    iIntros (R RS RA Ψ implements) "%".
+    iSpecialize ("Hf" $! R RS RA Ψ).
+    iSpecialize ("Hf" $!
+      (NumSpec' RS zero one add mul implements Ψ H)).
+    iIntros (x X) "Hx".
+    iSpecialize ("Hf" $! x X with "Hx").
+    iApply (ewp_mono with "Hf"). simpl.
+    by iIntros (y) "Hy".
   Qed.
 
 End hh_implementation.
