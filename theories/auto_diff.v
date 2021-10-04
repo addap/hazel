@@ -2607,14 +2607,14 @@ Section hh_implementation.
 
   (* The class [NumSpec N Ψ RS] can be seen as the domain of predicates
      [implements : val → R → iProp Σ] for which the assertions [nzero_spec],
-     [none_spec], [nadd_spec], [nmul_spec] and [implements_pers] are provable.
+     [none_spec], [nadd_spec], [nmul_spec] and [implements_pers] hold.
 
      In the following, we detach the type of predicates, [val → R → iProp Σ],
-     from its restrictions, which will be bundled in the new typeclass [numSpec].
+     from its restrictions, which will be bundled into the new typeclass [numSpec].
 
      This allows the specification of [hh_diff] to quantify directly over
-     predicates (instead of quantifying over terms of type [NumSpec N Ψ RS]),
-     which leads to a more readable final statement.
+     predicates, instead of terms of type [NumSpec N Ψ RS]. We believe this
+     leads to a more readable definition of [IsExp].
    *)
 
   Class numSpec {R : Set}
