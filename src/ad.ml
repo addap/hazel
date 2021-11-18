@@ -1,61 +1,100 @@
 (* Reverse-Mode Automatic Differentiation with Effect Handlers. *)
 
-(* This code works in Multicore OCaml 4.10.0. *)
+(* This code works in Multicore OCaml 4.12.0. *)
 
-(* This code is based on the code by KC Sivaramakrishnan:
+(* The use of effect handlers in this code is based on the code by KC Sivaramakrishnan:
 
    https://github.com/ocaml-multicore/effects-examples/blob/master/algorithmic_differentiation.ml
 
+   The packaging is different, though; we use expressions in tagless final style.
+
+   This code can be executed in the OCaml toplevel loop via the following commands:
+
+   opam switch create 4.12.0+domains+effects --no-switch # (only once)
+   opam exec --switch 4.12.0+domains+effects ocaml       # runs the toplevel loop
+
  *)
+(* BEGINPAPER *)
+type 'v num =
+  { zero : 'v; one : 'v; add : 'v -> 'v -> 'v; mul : 'v -> 'v -> 'v }
 
-module type NUM = sig 
-  type t
-  val one   : t
-  val zero  : t
-  val ( + ) : t -> t -> t
-  val ( * ) : t -> t -> t
-end
+type exp =
+  { eval : (* forall *) 'v. 'v num -> 'v -> 'v }
 
-module type AD = sig 
-  include NUM 
-  type n
-  val diff  : (t -> t) -> (n -> n)
-  val grad  : (t * t -> t) -> (n * n -> n * n)
-end
+let diff (e : exp) : exp = { eval =
+  fun (type v) ({ zero; one; add; mul } : v num) (n : v) ->
+    let ( + ), ( * ) = add, mul in
+    let open struct
 
-module RMAD (N : NUM) = struct
-  open N
-  type n = t
-  type t = { v : n; mutable d : n }
-  effect Add  : t * t -> t
-  effect Mult : t * t -> t
+      type t = O | I | Var of {v : v ; mutable d : v} (* zero | one | var *)
+      effect Add : t * t -> t
+      effect Mul : t * t -> t
 
-  let mk v =
-    { v = v; d = zero }
+      let mk n       = Var {v = n; d = zero}
+      let get_v u    = match u with O -> zero | I -> one  | Var u     -> u.v
+      let get_d u    = match u with O | I -> assert false | Var u     -> u.d
+      let update u i = match u with O | I -> ()    | Var u -> u.d <- u.d + i
 
-  let handle f seed =
-    match f seed with
-    | effect (Add (a, b)) k ->
-        let x = mk (a.v + b.v) in
-        continue k x;
-        a.d <- a.d + x.d;
-        b.d <- b.d + x.d
-    | effect (Mult (a, b)) k ->
-        let x = mk (a.v * b.v) in
-        continue k x;
-        a.d <- a.d + (x.d * b.v);
-        b.d <- b.d + (x.d * a.v)
-    | r ->
-        r.d <- one
+      let num = 
+        let zero = O
+        and one = I
+        and add a b = perform (Add (a, b))
+        and mul a b = perform (Mul (a, b)) in
+        { zero; one; add; mul }
 
-  let diff f a =
-    let x = mk a in handle f x; x.d
+      let x = mk n
 
-  let grad f (a, b) =
-    let (x, y) = (mk a, mk b) in handle f (x, y); (x.d, y.d)
+      let () =
+        match e.eval num x with
+        | effect (Add (a, b)) k ->
+           let u = mk (get_v a + get_v b) in
+           continue k u;
+           update a (get_d u);
+           update b (get_d u) 
+        | effect (Mul (a, b)) k ->
+           let u = mk (get_v a * get_v b) in
+           continue k u;
+           update a (get_d u * get_v b);
+           update b (get_d u * get_v a) 
+        | y ->
+           update y one
 
-  let zero = mk zero
-  let one = mk one
-  let ( + ) a b = perform (Add  (a, b))
-  let ( * ) a b = perform (Mult (a, b))
-end
+    end in
+    get_d x
+}
+(* ENDPAPER *)
+
+let int   = { zero = 0; one = 1; add = ( + ); mul = ( * ) }
+let float = { zero = 0.0; one = 1.0; add = ( +. ); mul = ( *. ) }
+
+(* f represents the expression (x+1)^3. *)
+let f =
+  {eval = fun (type v) ({ zero; one; add; mul } : v num) x ->
+    let ( + ), ( * ) = add, mul in
+    let cube x = x * x * x in
+    cube (one + x)
+  }
+
+(* Test. *)
+let () =
+  assert (f.eval int 2 = 27);
+  assert (f.eval float 2.0 = 27.0)
+
+(* f' should 3(x+1)^2 *)
+let f' = diff f
+
+(* Test. *)
+let () =
+  assert (f'.eval int 2 = 27);
+  assert (f'.eval float 2.0 = 27.0)
+
+(* f'' should be 6(x+1) *)
+let f'' = diff (diff f)
+
+(* Test. *)
+let () =
+  assert (f''.eval int 2 = 18);
+  assert (f''.eval float 2.0 = 18.0)
+
+let () =
+  print_endline "Success."

@@ -1,14 +1,10 @@
-module type NUM = sig 
-  type t
-  val one   : t
-  val zero  : t
-  val ( + ) : t -> t -> t
-  val ( * ) : t -> t -> t
-end
-module type AD = sig 
-  include NUM 
-  type n
-  val diff  : (t -> t) -> (n -> n)
-  val grad  : (t * t -> t) -> (n * n -> n * n)
-end
-module RMAD (N : NUM) : (AD with type n = N.t) 
+(* A record of the ring operations over a numeric type 'v. *)
+type 'v num = 
+  { zero : 'v; one : 'v; add : 'v -> 'v -> 'v; mul : 'v -> 'v -> 'v }
+
+(* An expression of one variable in tagless final style. *)
+type exp = 
+  { eval : (* forall *) 'v. 'v num -> 'v -> 'v }
+
+(* The automatic differentiation algorithm. *)
+val diff : exp -> exp 
