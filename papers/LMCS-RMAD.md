@@ -27,7 +27,7 @@ There are three files in the repository that are relevant to the paper:
 
    There you will find the version of OCaml to compile the program.
 
-3. The Coq formalization of correctness of the algorithm [auto_diff.v](../theories/auto_diff.v).
+3. The Coq formalization of the results in the paper [auto_diff.v](../theories/auto_diff.v).
 
 
 The other files of the project are related to the design of Hazel
@@ -38,6 +38,13 @@ understanding the theory .
 
 
 ## Link between paper and formalization
+
+### Main result
+
+The main result of the paper, Statement 5.1, is Definition
+`hh_diff_spec` in the formalization. The proof of this statement
+is the Theorem `hh_diff_correct`.
+
 
 ### Notation
 
