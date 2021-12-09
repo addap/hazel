@@ -46,8 +46,8 @@ compares to the notation introduced in the paper:
 
 |                                        | Paper                 | Coq formalization                     |
 |----------------------------------------|-----------------------|---------------------------------------|
-| Definition 4.1 (Expressions)           | `Exp<sub>I</sub>`     | `Expr I`                              |
-| Definition 4.2 (Expression Evaluation) | `〚E〛<sub>ρ</sub>`    | `eval (emap ρ E)`                     |
+| Definition 4.1 (Expressions)           | `Exp`<sub>`I`</sub>   | `Expr I`                              |
+| Definition 4.2 (Expression Evaluation) | `〚E〛`<sub>`ρ`</sub>  | `eval (emap ρ E)`                     |
 | Definition 4.3 (Partial Derivative)    | `∂ E / ∂ j (ρ)`       | `∂ E ./ ∂ j  .at ρ` or `diffₑ ϱ E j`  |
 | Definition 4.4 (Symbolic Derivative)   | `E'`                  | `∂ E ./ ∂ tt .at (λ _, Xₑ)`           |
 | Definition 4.5 (Bindings; contexts)    | `let u = a op b`      | `(u, (a, op, b))`                     |
