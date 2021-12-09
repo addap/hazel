@@ -27,6 +27,7 @@ theories/cascade.v
 theories/state.v
 theories/exceptions.v
 theories/scheduler.v
+theories/auto_diff.v
 
 theories/ml_references.v
 
