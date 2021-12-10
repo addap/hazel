@@ -34,7 +34,7 @@ The other files of the project are related to the design of Hazel
 and to its application to case studies.
 These files might be interesting for those willing to dive deeper
 into the entrails of the logic, but they are not necessary for
-understanding the theory .
+understanding the theory [auto_diff.v](../theories/auto_diff.v).
 
 
 ## Link between paper and formalization
@@ -67,3 +67,4 @@ compares to the notation introduced in the paper:
 | Definition 5.5 (Protocol)              | `Ψ'`                  | `AD`                                  |
 | Definition 5.6 (Forward Invariant)     | `ForwardInv K`        | `forward_inv K`                       |
 | Definition 5.7 (Backward Invariant)    | `BackwardInv K₁ K₂ y` | `backward_inv K₁ K₂ y`                |
+
