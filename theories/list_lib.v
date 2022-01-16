@@ -3,7 +3,7 @@ From iris.proofmode     Require Import base tactics classes.
 From iris.program_logic Require Import weakestpre.
 From hazel              Require Import notation weakestpre cascade.
 
-Class ListLib Σ `{!irisG eff_lang Σ} := {
+Class ListLib Σ `{!irisGS eff_lang Σ} := {
   list_nil  : val;
   list_cons : val;
   list_iter : val;
@@ -76,7 +76,7 @@ End DerivedLaws.
 
 Section ListLibModel.
 
-Context `{!irisG eff_lang Σ}.
+Context `{!irisGS eff_lang Σ}.
 
 Fixpoint list_encoding' (us : list val) : val :=
   match us with [] => InjLV #() | u :: us => InjRV (u, list_encoding' us) end.
@@ -194,7 +194,7 @@ End ListLibModel.
 
 Section IterLibModel.
 
-Context `{!irisG eff_lang Σ}.
+Context `{!irisGS eff_lang Σ}.
 
 Context (l : val) (xs : list val).
 

@@ -16,7 +16,7 @@ Section iter.
 
 (* Specification of an iterator. *)
 
-Class IterLib Σ `{!irisG eff_lang Σ} := {
+Class IterLib Σ `{!irisGS eff_lang Σ} := {
   iter      : val;
   permitted : list val → iProp Σ;
   complete  : list val → iProp Σ;

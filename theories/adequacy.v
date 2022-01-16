@@ -3,7 +3,7 @@ From iris.base_logic.lib Require Import iprop wsat.
 From iris.program_logic  Require Import weakestpre adequacy.
 From hazel               Require Import notation weakestpre heap.
 
-Lemma ewp_imp_wp `{!irisG eff_lang Σ} e Φ :
+Lemma ewp_imp_wp `{!irisGS eff_lang Σ} e Φ :
  EWP e <| ⊥ |> {{ v, Φ v }} ⊢ WP e @ NotStuck; ⊤ {{ Φ }}.
 Proof.
   iLöb as "IH" forall (e).
@@ -15,12 +15,17 @@ Proof.
     iPoseProof (ewp_eff_inv with "Hewp") as "HFalse".
     by rewrite protocol_agreement_bottom.
   - rewrite ewp_unfold /ewp_pre wp_unfold /wp_pre /= Heqo Heqo0.
-    iIntros "Hewp" (σ k ks n) "Hs".
-    iMod ("Hewp" with "Hs") as "[$ H]". iModIntro.
-    iIntros (e2 σ2 efs).
-    case k as [|??]; case efs as [|??]; iIntros (Hstep); try done.
-    iMod ("H" with "[//]") as "H". iIntros "!> !>". iMod "H" as "[$ H]".
-    iModIntro. by iSplitL; [iApply "IH"|].
+    iIntros "Hewp" (σ ns k ks nt) "Hs".
+    iMod ("Hewp" $! σ ns k ks nt with "Hs") as "[$ H]". iModIntro.
+    iIntros (e2 σ2 efs Hstep).
+    case k   as [|??]; [|done].
+    case efs as [|??]; [|done].
+    simpl in Hstep.
+    iMod ("H" with "[//]") as "H". iIntros "!> !>".
+    simpl. iMod "H". iModIntro.
+    iApply (step_fupdN_wand with "[H]"); first by iApply "H".
+    iIntros "H". iMod "H" as "[$ Hewp]". iModIntro.
+    by iSplit; [iApply "IH"|].
 Qed.
 
 Section adequacy.

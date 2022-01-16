@@ -14,32 +14,37 @@ From hazel               Require Export lib lang ieff protocol_agreement.
 
 (** * Weakest Precondition. *)
 
-Definition ewp_pre `{!irisG eff_lang Σ} :
+Definition ewp_pre `{!irisGS eff_lang Σ} :
   (coPset -d> expr -d> iEff Σ -d> (val -d> iPropO Σ) -d> iPropO Σ) →
   (coPset -d> expr -d> iEff Σ -d> (val -d> iPropO Σ) -d> iPropO Σ)
   := λ ewp E e₁ Ψ Φ,
   match to_val e₁ with Some  v     => |={E}=> Φ v | None =>
   match to_eff e₁ with Some (v, k) =>
     protocol_agreement v Ψ (λ w, ▷ ewp E (fill k (Val w)) Ψ Φ)
-  | None =>
-    ∀ σ₁ ks n,
-     state_interp σ₁ ks n ={E,∅}=∗
+  | None => ∀ σ₁ ns κ κs nt,
+     state_interp σ₁ ns (κ ++ κs) nt ={E,∅}=∗
        ⌜ reducible e₁ σ₁ ⌝ ∗ 
-       ∀ e₂ σ₂, ⌜ prim_step e₁ σ₁ e₂ σ₂ ⌝ ={∅}=∗ ▷ |={∅,E}=>
-         state_interp σ₂ ks n ∗ ewp E e₂ Ψ Φ
+       ∀ e₂ σ₂, ⌜ prim_step' e₁ σ₁ κ e₂ σ₂ [] ⌝
+         ={∅}▷=∗^(S $ num_laters_per_step ns) |={∅,E}=>
+         state_interp σ₂ (S ns) κs nt ∗
+         ewp E e₂ Ψ Φ
   end
   end%I.
 
-Local Instance ewp_pre_contractive `{!irisG eff_lang Σ} : Contractive ewp_pre.
+Local Instance ewp_pre_contractive `{!irisGS eff_lang Σ} : Contractive ewp_pre.
 Proof.
   rewrite /ewp_pre /from_option /protocol_agreement=> n ewp ewp' Hwp E e Ψ Φ.
-  repeat (f_contractive || f_equiv); try apply Hwp.
+  do 10 (f_contractive || f_equiv). apply Hwp.
+  do 10 (f_contractive || f_equiv). 
+  induction num_laters_per_step as [|k IH]; simpl.
+  - repeat (f_contractive || f_equiv); apply Hwp.
+  - do 3 f_equiv. by apply IH.
 Qed.
-Definition ewp_def `{!irisG eff_lang Σ} :
+Definition ewp_def `{!irisGS eff_lang Σ} :
   coPset -d> expr -d> iEff Σ -d> (val -d> iPropO Σ) -d> iPropO Σ :=
   fixpoint ewp_pre.
-Definition ewp_aux `{!irisG eff_lang Σ} : seal ewp_def. Proof. by eexists. Qed.
-Definition ewp_eq `{!irisG eff_lang Σ} := ewp_aux.(seal_eq).
+Definition ewp_aux `{!irisGS eff_lang Σ} : seal ewp_def. Proof. by eexists. Qed.
+Definition ewp_eq `{!irisGS eff_lang Σ} := ewp_aux.(seal_eq).
 
 (* Notation. *)
 
@@ -81,7 +86,7 @@ Notation "'EWP' e <| Ψ '|' '>'  {{ v , Φ } }" :=
 
 
 Section ewp.
-Context `{!irisG eff_lang Σ}.
+Context `{!irisGS eff_lang Σ}.
 
 
 (* Non-expansiveness of EWP and simple lemmas. *)
@@ -100,7 +105,10 @@ Proof.
   - intros ?. do 2 (f_contractive || f_equiv).
     apply IH; try lia; eapply dist_le; eauto with lia.
   - do 13 (f_contractive || f_equiv).
-    apply IH; try lia; eapply dist_le; eauto with lia.
+    induction num_laters_per_step as [|k IH']; simpl.
+    + do 5 (f_contractive || f_equiv).
+      apply IH; try lia; eapply dist_le; eauto with lia.
+    + do 3 f_equiv. by apply IH'.
 Qed.
 
 Global Instance ewp_proper E e : Proper ((≡) ==> (≡) ==> (≡)) (ewp_def E e).
@@ -165,13 +173,15 @@ Proof.
     iIntros (w) "Hk". iNext.
     by iApply ("IH" with "Hk HΦ").
   - rewrite !ewp_unfold /ewp_pre Heqo Heqo0.
-    iIntros (σ₁ ks n) "Hσ". iMod (fupd_intro_mask' E2 E1) as "Hclose"; first done.
+    iIntros (σ₁ ns k ks nt) "Hσ".
+    iMod (fupd_mask_subseteq E1) as "Hclose"; first done.
     iMod ("Hewp" with "[$]") as "[$ H]".
     iModIntro. iIntros (e₂ σ₂ Hstep).
     iMod ("H" with "[//]") as "H". iIntros "!> !>".
-    iMod "H" as "(Hσ & Hewp)".
-    iMod "Hclose" as "_". iModIntro. iFrame "Hσ".
-    by iApply ("IH" with "Hewp HΦ").
+    iMod "H". iModIntro.
+    iApply (step_fupdN_wand with "[H]"); first by iApply "H".
+    iIntros ">($ & H)". iMod "Hclose" as "_". iModIntro.
+    iApply ("IH" with "H HΦ").
 Qed.
 
 Lemma ewp_mono E Ψ Φ Φ' e :
@@ -222,7 +232,7 @@ Proof.
     destruct (to_val e) as [ v    |] eqn:?;
   [|destruct (to_eff e) as [(v, k)|] eqn:?].
   { by iMod "H". } { by inversion H. }
-  { iIntros (σ1 ks n) "Hσ1". iMod "H". by iApply "H". }
+  { iIntros (σ1 ns k ks nt) "Hσ1". iMod "H". by iApply "H". }
 Qed.
 
 Lemma ewp_fupd E e Ψ Φ :
@@ -240,38 +250,22 @@ Proof.
   [|destruct (to_eff e) as [(v, k)|] eqn:He'].
   - by iDestruct "H" as ">>> $".
   - by inversion H.
-  - iIntros (σ1 κs n) "Hσ". iMod "H". iMod ("H" $! σ1 with "Hσ") as "[$ H]".
+  - iIntros (σ1 ns k κs nt) "Hσ". iMod "H". iMod ("H" $! σ1 with "Hσ") as "[$ H]".
     iModIntro. iIntros (e2 σ2 Hstep).
-    iMod ("H" with "[//]") as "H". iIntros "!>!>".
-    iMod "H" as "(Hσ & H)".
+    iApply (step_fupdN_wand with "[H]"); first by iApply "H".
+    iIntros ">(Hσ & H)".
     rewrite !ewp_unfold /ewp_pre.
       destruct (to_val e2) as [ v2     |] eqn:He2;
     [|destruct (to_eff e2) as [(v2, k2)|] eqn:He2'].
-    + iFrame. by iDestruct "H" as ">> $".
-    + have Hstep' : prim_step' e σ1 [] e2 σ2 []. { by apply Hstep. }
+    + iDestruct "H" as ">> $". by iFrame.
+    + have Hstep' : prim_step' e σ1 [] e2 σ2 []. { by destruct k. }
       edestruct (atomic _ _ _ _ _ Hstep'); by naive_solver.
-    + iMod ("H" with "Hσ") as "[H _]". iDestruct "H" as %(? & ? & ? & ? & ?).
-      have Hstep' : prim_step' e σ1 [] e2 σ2 []. { by apply Hstep. }
+    + iMod ("H" $! _ _ [] with "[$]") as "[H _]".
+      iDestruct "H" as %(? & ? & ? & ? & ?).
+      have Hstep' : prim_step' e σ1 [] e2 σ2 []. { by destruct k. }
       edestruct (atomic _ _ _ _ _ Hstep'); by naive_solver.
 Qed.
 
-Lemma ewp_step_fupd E1 E2 e P Ψ Φ :
-  TCEq (to_val e) None →
-    TCEq (to_eff e) None →
-      E2 ⊆ E1 →
-  (|={E1}[E2]▷=> P) -∗
-    EWP e @ E2 <| Ψ |> {{ v, P ={E1}=∗ Φ v }} -∗
-    EWP e @ E1 <| Ψ |> {{ Φ }}.
-Proof.
-  rewrite !ewp_unfold /ewp_pre. iIntros (-> -> ?) "HR H".
-  iIntros (σ1 ks n) "Hσ". iMod "HR". iMod ("H" with "[$]") as "[$ H]".
-  iIntros "!>" (e2 σ2 Hstep). iMod ("H" $! e2 σ2 with "[% //]") as "H".
-  iIntros "!>!>". iMod "H" as "(Hσ & H)".
-  iMod "HR". iModIntro. iFrame "Hσ".
-  iApply (ewp_strong_mono E2 with "H");[done..| |].
-  { by iApply iEff_le_refl. }
-  { iIntros (v) "H". by iApply "H". }
-Qed.
 
 (* Pure steps. *)
 
@@ -285,12 +279,16 @@ Proof.
   - by specialize (val_not_pure' _ _   e' He).
   - by specialize (eff_not_pure' _ _ _ e' He').
   - rewrite !(ewp_unfold E e) /ewp_pre He He'.
-    iIntros "Hewp" (σ₁ ks n) "Hs".
-    iMod (fupd_intro_mask' E ∅) as "Hclose"; [by apply empty_subseteq|].
-    iModIntro. iSplitR; [iPureIntro; by apply (pure_prim_step_imp_reducible _ e')|].
-    iIntros (e₂ σ₂ Hstep').
+    iIntros "Hewp" (σ₁ ns k ks nt) "Hs".
+    iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
+    iModIntro. iSplitR;
+    [iPureIntro; by apply (pure_prim_step_imp_reducible _ e')|].
+    iIntros (e₂ σ₂ Hstep'). destruct k; [|done].
     destruct (pure_prim_step_det _ _ Hstep _ _ _ Hstep') as [-> ->].
-    by iFrame.
+    simpl. iIntros "!> !>".
+    iMod (state_interp_mono with "Hs") as "Hs". iModIntro.
+    induction num_laters_per_step as [|k IH]; simpl;
+    [by iFrame|iIntros "!>!>!>"; by apply IH].
 Qed.
 
 Lemma ewp_pure_step E e e' Ψ Φ :
@@ -343,13 +341,17 @@ Proof.
     rewrite fill_ectx_app. by iApply "IH".
   - rewrite !ewp_unfold /ewp_pre.
     rewrite (fill_not_val _ _ He) (fill_not_eff K _ He').
-    iIntros "Hewp" (σ₁ ks n) "Hs".
+    iIntros "Hewp" (σ₁ ns k ks nt) "Hs".
     iMod ("Hewp" $! σ₁ with "Hs") as "[% Hewp]". iModIntro.
     iSplitR; [iPureIntro; by apply reducible_fill|].
-    iIntros (e₂ σ₂) "%". rename H1 into Hstep.
+    iIntros (e₂ σ₂) "%".
+    destruct k; [|done]. rename H1 into Hstep. simpl in Hstep.
     destruct (Ectx_prim_step_inv K _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
     iMod ("Hewp" $! e' σ₂ Hstep') as "Hewp". iIntros "!> !>".
-    iMod "Hewp" as "[$ Hewp]". by iApply "IH".
+    iMod "Hewp". iModIntro.
+    iApply (step_fupdN_wand with "[Hewp]"); first by iApply "Hewp".
+    iIntros "H". iMod "H" as "[$ Hewp]". iModIntro.
+    by iApply "IH".
 Qed.
 
 Lemma Ectxi_ewp_bind Ki `{NeutralEctxi Ki} E Ψ Φ e e' :
@@ -373,13 +375,17 @@ Proof.
   - iIntros "Hprot_agr". by rewrite protocol_agreement_bottom.
   - rewrite !ewp_unfold /ewp_pre.
     rewrite (fill_not_val _ _ He) (fill_not_eff K _ He').
-    iIntros "Hewp" (σ₁ ks n) "Hs".
+    iIntros "Hewp"  (σ₁ ns k ks nt) "Hs".
     iMod ("Hewp" $! σ₁ with "Hs") as "[% Hewp]". iModIntro.
     iSplitR; [iPureIntro; by apply reducible_fill|].
-    iIntros (e₂ σ₂) "%". rename H0 into Hstep, H into Hred.
+    iIntros (e₂ σ₂) "%".
+    destruct k;[|done]; rename H0 into Hstep, H into Hred.
     destruct (Ectx_prim_step_inv K _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
     iMod ("Hewp" $! e' σ₂ Hstep') as "Hewp". iIntros "!> !>".
-    iMod "Hewp" as "[$ Hewp]". by iApply "IH".
+    iMod "Hewp". iModIntro.
+    iApply (step_fupdN_wand with "[Hewp]"); first by iApply "Hewp".
+    iIntros "H". iMod "H" as "[$ Hewp]". iModIntro.
+    by iApply "IH".
 Qed.
 
 End ewp.

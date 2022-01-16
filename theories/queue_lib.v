@@ -3,7 +3,7 @@ From iris.proofmode     Require Import base tactics classes.
 From iris.program_logic Require Import weakestpre.
 From hazel              Require Import notation weakestpre list_lib heap.
 
-Class QueueLib Σ `{!irisG eff_lang Σ} := {
+Class QueueLib Σ `{!irisGS eff_lang Σ} := {
   queue_create : val;
   queue_push   : val;
   queue_pop    : val;

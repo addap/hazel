@@ -182,9 +182,9 @@ Section running.
   Proof.
     rewrite /running_auth -own_op own_valid. iIntros "#H".
     iAssert (⌜ Excl' b = Excl' b' ⌝)%I as "%"; iRevert "H".
-    { iIntros (H). iPureIntro. by apply (auth_auth_frac_op_inv_L _ _ _ _ H). }
+    { iIntros (H). iPureIntro. by apply (auth_auth_dfrac_op_inv_L _ _ _ _ H). }
     inversion H. rewrite -auth_auth_frac_op.
-    rewrite auth_auth_frac_validI. by iIntros "#[% _]".
+    rewrite auth_auth_dfrac_validI. by iIntros "#[% _]".
   Qed.
   Lemma running_frag_twice γ b b' : running_frag γ b ∗ running_frag γ b' ⊢ False.
   Proof.
@@ -267,11 +267,11 @@ Global Instance mut_def_ne n :
 Proof.
   induction (lt_wf n) as [n _ IH]=> q q' Hq ready ready' Hready.
   inversion Hq. rewrite !mut_def_unfold /mut_def_pre.
-  repeat (f_contractive || apply mut_def_ne || apply is_queue_ne
+  by repeat (f_contractive || apply mut_def_ne || apply is_queue_ne
          ||    apply IH || f_equiv
          || case x1 as ()         || case x2 as ()
-         || case y1 as (y11, y12) || case y2 as (y21, y22) ).
-  apply H0. apply H1.
+         || case y1 as (y11, y12) || case y2 as (y21, y22)
+         || apply H0 || apply H1 ).
 Qed.
 Global Instance mut_def_proper : Proper ((≡) ==> (≡) ==> (≡)) mut_def.
 Proof. intros ??????. apply equiv_dist=>n.

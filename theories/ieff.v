@@ -102,7 +102,7 @@ Instance iEff_bottom {Σ} : Bottom (iEff Σ) := IEff (λ _, λne _, False%I).
 Program Definition iEffPre_base_def {Σ}
   (v : val) (P : iProp Σ) (Q : val -d> iPropO Σ) : iEff Σ
   := IEff (λ v', λne Q', ⌜ v = v' ⌝ ∗ P ∗ (∀ w, Q w -∗ Q' w))%I.
-Next Obligation. intros ??? ??? ???. repeat f_equiv. by apply H. Qed.
+Next Obligation. intros ??? ??? ???. by repeat f_equiv. Qed.
 Definition iEffPre_base_aux : seal (@iEffPre_base_def). by eexists. Qed.
 Definition iEffPre_base := iEffPre_base_aux.(unseal).
 Definition iEffPre_base_eq : @iEffPre_base = @iEffPre_base_def :=

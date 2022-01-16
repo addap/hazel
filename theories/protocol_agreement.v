@@ -14,7 +14,7 @@ From hazel               Require Import lib lang ieff.
 (** * Protocol Agreement. *)
 
 Section protocol_agreement.
-Context `{!irisG eff_lang Σ}.
+Context `{!irisGS eff_lang Σ}.
 
 Definition protocol_agreement v Ψ (Φ : val -d> iPropO Σ) :=
   let: P := iEff_car Ψ in
@@ -284,7 +284,7 @@ End protocol_ordering.
 (** * Monotonicity. *)
 
 Section protocol_agreement_monotonicity.
-Context `{!irisG eff_lang Σ}.
+Context `{!irisGS eff_lang Σ}.
 
 Lemma protocol_agreement_strong_mono v (Ψ1 Ψ2 : iEff Σ) Φ1 Φ2 :
   (protocol_agreement v Ψ1 Φ1 -∗ Ψ1 ⊑ Ψ2 -∗ (∀ v, Φ1 v -∗ Φ2 v) -∗

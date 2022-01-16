@@ -159,17 +159,18 @@ Lemma ewp_contv E Ψ Φ k (w : val) l :
 Proof.
   iIntros "Hk Hl".
   rewrite !(ewp_unfold _ (App _ _)) /ewp_pre //=.
-  iIntros (σ ks n) "Hσ".
+  iIntros (σ ????) "Hσ".
   iDestruct (gen_heap_valid with "Hσ Hl") as "%".
   rename H into heap_valid.
   iMod (gen_heap_update _ _ _ #false with "Hσ Hl") as "[Hσ Hl]".
-  iMod (fupd_intro_mask' E ∅) as "Hclose". by apply empty_subseteq.
+  iMod (fupd_mask_subseteq ∅) as "Hclose". by apply empty_subseteq.
   iModIntro. iSplitR.
   - iPureIntro. rewrite /reducible //=.
     exists [], (fill k w), (state_upd_heap <[l:=#false]> σ), []. simpl.
     apply (Ectx_prim_step _ _ _ _ EmptyCtx (ContV k l w) (fill k w)); try done.
     apply ContS; by eauto.
   - iIntros (e₂ σ₂ Hstep).
+    destruct κ; [|done]. simpl in Hstep.
     destruct Hstep; destruct K  as [|Ki K]; [| destruct Ki; try naive_solver ].
     + simpl in H, H0. simplify_eq. inversion H1. simplify_eq. iFrame. by auto.
     + simpl in H, H0. destruct K as [|Ki K] ; [| destruct Ki; try naive_solver ].
@@ -195,8 +196,8 @@ Proof.
     iDestruct (ewp_eff_inv with "H") as "H".
     iDestruct "Hhandler" as "[_ Hh]".
     rewrite !ewp_unfold /ewp_pre //=.
-    iIntros (σ ks n) "Hσ".
-    iMod (fupd_intro_mask' E ∅) as "Hclose". by apply empty_subseteq.
+    iIntros (σ ????) "Hσ".
+    iMod (fupd_mask_subseteq ∅) as "Hclose". by apply empty_subseteq.
     iModIntro. iSplitR.
     + iPureIntro. rewrite /reducible //=.
       set (l := fresh_locs (dom (gset loc) σ.(heap))).
@@ -204,6 +205,7 @@ Proof.
       apply (Ectx_prim_step _ _ _ _ EmptyCtx (TryWith (Eff v k) h r) (h v (ContV k l))).
       done. done. by apply try_with_fresh.
     + iIntros (e₂ σ₂ Hstep).
+      destruct κ; [|done]. simpl in Hstep.
       destruct Hstep; destruct K  as [|Ki K]; [| destruct Ki; try naive_solver ].
       * simpl in H, H0. simplify_eq. inversion H1.
         iMod (gen_heap_alloc _ l #true with "Hσ") as "($ & Hl & Hm)". { done. }
@@ -211,13 +213,14 @@ Proof.
         { iApply (protocol_agreement_mono with "H").
           iIntros (w) "Hk". by iApply (ewp_contv with "Hk Hl").
         }
-        iIntros "!> !>". by iMod "Hclose".
+        iIntros "!> !> !>". by iMod "Hclose".
       * destruct (fill_eff' K e1' v k) as [-> ->]; [naive_solver | ];
         simpl in H; simplify_eq; by inversion H1.
   - iIntros "He Hhandler".
     rewrite !(ewp_unfold _ (TryWith _ _ _))
             !(ewp_unfold _ e) /ewp_pre He He' //=.
-    iIntros (σ₁ ks n) "Hs". iMod ("He" $! σ₁ ks n with "Hs") as "[% He]".
+    iIntros (σ₁ ns k ks nt) "Hs".
+    iMod ("He" $! σ₁ ns k ks nt with "Hs") as "[% He]".
     iSplitR.
     + iPureIntro. revert H; unfold reducible. simpl.
       rewrite /prim_step'; simpl.
@@ -227,7 +230,8 @@ Proof.
       inversion Hstep. simplify_eq.
       exists [], (TryWith (fill K e2') h r), σ₄, [].
       by apply (Ectx_prim_step _ _ _ _ (ConsCtx (TryWithCtx h r) K) e1' e2').
-    + iModIntro. iIntros (e₄ σ₄) "%". rename H0 into Hstep.
+    + iModIntro. iIntros (e₄ σ₄) "%".
+      destruct k; [|done]. rename H0 into Hstep. simpl in Hstep.
       assert (Hstep' : ∃ e₅, prim_step e σ₁ e₅ σ₄ ∧ e₄ = TryWith e₅ h r).
       { inversion Hstep. destruct K as [|Ki K].
         - simpl in H; simplify_eq. inversion H2; naive_solver.
@@ -236,8 +240,9 @@ Proof.
           by apply (Ectx_prim_step _ _ _ _ K e1' e2').
       }
       destruct Hstep' as [e₅ [Hstep' ->]].
-      iDestruct ("He" $! e₅ σ₄ Hstep') as "> He". iIntros "!> !>".
-      iMod "He" as "[$ He]".
+      iDestruct ("He" $! e₅ σ₄ Hstep') as "> He".
+      iIntros "!> !>". iMod "He". iModIntro.
+      iMod "He" as "[$ He]". iModIntro.
       by iApply ("IH" with "He Hhandler").
 Qed.
 

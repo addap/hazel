@@ -845,7 +845,7 @@ End ring_instances.
 
 Section specification.
 
-Context `{!irisG eff_lang Σ}.
+Context `{!irisGS eff_lang Σ}.
 
 Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
   implements : val → R → iProp Σ;
@@ -978,14 +978,14 @@ Section ghost_theory.
     list_to_map (reverse K).
 
   Definition is_current_context (γ : gname) (K : context) : iProp Σ :=
-    own γ (gmap_view_auth (V:=nodeO) 1%Qp (context_to_map K)).
+    own γ (gmap_view_auth (V:=nodeO) (DfracOwn 1) (context_to_map K)).
 
   Definition is_entry (γ : gname) (u : val) (n : node) : iProp Σ :=
     own γ (gmap_view_frag (V:=nodeO) u DfracDiscarded n).
 
   Lemma context_alloc : ⊢ |==> ∃ γ, is_current_context γ [].
   Proof.
-    iMod (own_alloc (gmap_view_auth (V:=nodeO) 1 ∅)) as (γ) "Hauth".
+    iMod (own_alloc (gmap_view_auth (V:=nodeO) (DfracOwn 1) ∅)) as (γ) "Hauth".
     { by apply gmap_view_auth_valid. }
     { by eauto. }
   Qed.
@@ -997,7 +997,7 @@ Section ghost_theory.
   Proof.
     iIntros "Hauth Hfrag".
     by iDestruct (own_valid_2 with "Hauth Hfrag")
-      as %[_[_?]]%gmap_view_both_frac_valid_L.
+      as %[_[_?]]%gmap_view_both_dfrac_valid_L.
   Qed.
 
   Lemma context_update (γ : gname) (K : context) (u : val) (n : node) :
@@ -1102,7 +1102,7 @@ Section general_facts.
     }
   Qed.
 
-  Lemma big_sepL_strong_mono `{!irisG eff_lang Σ}
+  Lemma big_sepL_strong_mono `{!irisGS eff_lang Σ}
     {A : Type} (us : list A) (Φ₁ Φ₂ : nat → A → iProp Σ) :
     (∀ i u, us !! i = Some u → Φ₁ i u -∗ Φ₂ i u) →
       ([∗ list] i ↦ u ∈ us, Φ₁ i u) -∗
@@ -1115,7 +1115,7 @@ Section general_facts.
     {  iApply (IHus with "Hus"). naive_solver. }
   Qed.
 
-  Lemma big_sepL_strong_mono' `{!irisG eff_lang Σ}
+  Lemma big_sepL_strong_mono' `{!irisGS eff_lang Σ}
     {A : Type} (us : list A) (Φ₁ Φ₂ : A → iProp Σ) :
     (∀ u, u ∈ us → Φ₁ u -∗ Φ₂ u) →
       ([∗ list] u ∈ us, Φ₁ u) -∗
@@ -2407,7 +2407,7 @@ Section clients.
    *)
 
   Section ring_of_integers.
-    Context `{!irisG eff_lang Σ}.
+    Context `{!irisGS eff_lang Σ}.
 
     Program Instance ZNum : Num := {
       nzero := #0%Z;
