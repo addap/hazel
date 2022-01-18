@@ -7,13 +7,17 @@ A Separation Logic for effect handlers
 
 Both the syntax and the operational semantics of HH are defined
 in the file [theories/lang.v](theories/lang.v).
-There, you will find the following contents:
-  + Syntax: `expr` is the type of expressions.
-  + Evaluation contexts: `ectx_item` is the type of shallow evaluation contexts
+There, you will find the following definitions:
+
+  + **Syntax.** `expr` is the type of expressions.
+
+  + **Evaluation contexts.** `ectx_item` is the type of shallow evaluation contexts
     and `ectx`, the type of deep evaluation contexts.
-  + Semantics: `head_step` is the head step reduction relation and `prim_step`
+
+  + **Semantics.** `head_step` is the head step reduction relation and `prim_step`
     is its closure under evaluation contexts.
-  + Neutral contexts: a evaluation context is neutral when it does not
+
+  + **Neutral contexts.** a evaluation context is neutral when it does not
     catch an effect. The predicate `NeutralEctxi` holds for neutral shallow
     contexts and `NeutralEctx`, for deep contexts.
 
@@ -35,8 +39,10 @@ are named in the formalization as follows:
 In the file [theories/ieff.v](theories/ieff.v), you will find all the
 definitions from Figure 4 except for the definition of the *allows-do*
 assertion. Namely, you will find the following definitions:
-  + Protocol domain. `iEff Σ` is the type of protocols.
-  + Empty Protocol `iEff_bottom` is the empty protocol and `iEff_sum` is the
+
+  + **Protocol domain.** `iEff Σ` is the type of protocols.
+
+  + **Empty Protocol.** `iEff_bottom` is the empty protocol and `iEff_sum` is the
      protocol sum operation.
 
 The *allows-do* assertion is named `protocol_agreement` in the formalization.
