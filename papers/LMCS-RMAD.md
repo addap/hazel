@@ -1,20 +1,10 @@
 Verifying a minimalist reverse-mode AD library
 ==============================================
 
-You have read the paper *Verifying a minimalist reverse-mode AD library*
+You have read the paper
+[*Verifying a minimalist reverse-mode AD library*]
+(http://cambium.inria.fr/~fpottier/publis/de-vilhena-pottier-verifying-rmad.pdf)
 and now you wish to study its formalization? Then this page might help you!
-
-## Installation
-
-To build the Hazel project you can follow the
-instructions in the file [INSTALL.md](../INSTALL.md).
-
-These instructions show you how to create a separate opam switch with the
-necessary packages to build the project, thus keeping your previous
-switches clean.
-
-Alternatively, you can install the packages by yourself
-according to their versions as listed in the file [opam](../opam).
 
 
 ## Relevant files
