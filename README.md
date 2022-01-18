@@ -2,14 +2,12 @@
 
 This repository contains the Coq formalization of the following papers:
 
-- [*Verifying a minimalist reverse-mode AD library*]
-  (http://cambium.inria.fr/~fpottier/publis/de-vilhena-pottier-verifying-rmad.pdf) (Submitted to LMCS)  
+- [*Verifying a minimalist reverse-mode AD library*](http://cambium.inria.fr/~fpottier/publis/de-vilhena-pottier-verifying-rmad.pdf) (Submitted to LMCS)  
   Paulo Emílio de Vilhena and François Pottier  
   To see how the paper compares to the
   formalization consult the page [LMCS-RMAD.md](papers/LMCS-RMAD.md).
 
-- [*A Separation Logic for effect handlers*]
-  (http://cambium.inria.fr/~fpottier/publis/de-vilhena-pottier-sleh.pdf) (POPL 2021)  
+- [*A Separation Logic for effect handlers*](http://cambium.inria.fr/~fpottier/publis/de-vilhena-pottier-sleh.pdf) (POPL 2021)  
   Paulo Emílio de Vilhena and François Pottier  
   To see how the paper compares to the
   formalization consult the page [POPL21-sleh.md](papers/POPL21-sleh.md).
@@ -46,7 +44,6 @@ according to their versions as listed in the file [opam](../opam).
    auxiliary operators.
  - [theories/protocol_agreement.v](theories/protocol_agreement.v): Introduction and
    study of the protocol agreement judgement.
-   + Ordering: `iEff_le` is a pre order relation on protocols.
 
 ### Reasoning Rules / Logic
 
