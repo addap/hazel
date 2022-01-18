@@ -2,8 +2,7 @@ Verifying a minimalist reverse-mode AD library
 ==============================================
 
 You have read the paper
-[*Verifying a minimalist reverse-mode AD library*]
-(http://cambium.inria.fr/~fpottier/publis/de-vilhena-pottier-verifying-rmad.pdf)
+[*Verifying a minimalist reverse-mode AD library*](http://cambium.inria.fr/~fpottier/publis/de-vilhena-pottier-verifying-rmad.pdf)
 and now you wish to study its formalization? Then this page might help you!
 
 
