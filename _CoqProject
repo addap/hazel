@@ -19,6 +19,8 @@ theories/shallow_handler.v
 theories/deep_handler.v
 theories/selective_handler.v
 
+theories/named_effects.v
+
 theories/list_lib.v
 theories/queue_lib.v
 
@@ -28,7 +30,6 @@ theories/state.v
 theories/exceptions.v
 theories/scheduler.v
 theories/auto_diff.v
-
 theories/ml_references.v
 
 theories/adequacy.v
