@@ -2202,7 +2202,7 @@ Section proof_of_handle.
     set ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]}.
     iIntros "Hf Hinv".
     unfold handle.
-    do 8 (ewp_bind_rule; ewp_pure_step; try iNext; simpl).
+    do 8 ewp_value_or_step.
     iApply (ewp_deep_try_with with "Hf").
 
     iLöb as "IH" forall (K₁).
@@ -2241,7 +2241,7 @@ Section proof_of_handle.
       destruct op.
 
       (* Add. *)
-      { ewp_pure_steps.
+      { simpl. ewp_pure_steps.
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply ewp_mono'; [
@@ -2283,7 +2283,7 @@ Section proof_of_handle.
       }
 
       (* Mul. *)
-      { ewp_pure_steps.
+      { simpl. ewp_pure_steps.
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply ewp_mono'; [
@@ -2424,9 +2424,9 @@ Section clients.
     (* Implements Iᵣ. *)
     Next Obligation. auto. Qed.
     (* Implements +ᵣ. *)
-    Next Obligation. iIntros (E a b r s) "-> ->". by ewp_pure_steps. Qed.
+    Next Obligation. iIntros (E a b r s) "-> ->". by simpl; ewp_pure_steps. Qed.
     (* Implements ×ᵣ. *)
-    Next Obligation. iIntros (E a b r s) "-> ->". by ewp_pure_steps. Qed.
+    Next Obligation. iIntros (E a b r s) "-> ->". by simpl; ewp_pure_steps. Qed.
 
 
   End ring_of_integers.

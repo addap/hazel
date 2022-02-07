@@ -125,9 +125,6 @@ Section ghost_theory.
     iIntros "Heq". by iNext.
   Qed.
 
-  (* TODO: Prove these lemmas. *)
-  (* Locate gmap_view_alloc. *)
-
   Lemma protocol_map_lookup ℓ (Ψ Ψ' : iEff Σ) :
     Δ -∗ eff ℓ Ψ -∗ eff ℓ Ψ' -∗  ▷ (iEff_car Ψ ≡ iEff_car Ψ' : iProp Σ).
   Proof.
@@ -424,7 +421,7 @@ Section reasoning_rules.
   Proof.
     iIntros "#Heff Hclient Hhandler HΔ".
     unfold handle.
-    do 14 (ewp_bind_rule; ewp_pure_step; try iNext; simpl).
+    do 14 ewp_value_or_step.
     iSpecialize ("Hclient" with "HΔ").
     iApply (ewp_deep_try_with with "Hclient").
 
@@ -483,6 +480,34 @@ Section reasoning_rules.
 End reasoning_rules.
 
 
+(** * Tactics. *)
+
+Ltac match_wp_goal lemma tac :=
+  match goal with
+  | [ |- @bi_emp_valid _                (nwp_def ?e ?S ?ϕ) ] => tac lemma e
+  | [ |- @environments.envs_entails _ _ (nwp_def ?e ?S ?ϕ) ] => tac lemma e
+  end.
+
+Ltac wp_pure_step_lemma :=
+  iApply wp_pure_step.
+
+Ltac wp_bind_rule_lemma K :=
+  iApply (wp_bind K).
+
+Ltac wp_bind_rule :=
+  match_wp_goal wp_bind_rule_lemma bind_rule_tac.
+
+Ltac wp_pure_step :=
+  match_wp_goal wp_pure_step_lemma pure_step_tac.
+
+Ltac wp_value_or_step :=
+  ((iApply wp_value) || (wp_bind_rule; wp_pure_step));
+  try iNext; simpl.
+
+Ltac wp_pure_steps :=
+  repeat wp_value_or_step.
+
+
 (** * Examples. *)
 
 From hazel Require Import state.
@@ -525,38 +550,18 @@ Section examples.
   Proof using effMapG0 heapG0 inG0 Σ.
     iIntros "Hspec". iApply fupd_wp.
     iMod (ghost_var_alloc init) as (γ) "[Hstate Hpoints_to]". iModIntro.
-    iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-    iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
-    iApply wp_pure_step. apply pure_prim_step_rec. simpl. iNext.
-    iApply wp_value.
-    iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
-    iApply (wp_bind (ConsCtx (AppRCtx _) EmptyCtx)). done. simpl.
+    unfold state_handler.
+    wp_pure_steps. wp_bind_rule. simpl.
     iApply (wp_effect' _ (Ψ_state (points_to γ))).
     iIntros (a) "#Heff_a".
+    wp_pure_steps.
     iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-    iApply wp_pure_step. apply pure_prim_step_rec. simpl. iNext.
-    iApply wp_value.
-    iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
-    iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-    iApply (wp_bind (ConsCtx (AppLCtx _)
-                    (ConsCtx (AppLCtx _)
-                    (ConsCtx (AppRCtx _) EmptyCtx)))). done. simpl.
-    iApply wp_pure_step. apply pure_prim_step_rec. simpl. iNext.
-    iApply wp_value.
     iApply (wp_handle with "Heff_a [Hspec Hpoints_to]").
-    { iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
-      by iApply ("Hspec" with "Heff_a Hpoints_to").
-    }
+    { wp_pure_step; by iApply ("Hspec" with "Heff_a Hpoints_to"). }
     { iClear "Heff_a".
       iLöb as "IH" forall (γ init).
       rewrite !is_handler_unfold. iSplit.
-      { iIntros (v) "HΦ".
-        iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
-        iApply wp_pure_step. apply pure_prim_step_rec. iNext.
-        iApply wp_value.
-        iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
-        by iApply wp_value.
-      }
+      { iIntros (v) "HΦ". by wp_pure_steps. }
       { iIntros (v k) "Hprot_agr".
         iDestruct (Ψ_state_agreement with "Hprot_agr") as "[Hread|Hwrite]".
         { (* Read. *)
@@ -564,48 +569,22 @@ Section examples.
           iNext. iApply fupd_wp.
           iDestruct "Hread" as (w) "(-> & Hpoints_to & Hk)".
           iDestruct (ghost_var_agree γ init w with "[$]") as "%". rewrite H.
-          iSpecialize ("Hk" with "Hpoints_to"). iModIntro.
-          iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-          iApply wp_pure_step. apply pure_prim_step_beta. simpl.
-          iApply wp_pure_step. apply pure_prim_step_rec.
-          iApply wp_value.
-          iApply wp_pure_step. apply pure_prim_step_beta. simpl.
-          iApply wp_pure_step. apply pure_prim_step_case_InjL.
-          iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-          iApply wp_pure_step. apply pure_prim_step_rec.
-          iApply wp_value. simpl.
-          iApply wp_pure_step. apply pure_prim_step_beta. simpl.
-          iApply wp_pure_step. apply pure_prim_step_rec.
-          iApply wp_value. simpl.
-          iApply wp_pure_step. apply pure_prim_step_beta. simpl.
-          iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-          repeat iNext.
+          iSpecialize ("Hk" with "Hpoints_to"). iModIntro. unfold read.
+          wp_pure_steps. wp_bind_rule. simpl.
           iSpecialize ("IH" with "Hstate").
-          by iApply ("Hk" with "IH"). }
+          by iApply ("Hk" with "IH").
+        }
         { (* Write. *)
           rewrite Ψ_write_agreement.
           iNext. iApply fupd_wp.
           iDestruct "Hwrite" as (v' w') "(-> & Hpoints_to & Hk)".
           iMod ((ghost_var_update _ w') with "Hstate Hpoints_to") as
             "[Hstate Hpoints_to]".
-          iSpecialize ("Hk" with "Hpoints_to"). iModIntro.
-          iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-          iApply wp_pure_step. apply pure_prim_step_beta. simpl.
-          iApply wp_pure_step. apply pure_prim_step_rec.
-          iApply wp_value.
-          iApply wp_pure_step. apply pure_prim_step_beta. simpl.
-          iApply wp_pure_step. apply pure_prim_step_case_InjR.
-          iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-          iApply wp_pure_step. apply pure_prim_step_rec.
-          iApply wp_value. simpl.
-          iApply wp_pure_step. apply pure_prim_step_beta. simpl.
-          iApply wp_pure_step. apply pure_prim_step_rec.
-          iApply wp_value. simpl.
-          iApply wp_pure_step. apply pure_prim_step_beta. simpl.
-          iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-          repeat iNext.
+          iSpecialize ("Hk" with "Hpoints_to"). iModIntro. unfold write.
+          wp_pure_steps. wp_bind_rule. simpl.
           iSpecialize ("IH" with "Hstate").
-          by iApply ("Hk" with "IH"). }
+          by iApply ("Hk" with "IH").
+        }
       }
     }
   Qed.
@@ -616,33 +595,22 @@ Section examples.
   Proof using effMapG0 heapG0 inG0 Σ.
     iApply state_handler_spec.
     iIntros (a I) "#Heff_a HI".
-    iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
-    iApply (wp_bind (ConsCtx (AppRCtx _) EmptyCtx)). done. simpl.
-    iApply wp_pure_step. apply pure_prim_step_rec. simpl. iNext.
-    iApply wp_value.
+    wp_pure_steps.
     iApply state_handler_spec.
     iIntros (b J) "#Heff_b HJ".
-    iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
+    wp_pure_steps.
     iApply (wp_bind (ConsCtx (AppRCtx _) EmptyCtx)). done. simpl.
     iApply (wp_perform with "Heff_a"). set_solver.
     iApply protocol_agreement_sum_intro_r.
     rewrite Ψ_write_agreement.
     iExists #(), #1. iFrame. iSplitR; [done|].
-    iIntros "HI".
-    iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-    iApply wp_pure_step. apply pure_prim_step_rec. simpl. iNext.
-    iApply wp_value.
-    iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
+    iIntros "HI". wp_pure_steps.
     iApply (wp_bind (ConsCtx (AppRCtx _) EmptyCtx)). done. simpl.
     iApply (wp_perform with "Heff_b"). set_solver.
     iApply protocol_agreement_sum_intro_r.
     rewrite Ψ_write_agreement.
     iExists #(), #2. iFrame. iSplitR; [done|].
-    iIntros "HJ".
-    iApply (wp_bind (ConsCtx (AppLCtx _) EmptyCtx)). done. simpl.
-    iApply wp_pure_step. apply pure_prim_step_rec. simpl. iNext.
-    iApply wp_value.
-    iApply wp_pure_step. apply pure_prim_step_beta. simpl. iNext.
+    iIntros "HJ". wp_pure_steps.
     iApply (wp_bind (ConsCtx (PairRCtx _) EmptyCtx)). done. simpl.
     iApply (wp_perform with "Heff_b"). set_solver.
     iApply protocol_agreement_sum_intro_l.
@@ -653,8 +621,7 @@ Section examples.
     iApply protocol_agreement_sum_intro_l.
     rewrite Ψ_read_agreement.
     iExists #1. iFrame. iSplitR; [done|iIntros "_"].
-    iApply wp_pure_step. apply pure_prim_step_pair. simpl. iNext.
-    by iApply wp_value.
+    by wp_pure_steps.
   Qed.
 
 End examples.
