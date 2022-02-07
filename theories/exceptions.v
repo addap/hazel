@@ -20,6 +20,12 @@ Context `{!heapG Σ}.
 Definition exn (Ψ : val → iProp Σ) : iEff Σ :=
   (>> u >> ! u {{ Ψ u }}; ? #() {{ False }}).
 
+Lemma exn_agreement v' Ψ Φ : protocol_agreement v' (exn Ψ) Φ ≡
+  (∃ (u : val), ⌜ v' = u ⌝ ∗ Ψ u ∗ (False -∗ Φ #()))%I.
+Proof.
+  rewrite /exn (protocol_agreement_tele' [tele _ ] [tele ]). by auto.
+Qed.
+
 
 (** Reasoning Rules. *)
 
