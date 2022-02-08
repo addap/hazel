@@ -356,7 +356,7 @@ Section monotonicity.
   Qed.
 
   (* Unfortunately, the assertion [EFF E ⊑ EFF E'] does not hold
-     because it is guarded by a persistently modality, thus forbiding
+     because it is guarded by a persistently modality, thus forbidding
      the use of an ephemeral assertion such as [Eff E -∗ Eff E'].
      Therefore, we cannot rely on the monotonicity lemma for [ewp]. *)
   Lemma wp_eff_frame E E' Φ e :
