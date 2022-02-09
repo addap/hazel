@@ -610,6 +610,14 @@ Section lexically_scoped_handlers.
     let: "s" := effect #() in
     handle "s" (λ: <>, "client" "s") "h" "r".
 
+  (* In the previous definition, we pass a fresh effect name directly
+     to the client. Another idea is to hide the effect name in a
+     function that performs the effect, and to pass only this function
+     to the client.  *)
+  Definition lex_handle' : val :=  λ: "client" "h" "r",
+    lex_handle (λ: "s", "client" (λ: "x", perform "s" "x")) "h" "r".
+
+  (* Reasoning rule for [lex_handle]. *)
   Lemma wp_lex_handle E Ψ Φ Φ' (client h r : val) :
     (∀ (s : eff_name) , WP client #s <| (s, Ψ) :: E |> {{ Φ }}) -∗
       is_handler h r E Ψ Φ Φ' -∗
@@ -681,6 +689,31 @@ Section lexically_scoped_handlers.
         by iApply ("IH" with "Hhandler").
       }
     }
+  Qed.
+
+  (* Reasoning rule for [lex_handle']. *)
+  Lemma wp_lex_handle' E Ψ Φ Φ' (client h r : val) :
+
+    (∀ E' (f : val),
+      □ (∀ v Φ',
+           protocol_agreement v Ψ Φ' -∗
+             WP (f v) <| E ++ E' |> {{ Φ' }}) -∗
+
+         WP (client f) <| E ++ E' |> {{ Φ }}) -∗
+
+      is_handler h r E Ψ Φ Φ' -∗
+
+        WP (lex_handle' client h r) <| E |> {{ Φ' }}.
+
+  Proof.
+    iIntros "Hf Hhandler". unfold lex_handle'.
+    wp_pure_steps. iApply (wp_lex_handle with "[Hf] Hhandler").
+    iIntros (s). wp_pure_steps.
+    iApply wp_eff_permute.
+    { symmetry. by apply Permutation_cons_append. }
+    iApply "Hf". clear Φ. iIntros "!>" (v Φ) "HΦ".
+    wp_pure_steps. iApply (wp_perform with "HΦ").
+    by set_solver.
   Qed.
 
 End lexically_scoped_handlers.
