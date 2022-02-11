@@ -1,6 +1,6 @@
 (* cascade.v
 
-   Verification of the program [invert]. An example of control inversion using
+   Verification of the program [invert], an example of control inversion using
    effect handlers.
 *)
 
