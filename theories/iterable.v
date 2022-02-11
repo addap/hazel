@@ -114,7 +114,7 @@ Section iterable.
 End iterable.
 
 
-(** * Higher-Order Structure. *)
+(** * Higher-Order Structures. *)
 
 (* We prove that, if [G] is a data structure, then [G ∘ G] is a data structure.
    Moreover, if [G] is iterable, then so is [G ∘ G]. *)
@@ -204,3 +204,183 @@ Section higher_order.
   End iterable.
 
 End higher_order.
+
+
+(** * Examples. *)
+
+(** References. *)
+
+Section refs.
+  Context `{!heapG Σ}.
+
+  Definition Ref (A : Type) := A.
+
+  Global Program Instance ref_structure : DataStructure (Σ:=Σ) Ref := {
+    is_representable (A : Type) `{!Representable A} := (λ r X,
+      ∃ (ℓ : loc) (x : val), ⌜ r = #ℓ ⌝ ∗ ℓ ↦ x ∗ represents x X)%I
+  }.
+
+  Definition ref_permitted {A} : A → list A → Prop := λ X, (.⊆ [X]).
+  Definition ref_complete  {A} : A → list A → Prop := λ X, (.= [X]).
+
+  Global Program Instance ref_iterable : Iterable (Σ:=Σ) Ref := {
+    permitted := @ref_permitted;
+    complete  := @ref_complete;
+    iter      := (λ: "f" "r", "f" (Load "r"))%V
+  }.
+  Next Obligation.
+    iIntros (????? X ? r) "#Hf [%ℓ [%x (-> & Hℓ & Hx)]] HI".
+    ewp_pure_steps. ewp_bind_rule. simpl.
+    iApply (ewp_load with "Hℓ"). iNext.
+    iIntros "Hℓ". iModIntro.
+    iApply (ewp_mono' with "[HI Hx]").
+    iApply ("Hf" with "[] HI Hx").
+    { by iPureIntro; set_solver. }
+    iIntros (?) "[Hx HI]". iModIntro.
+    iSplitL "Hℓ Hx" ; [by iExists ℓ, x; iFrame|].
+    iExists [X]. by iFrame.
+  Qed.
+
+End refs.
+
+
+(** Persistent lists. *)
+
+From hazel Require Import list_lib.
+
+Section persistent_lists.
+  Context `{!heapG Σ}.
+
+  Definition PersList (A : Type) := list A.
+
+  Global
+  Program Instance pers_list_structure : DataStructure (Σ:=Σ) PersList := {
+    is_representable (A : Type) `{!Representable A} := (λ l Xs, ∃ us,
+      ⌜ l = list_encoding' us ⌝ ∗ [∗ list] u; X ∈ us; Xs, represents u X)%I
+  }.
+
+  Global
+  Program Instance pers_list_pers_structure : PersStructure PersList.
+  Next Obligation. iIntros (?????); by apply _. Qed.
+
+  Definition list_permitted {A} : list A → list A → Prop := flip prefix.
+  Definition list_complete  {A} : list A → list A → Prop := (=).
+
+  Global Program Instance pers_list_iterable : Iterable (Σ:=Σ) PersList := {
+    permitted := @list_permitted;
+    complete  := @list_complete;
+    iter      := list_iter';
+  }.
+  Next Obligation.
+    iIntros (????? Xs ? xs) "#Hf Hxs HI".
+    rewrite /list_iter'. do 3 ewp_value_or_step.
+    (* We generalize the statement over the invariant [I]
+       before applying induction. Later, we specialize the induction
+       principle with the invariant [λ Ys, I (X :: Ys)], where [X] is
+       the head of [Xs] in the inductive case. *)
+    iInduction Xs as [|X Xs] "IH" forall (I xs); ewp_pure_steps.
+    - iDestruct "Hxs" as "[%us [-> Hus]]".
+      destruct us; [|done]. simpl. ewp_pure_steps.
+      by iSplitR; iExists []; [iSplit| iFrame].
+    - iDestruct "Hxs" as "[%us [-> Hus]]".
+      destruct us as [|u us]; [done|]. simpl.
+      ewp_pure_steps. ewp_bind_rule. simpl.
+      iDestruct "Hus" as "[Hu Hus]".
+      iApply (ewp_mono' with "[HI Hu] [Hus]"); [
+      iApply ("Hf" with "[] HI Hu");
+      iPureIntro; by exists Xs|].
+      iIntros (y) "[Hu HI] !>". simpl.
+      do 5 ewp_value_or_step.
+      iApply (ewp_mono' with "[HI Hus]").
+      + iApply ("IH" $!
+          ((* invariant. *) λ Ys, I (X :: Ys))
+          with "[] [Hus] [$]");
+        last (iExists us; by iFrame).
+        iIntros "!>" (Ys Z z) "%Hprefix HI Hz".
+        iApply ("Hf" $! (X :: Ys) Z z with "[] HI Hz").
+        iPureIntro.
+        destruct Hprefix as [Ys' ->].
+        by exists Ys'.
+      + unfold list_complete.
+        iIntros (?) "[[%vs [%Heq Hvs]] [%Ys [HI <-]]] !>".
+        iSplitR "HI"; [|iExists (X :: Xs); by iFrame].
+        iExists (u :: us). iFrame.
+        iSplit; [done|].
+        rewrite (_: us = vs); [done|].
+        revert Heq. revert vs.
+        induction us; destruct vs; try done.
+        simpl. injection 1. intros Hus ->.
+        f_equal. by apply IHus.
+  Qed.
+
+End persistent_lists.
+
+
+(** Linked lists. *)
+
+Section linked_lists.
+  Context `{!heapG Σ}.
+
+  Definition LinkedList (A : Type) := list A.
+
+  Definition llist_iter : val := λ: "f",
+    rec: "iter" "xs" :=
+      match: Load "xs" with InjL <> => #() | InjR "args" =>
+        "f" (Fst "args");; "iter" (Snd "args")
+      end.
+
+  Global
+  Program Instance linked_list_structure : DataStructure (Σ:=Σ) LinkedList := {
+    is_representable (A : Type) `{!Representable A} :=
+      fix is_llist (xs : val) (Xs : list A) {struct Xs} :=
+        match Xs with
+        | []      => ∃ (ℓ : loc), ⌜ xs = #ℓ ⌝ ∗ ℓ ↦ InjLV #()
+        | X :: Xs => ∃ (ℓ : loc), ⌜ xs = #ℓ ⌝ ∗
+                     ∃ (x xs : val),
+                       ℓ ↦ InjRV (PairV x xs) ∗
+                       represents x X         ∗
+                       is_llist xs Xs
+        end%I
+  }.
+
+  Global
+  Program Instance linked_list_iterable : Iterable (Σ:=Σ) LinkedList := {
+    permitted := @list_permitted;
+    complete  := @list_complete;
+    iter      := llist_iter;
+  }.
+  Next Obligation.
+    iIntros (????? Xs ? xs) "#Hf Hxs HI".
+    rewrite /llist_iter. do 3 ewp_value_or_step.
+    iInduction Xs as [|X Xs] "IH" forall (I xs); ewp_pure_steps.
+    - iDestruct "Hxs" as "[%ℓ [-> Hℓ]]".
+      ewp_bind_rule. simpl.
+      iApply (ewp_load with "Hℓ").
+      iIntros "!> Hℓ !>". ewp_pure_steps.
+      iSplitR "HI"; [iExists ℓ|iExists []]; by iFrame.
+    - iDestruct "Hxs" as "[%ℓ [-> [%x [%xs (Hℓ & Hx & Hxs)]]]]".
+      ewp_bind_rule. simpl.
+      iApply (ewp_load with "Hℓ").
+      iIntros "!> Hℓ !>". ewp_pure_steps. ewp_bind_rule. simpl.
+      iApply (ewp_mono' with "[HI Hx] [Hxs Hℓ]"); [
+      iApply ("Hf" with "[] HI Hx");
+      iPureIntro; by exists Xs|].
+      iIntros (y) "[Hx HI] !>". simpl.
+      do 5 ewp_value_or_step.
+      iApply (ewp_mono' with "[HI Hxs]").
+      + iApply ("IH" $!
+          ((* invariant. *) λ Ys, I (X :: Ys))
+          with "[] [Hxs] [$]"); last done.
+        iIntros "!>" (Ys Z z) "%Hprefix HI Hz".
+        iApply ("Hf" $! (X :: Ys) Z z with "[] HI Hz").
+        iPureIntro.
+        destruct Hprefix as [Ys' ->].
+        by exists Ys'.
+      + unfold list_complete.
+        iIntros (?) "[Hxs [%Ys [HI <-]]] !>".
+        iSplitR "HI"; [|iExists (X :: Xs); by iFrame].
+        iExists ℓ. iSplit; [done|].
+        iExists x, xs. by iFrame.
+  Qed.
+
+End linked_lists.
