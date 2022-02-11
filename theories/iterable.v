@@ -150,7 +150,9 @@ Section higher_order.
 
     Definition lift_complete {A} (TT : G (G A)) (Xs : list A) : Prop :=
       ∃ (Ts : list (G A)) (Xss : list (list A)),
-        complete TT Ts ∧ Forall2 complete Ts Xss.
+        Xs = concat Xss         ∧
+        complete TT Ts          ∧
+        Forall2 complete Ts Xss.
 
     Global Program Instance lift_iterable : Iterable (Σ:=Σ) (G ∘ G) := {
       iter      := lift_iter;
