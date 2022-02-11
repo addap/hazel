@@ -64,9 +64,8 @@ Lemma queue_create_spec' E :
   ⊢ EWP queue_create' #() @ E {{ q, ∀ I, is_queue' q I 0%nat }}.
 Proof.
   iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply ewp_mono'. { by iApply ewp_alloc. }
-  iIntros (q) "H". iDestruct "H" as (l) "[-> Hl]".
-  iModIntro. iIntros (I). iExists l, []. by eauto with iFrame.
+  iApply ewp_alloc. iIntros "!>" (q) "Hq".
+  iModIntro. iIntros (I). iExists q, []. by eauto with iFrame.
 Qed.
 
 Lemma queue_push_spec' E q I (n : nat) v :
@@ -83,12 +82,12 @@ Proof.
   iNext. iDestruct "Hq" as (l us) "(-> & Hl & % & Hinv)".
   iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
   iApply (Ectxi_ewp_bind (AppRCtx _)). done.
-  iApply (ewp_mono' with "[Hl]"). { by iApply (ewp_load with "Hl"). }
-  iIntros (w) "[-> Hl]". iModIntro. simpl.
+  iApply (ewp_load with "Hl").
+  iIntros "!> Hl !>". simpl.
   iApply ewp_mono'. { by iApply (list_cons_spec' _ _ _ us). }
   iIntros (w) "->". iModIntro. simpl.
-  iApply (ewp_mono' with "[Hl]"). { by iApply (ewp_store with "Hl"). }
-  iIntros (_) "Hl". iModIntro. iExists l, (v :: us). iFrame.
+  iApply (ewp_store with "Hl").
+  iIntros "!> Hl". iModIntro. iExists l, (v :: us). iFrame.
   iPureIntro. split; [done|]. simpl. by rewrite H.
 Qed.
 
@@ -101,8 +100,8 @@ Proof.
   iNext. iDestruct "Hq" as (l us) "(-> & Hl & % & Hinv)".
   case us as [|u us]; [done|]. iDestruct "Hinv" as "[HI Hinv]".
   iApply (Ectxi_ewp_bind (CaseCtx _ _)). done.
-  iApply (ewp_mono' with "[Hl]"). { by iApply (ewp_load with "Hl"). }
-  iIntros (w) "[-> Hl]". iModIntro. simpl.
+  iApply (ewp_load with "Hl").
+  iIntros "!> Hl !>". simpl.
   iApply ewp_pure_step. apply pure_prim_step_case_InjR.
   iApply (Ectxi_ewp_bind (AppLCtx _)). done.
   iApply ewp_pure_step. apply pure_prim_step_rec.
@@ -112,8 +111,8 @@ Proof.
   iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
   iApply ewp_pure_step. apply pure_prim_step_Snd.
   iApply ewp_value. simpl.
-  iApply (ewp_mono' with "[Hl]"). { by iApply (ewp_store with "Hl"). }
-  iIntros (w) "Hl". iModIntro.
+  iApply (ewp_store with "Hl").
+  iIntros "!> Hl !>".
   iApply (Ectxi_ewp_bind (AppLCtx _)). done.
   iApply ewp_pure_step. apply pure_prim_step_rec. iApply ewp_value.
   iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
@@ -134,8 +133,8 @@ Proof.
   iApply ewp_pure_step'. apply pure_prim_step_beta. simpl.
   iNext. iDestruct "Hq" as (l us) "(-> & Hl & % & Hinv)".
   iApply (Ectxi_ewp_bind (CaseCtx _ _)). done.
-  iApply (ewp_mono' with "[Hl]"). { by iApply (ewp_load with "Hl"). }
-  iIntros (w) "[-> Hl]". iModIntro. simpl.
+  iApply (ewp_load with "Hl").
+  iIntros "!> Hl !>". simpl.
   case us as [|u us].
   - iApply ewp_pure_step. apply pure_prim_step_case_InjL.
     iApply (Ectxi_ewp_bind (AppLCtx _)). done.

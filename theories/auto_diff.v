@@ -1880,11 +1880,9 @@ Section proof_of_handle.
         ⌜ w = InjRV (v, #ℓ)%V ⌝ ∗ ℓ ↦ nzero }}.
   Proof.
     unfold create. ewp_pure_steps. ewp_bind_rule.
-    iApply ewp_mono'; [by iApply ewp_alloc|].
-    iIntros (l) "Hl".
-    iDestruct "Hl" as (ℓ) "[-> Hℓ]". iModIntro.
+    iApply ewp_alloc. iIntros "!>" (l) "Hl !>".
     simpl. ewp_pure_steps.
-    by iExists ℓ; eauto.
+    by iExists l; eauto.
   Qed.
 
   Lemma get_val_spec K u eᵤ :
@@ -1943,8 +1941,8 @@ Section proof_of_handle.
     unfold get_diff. ewp_pure_steps.
     rewrite_strat outermost Hx.
     ewp_pure_steps.
-    iApply (ewp_mono' with "[Hℓ]"); [iApply (ewp_load with "Hℓ")|].
-    iIntros (d') "[-> Hℓ]". iModIntro.
+    iApply (ewp_load with "Hℓ").
+    iIntros "!> Hℓ !>".
     iSplitL "Hℓ".
     { iIntros (v' ℓ' ->).
       inversion Hx. simplify_eq.
@@ -1965,13 +1963,13 @@ Section proof_of_handle.
     unfold update.
     ewp_pure_steps.
     ewp_bind_rule.
-    iApply (ewp_mono' with "[Hℓ]"); [iApply (ewp_load with "Hℓ")|].
-    iIntros (w) "[-> Hℓ]". iModIntro. simpl.
+    iApply (ewp_load with "Hℓ").
+    iIntros "!> Hℓ !>". simpl.
     iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
     iApply ewp_mono'; [iApply (nadd_spec with "Hd Hi")|].
     iIntros (w) "Hw". iModIntro.
-    iApply (ewp_mono' with "[Hℓ]"); [iApply (ewp_store with "Hℓ")|].
-    iIntros (u) "Hℓ". iModIntro. by eauto.
+    iApply (ewp_store with "Hℓ").
+    iIntros "!> Hℓ !>". by eauto.
   Qed.
 
   Lemma update_constant_spec (x w i : val) :

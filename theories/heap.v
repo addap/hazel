@@ -64,9 +64,11 @@ Implicit Types l : loc.
 
 (** Heap *)
 
-Lemma ewp_alloc E Ψ v :
-  ⊢ EWP ref v @ E <| Ψ |> {{ lk, ∃ (l : loc), ⌜ lk = #l ⌝ ∗ l ↦ v }}.
+Lemma ewp_alloc E Ψ Φ v :
+  ▷ (∀ (l : loc), l ↦ v ={E}=∗  Φ #l) -∗
+    EWP ref v @ E <| Ψ |> {{ Φ }}.
 Proof.
+  iIntros "HΦ".
   rewrite ewp_unfold /ewp_pre //=.
   iIntros (σ ????) "Hσ".
   iMod (fupd_mask_subseteq ∅) as "Hclose". by apply empty_subseteq.
@@ -81,17 +83,22 @@ Proof.
     destruct Hstep; destruct K  as [|Ki K]; [| destruct Ki; try naive_solver ].
     + simpl in H, H0. simplify_eq. inversion H1.
       iMod (gen_heap_alloc _ l v with "Hσ") as "($ & Hl & Hm)". { done. }
-      iApply ewp_value. simpl. iExists l. iFrame.
-      iIntros "!> !> !>". iMod "Hclose". iModIntro. by iPureIntro.
+      iApply ewp_value.
+      iIntros "!> !> !>". iMod "Hclose". by iMod ("HΦ" with "Hl").
     + destruct (fill_val' K e1' v) as [-> ->]. naive_solver. by inversion H1.
 Qed.
 
-Lemma ewp_load E Ψ l q v :
-  l ↦{q} v -∗ EWP (Load #l)%E @ E <| Ψ |> {{ v', ⌜ v' = v ⌝ ∗ l ↦{q} v }}.
+Lemma ewp_load E Ψ Φ l q v :
+  ▷ l ↦{q} v -∗
+    ▷ (l ↦{q} v ={E}=∗ Φ v) -∗
+      EWP (Load #l)%E @ E <| Ψ |> {{ Φ }}.
 Proof.
-  iIntros "Hl". rewrite ewp_unfold /ewp_pre //=.
+  iIntros "Hl HΦ".
+  rewrite ewp_unfold /ewp_pre //=.
   iIntros (σ ????) "Hσ".
-  iDestruct (gen_heap_valid (heap σ) l q v with "Hσ Hl") as "%".
+  iAssert (▷ (l ↦{q} v ∗ gen_heap_interp (heap σ) ∗ ⌜ heap σ !! l = Some v ⌝))%I
+    with "[Hl Hσ]" as "(Hl & Hσ & >%)".
+  { iNext. iDestruct (gen_heap_valid (heap σ) l q v with "Hσ Hl") as %H. by iFrame. }
   rename H into heap_valid.
   iMod (fupd_mask_subseteq ∅) as "Hclose". by apply empty_subseteq.
   iModIntro. iSplitR.
@@ -103,32 +110,39 @@ Proof.
     destruct κ; [|done]. simpl in Hstep.
     destruct Hstep; destruct K  as [|Ki K]; [| destruct Ki; try naive_solver ].
     + simpl in H, H0. simplify_eq. inversion H1. simplify_eq. iFrame.
-      iApply ewp_value. simpl. iFrame.
-      iIntros "!> !> !>". iMod "Hclose". iModIntro. by iPureIntro.
+      iApply ewp_value. simpl.
+      iIntros "!> !> !>". iMod "Hclose". by iMod ("HΦ" with "Hl").
     + destruct (fill_val' K e1' #l) as [-> ->]. naive_solver. by inversion H1.
 Qed.
 
-Lemma ewp_store E Ψ l (v' v : val) :
-  l ↦ v' -∗ EWP #l <- v @ E <| Ψ |> {{ _, l ↦ v }}.
+Lemma ewp_store E Ψ Φ l v w :
+  ▷ l ↦ v -∗
+    ▷ (l ↦ w ={E}=∗ Φ #()) -∗
+      EWP (#l <- w)%E @ E <| Ψ |> {{ Φ }}.
 Proof.
-  iIntros "Hl". rewrite ewp_unfold /ewp_pre //=.
+  iIntros "Hl HΦ".
+  rewrite ewp_unfold /ewp_pre //=.
   iIntros (σ ????) "Hσ".
-  iDestruct (gen_heap_valid with "Hσ Hl") as "%".
-  rename H into heap_valid.
-  iMod (gen_heap_update _ _ _ v with "Hσ Hl") as "[Hσ Hl]".
-  iMod (fupd_mask_subseteq ∅) as "Hclose". by apply empty_subseteq.
-  iModIntro. iSplitR.
+  iAssert (▷ (l ↦ v ∗ gen_heap_interp (heap σ) ∗ ⌜ heap σ !! l = Some v ⌝))%I
+    with "[Hl Hσ]" as "(Hl & Hσ & >%Hvalid)".
+  { iNext. iDestruct (gen_heap_valid (heap σ) l _ v with "Hσ Hl") as %H. by iFrame. }
+  iApply fupd_mask_intro. by apply empty_subseteq. iIntros "Hclose".
+  iSplitR.
   - iPureIntro. rewrite /reducible //=.
-    exists [], (#()), (state_upd_heap <[ l := v ]> σ), []. simpl.
-    apply (Ectx_prim_step _ _ _ _ EmptyCtx (#l <- v) #()); try done.
+    exists [], (#()), (state_upd_heap <[ l := w ]> σ), []. simpl.
+    apply (Ectx_prim_step _ _ _ _ EmptyCtx (#l <- w) #()); try done.
     apply StoreS. by eauto.
-  - iIntros (e₂ σ₂ Hstep).
+  - iIntros (e₂ σ₂ Hstep) "!>!>".
+    iMod (gen_heap_update  _ _ _ w with "Hσ Hl") as "[Hσ Hl]".
     destruct κ; [|done]. simpl in Hstep.
     destruct Hstep; destruct K  as [|Ki K]; [| destruct Ki; try naive_solver ].
     + simpl in H, H0. simplify_eq. inversion H1. simplify_eq. iFrame.
-      iApply ewp_value. simpl. by iFrame.
+      iMod "Hclose". iMod ("HΦ" with "Hl").
+      iApply fupd_mask_intro. by apply empty_subseteq. iIntros "Hclose'".
+      iMod "Hclose'". iModIntro.
+      by iApply ewp_value.
     + destruct (fill_val' K e1' #l) as [-> ->]. naive_solver. by inversion H1.
-    + destruct (fill_val' K e1' v)  as [-> ->]. naive_solver. by inversion H1.
+    + destruct (fill_val' K e1' w)  as [-> ->]. naive_solver. by inversion H1.
 Qed.
 
 End lifting.

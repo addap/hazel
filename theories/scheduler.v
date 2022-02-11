@@ -334,8 +334,8 @@ Section promise_inv.
     iApply (Ectxi_ewp_bind AllocCtx). done.
     iApply ewp_pure_step. apply pure_prim_step_InjR.
     iApply ewp_value. simpl.
-    iApply ewp_mono'. { by iApply (ewp_alloc _ _ (InjRV l)). }
-    iIntros (v) "Hp". iDestruct "Hp" as (p) "[-> Hp]".
+    iApply (ewp_alloc _ _ _ (InjRV l)).
+    iIntros "!>" (p) "Hp".
     iMod (own_alloc (●E true ⋅ ◯E true)) as (γ) "[Hauth Hfrag]".
     - by apply excl_auth_valid.
     - iModIntro. iExists p, γ. iFrame. iSplit; first auto.
@@ -561,8 +561,7 @@ Proof.
     iPoseProof (promise_unfold_equiv with "Heq'") as "#Heq". iClear "Heq'".
     iNext. iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
     iApply (Ectxi_ewp_bind (CaseCtx _ _)). done.
-    iApply (ewp_mono' with "[Hp]"). { by iApply (ewp_load with "Hp"). }
-    iIntros (w) "[-> Hp]".
+    iApply (ewp_load with "Hp"). iIntros "!> Hp !>".
     iApply ewp_pure_step. apply pure_prim_step_case_InjR.
     iApply (Ectxi_ewp_bind (AppLCtx _)). done.
     iApply ewp_pure_step. apply pure_prim_step_rec.
@@ -596,7 +595,7 @@ Proof.
       - iNext. iFrame. iApply (big_sepL_mono with "Hks"). simpl.
         iIntros (n f) "% Hready". by rewrite ready_unfold.
     }
-    iModIntro. iIntros (w) "(_ & Hq & _)".
+    iIntros (w) "(_ & Hq & _)".
     iApply (Ectxi_ewp_bind (AppLCtx _)). done.
     iApply ewp_pure_step. apply pure_prim_step_rec.
     iApply ewp_value. simpl.
@@ -605,8 +604,7 @@ Proof.
     iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
     iApply ewp_pure_step. apply pure_prim_step_InjL.
     iApply ewp_value. simpl.
-    iApply (ewp_mono' with "[Hp]"). { by iApply (ewp_store with "Hp"). }
-    iModIntro. iIntros (u) "Hp".
+    iApply (ewp_store with "Hp"). iIntros "!> !> Hp".
     iMod (running_upd _ _ _ false with "Hrunning' Hrunning") as "[Hrunning' Hrunning]".
     iAssert (points_to q p γ Ψ) with "[Hp Hrunning']" as "Hpoints_to".
     { iExists false. iFrame. iExists v. iFrame. by iRewrite ("Heq" $! v). }
@@ -689,8 +687,8 @@ Proof.
       iNext. case b.
       { iDestruct "Hp'" as (l ks) "(Hp' & Hl & Hks)".
         iApply (Ectxi_ewp_bind (CaseCtx _ _)). done.
-        iApply (ewp_mono' with "[Hp']"). { by iApply (ewp_load with "Hp'"). }
-        iIntros (w) "[-> Hp']". iModIntro. simpl.
+        iApply (ewp_load with "Hp'").
+        iIntros "!> Hp' !>". simpl.
         iApply ewp_pure_step. apply pure_prim_step_case_InjR.
         iApply (Ectxi_ewp_bind (AppLCtx _)). done.
         iApply ewp_pure_step. apply pure_prim_step_rec. simpl.
@@ -704,8 +702,8 @@ Proof.
         iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
         iApply ewp_pure_step. apply pure_prim_step_InjR.
         iApply ewp_value. simpl.
-        iApply (ewp_mono' with "[Hp']"). { by iApply (ewp_store with "Hp'"). }
-        iIntros (w) "Hp'".
+        iApply (ewp_store with "Hp'").
+        iIntros "!> Hp'".
         iApply (Ectxi_ewp_bind (AppLCtx _)). done.
         iApply ewp_pure_step. apply pure_prim_step_rec. simpl.
         iApply ewp_value.
@@ -728,8 +726,7 @@ Proof.
       { iDestruct "Hp'" as (v) "[Hp' #Hv]".
         iRewrite ("Heq" $! v) in "Hv". iSpecialize("Hk" $! v with "Hv").
         iApply (Ectxi_ewp_bind (CaseCtx _ _)). done.
-        iApply (ewp_mono' with "[Hp']"). { by iApply (ewp_load with "Hp'"). }
-        iIntros (w) "[-> Hp']". simpl.
+        iApply (ewp_load with "Hp'"). iIntros "!> Hp'". simpl.
         iModIntro. iApply ewp_pure_step. apply pure_prim_step_case_InjL.
         iApply (Ectxi_ewp_bind (AppLCtx _)). done.
         iApply ewp_pure_step. apply pure_prim_step_rec.

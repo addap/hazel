@@ -197,8 +197,8 @@ Lemma fresh_label_spec E Ψ S :
       ⌜ l ∉ S ⌝ ∗ known_labels ({[l]} ∪ S) }}.
 Proof.
   iIntros "HS". iApply ewp_pure_step. apply pure_prim_step_beta. simpl.
-  iApply ewp_mono'; [by iApply ewp_alloc|].
-  iIntros (v) "H". iDestruct "H" as (l) "[-> Hl]".
+  iApply ewp_alloc.
+  iIntros "!>" (l) "Hl".
 
   iAssert (⌜l ∉ S⌝ ∗ known_labels S ∗ l ↦ #())%I
     with "[HS Hl]" as "(% & HS & Hl)".

@@ -396,8 +396,8 @@ Section reasoning_rules.
   Proof.
     iIntros "Hseen HPost HΔ".
     unfold effect. ewp_pure_steps.
-    iApply ewp_mono'; [by iApply ewp_alloc|].
-    iIntros (v). iDestruct 1 as (ℓ) "[-> Hℓ]".
+    iApply ewp_alloc.
+    iIntros "!>" (ℓ) "Hℓ".
     iMod (protocol_map_update' _ Ψ with "Hℓ Hseen HΔ")
       as "(HΔ & Heff & % & Hseen)".
     iFrame. iModIntro. by iApply ("HPost" with "Heff [//] Hseen").
