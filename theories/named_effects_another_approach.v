@@ -476,8 +476,8 @@ Section effects.
   Proof.
     iIntros "HPost HEff".
     unfold effect. ewp_pure_steps.
-    iApply ewp_mono'; [by iApply ewp_alloc|].
-    iIntros (v). iDestruct 1 as (s) "[-> Hs]".
+    iApply ewp_alloc.
+    iIntros "!>" (l) "Hl".
     iModIntro. iFrame. by iApply "HPost".
   Qed.
 
@@ -598,9 +598,6 @@ End handler.
 
 (** * Examples. *)
 
-From hazel Require Import cascade exceptions.
-
-
 Section lexically_scoped_handlers.
   Context `{!heapG Σ}.
 
@@ -719,13 +716,17 @@ Section lexically_scoped_handlers.
 End lexically_scoped_handlers.
 
 
+From hazel Require Import exceptions iterable.
+
 Section find.
-  Context `{!heapG Σ} {HIterLib: IterLib Σ}.
+  Context `{!heapG Σ}.
+  Context G `{Iterable (Σ:=Σ) G}.
+
   Variable Not_found : eff_name.
 
   (* Implementation of [find] using both lexically-scoped
      and top-level effects. *)
-  Definition find : val := λ: "p",
+  Definition find : val := λ: "p" "t",
 
     lex_handle
       ((* client. *) λ: "Found",
@@ -733,7 +734,8 @@ Section find.
            if: "p" "x" then
              perform "Found" "x"
            else
-             #()))
+             #())
+         "t")
 
       ((* effect branch. *)
         λ: "x" <>, "x")%V
@@ -744,10 +746,10 @@ Section find.
 
   (* Implementation of [exists'] by running [find] under
      a handler for the top-level effect [Not_found]. *)
-  Definition exists' : val := λ: "p",
+  Definition exists' : val := λ: "p" "t",
 
     handle #Not_found
-      ((* client. *) λ: <>, find "p")
+      ((* client. *) λ: <>, find "p" "t")
 
       ((* effect branch. *) λ: <> <>,
          #false)%V
@@ -758,90 +760,113 @@ Section find.
 
   (* Specification of [iter] written in terms of [WP] to
      account for the presence of multiple named effects. *)
-  Lemma iter_spec' (I : list val → iProp Σ) (E : eff_list) (f : val) :
+  Lemma wp_iter_spec (A : Type) `{Representable Σ A}
+                     (I : list A → iProp Σ)
+                     (E : eff_list)
+                     (T : G A)
+                     (f : val)
+                     (t : val) :
 
-    □ (∀ us u, permitted (us ++ [u]) -∗
-       S' -∗
-         I us -∗
-           WP f u <| E |> {{ _, S' ∗ I (us ++ [u]) }}) -∗
+      □ (∀ (Xs : list A) (X : A) (x : val),
+           ⌜ permitted T (Xs ++ [X]) ⌝ -∗
+             I Xs -∗
+               represents x X -∗
+                 WP f x <| E |> {{ _,
+                   represents x X ∗ I (Xs ++ [X]) }})
 
-      S -∗
+    -∗
+
+      represents t T -∗
         I [] -∗
-          WP iter f <| E |> {{ _, ∃ xs, S ∗ I xs ∗ complete xs }}.
+          WP iter f t <| E |> {{ _,
+            represents t T ∗ ∃ xs, I xs ∗ ⌜ complete T xs ⌝ }}.
 
   Proof.
-    iIntros "#Hf HS HI HE".
+    iIntros "#Hf Ht HI HE".
     iPoseProof
       (iter_spec
-         ((* mask. *) ⊥)
+         ((* mask. *) ⊤)
+         ((* type of the elements. *) A)
          ((* loop invariant. *) λ xs, Eff (E.*1) ∗ I xs)%I
-         ((* protocol. *) _)
+         ((* protocol. *) EFF E)
+         ((* data structure. *) T)
          ((* iteratee. *) f)
-       with "[] [$] [$]") as "Hiter".
-    { iIntros "!>" (us u) "Hpermitted HS' [HE HI]".
+         ((* value representation. *) t)
+       with "[] Ht [$]") as "Hiter".
+    { iIntros "!>" (Xs X x) "Hpermitted [HE HI] Hx".
       iSpecialize ("Hf" with "Hpermitted [$] [$] HE").
-      iApply ewp_mono; [|by iApply "Hf"].
+      iApply (ewp_mono _ (EFF E) with "Hf").
       by iIntros (y) "[$ [$ $]]".
     }
     { iApply ewp_mono; [|by iApply "Hiter"].
-      iIntros (y) "[%xs (? & [$ ?] & ?)]".
+      iIntros (y) "[$ [%xs [[$ ?] ?]]]".
       by iExists xs; iFrame.
     }
   Qed.
 
 
   (* Specification of [find]. *)
-  Lemma find_spec (p : val) (P : val → bool) (E : eff_list) :
+  Lemma find_spec (A : Type) `{Representable Σ A}
+                  (p : val)
+                  (P : A → bool)
+                  (E : eff_list) :
 
-      □ (∀ (x : val),
-           S' -∗
+      □ (∀ (X : A) (x : val),
+           represents x X -∗
              WP (p x) <| (Not_found, ⊥) :: E |>
-                      {{ b, ⌜ b = #(P x) ⌝ ∗ S' }}) -∗
-  
-        S -∗
-          WP (find p) (* Effects. *)
-                      <| (Not_found, exn (λ _, S        ∗
-                            ∃ xs, complete   xs         ∗
-                                  ⌜ Forall (not ∘ P) xs ⌝))
-                          :: E
-                      |>
+                      {{ b, represents x X ∗ ⌜ b = #(P X) ⌝ }})
 
-                      (* Normal termination. *)
-                      {{ x, S' ∗ ⌜ is_true (P x) ⌝      ∗
-                            ∃ xs, permitted (xs ++ [x]) ∗
-                                  ⌜ Forall (not ∘ P) xs ⌝
-                      }}.
+    -∗
+
+      (∀ (T : G A) (t : val),
+        represents t T -∗
+          WP (find p t)  (* Effects. *)
+                         <| (Not_found, exn (λ _,
+                               represents t T          ∗
+                               ∃ Xs, ⌜ complete T Xs ⌝ ∗
+                               ⌜ Forall (not ∘ P) Xs ⌝ ))
+                             :: E
+                         |>
+
+                         (* Normal termination. *)
+                         {{ x, ∃ Xs X, represents x X      ∗
+                               ⌜ is_true (P X) ⌝           ∗
+                               ⌜ permitted T (Xs ++ [X]) ⌝ ∗
+                               ⌜ Forall (not ∘ P) Xs ⌝
+                         }}).
 
   Proof.
-    iIntros "#Hp HS". unfold find.
+    iIntros "#Hp" (T t) "Ht". unfold find.
     wp_pure_steps.
     iApply (wp_lex_handle
       ((* effect list. *) _ :: E)
-      ((* protocol. *) exn (λ x, S' ∗ ⌜ is_true (P x) ⌝      ∗
-                                 ∃ xs, permitted (xs ++ [x]) ∗
-                                       ⌜ Forall (not ∘ P) xs ⌝)%I)
-      with "[HS]");
+      ((* protocol. *) exn (λ x, ∃ Xs X, represents x X      ∗
+                                 ⌜ is_true (P X) ⌝           ∗
+                                 ⌜ permitted T (Xs ++ [X]) ⌝ ∗
+                                 ⌜ Forall (not ∘ P) Xs ⌝)%I)
+      with "[Ht]");
     last (rewrite is_handler_unfold; iSplit).
 
     (* client. *)
     { iIntros (Found). wp_pure_steps.
-      iApply (iter_spec'
-        ((* loop invariant. *) λ xs, ⌜ Forall (not ∘ P) xs ⌝)%I
-        with "[] HS [//]").
-      iIntros "!>" (us u) "Hpermitted HS' %Hus".
+      iApply (wp_iter_spec
+         ((* type of the elements. *) A)
+         ((* loop invariant. *) λ xs, ⌜ Forall (not ∘ P) xs ⌝)%I
+        with "[] Ht [//]").
+      iIntros "!>" (Xs X x) "Hpermitted %HXs Hx".
       wp_pure_steps. wp_bind_rule.
       iApply (wp_eff_app_l _ [(Found, _)]).
       iApply wp_dismiss.
-      iSpecialize ("Hp" $! u with "HS'").
+      iSpecialize ("Hp" $! X with "Hx").
       iApply (wp_mono with "[Hpermitted] Hp").
-      iIntros (b) "[-> HS'] !>".
-      destruct (P u) as [|] eqn:?; simpl; wp_pure_steps.
+      iIntros (b) "[Hx ->] !>". simpl.
+      destruct (P X) as [|] eqn:?; simpl; wp_pure_steps.
       - iApply wp_perform; [apply elem_of_cons; by left|].
         rewrite exn_agreement.
-        iExists u. rewrite Heqb. iFrame.
-        iSplit; [done|]. iSplitL; [|by iIntros "HFalse"].
-        iSplit; [done|].
-        iExists us. by iFrame.
+        iExists x.
+        iSplit; [done|]; iSplitL; [|by iIntros "HFalse"].
+        iExists Xs, X. rewrite Heqb.
+        by iFrame.
       - iFrame.
         iPureIntro.
         decompose_Forall; try done.
@@ -850,7 +875,7 @@ Section find.
     }
 
     (* return branch. *)
-    { iIntros (?) "[%us (HS & %Hus & Hus)]".
+    { iIntros (?) "[Ht [%us [%HXs Hcomplete]]]".
       wp_pure_steps.
       iApply wp_perform; [apply elem_of_cons; by left|].
       rewrite exn_agreement.
@@ -867,39 +892,47 @@ Section find.
     }
   Qed.
 
+  Lemma exists_spec (A : Type) `{Representable Σ A}
+                    (p : val)
+                    (P : A → bool)
+                    (E : eff_list) :
 
-  Lemma exists_spec (p : val) (P : val → bool) (E : eff_list) :
-
-      □ (∀ (x : val),
-           S' -∗
+      □ (∀ (X : A) (x : val),
+           represents x X -∗
              WP (p x) <| (Not_found, ⊥) :: E |>
-                      {{ b, ⌜ b = #(P x) ⌝ ∗ S' }}) -∗
+                      {{ b, represents x X ∗ ⌜ b = #(P X) ⌝ }})
 
-        S -∗
-          WP (exists' p) (* Effects. *)
-                         <| (Not_found, ⊥) :: E |>
+    -∗
 
-                         (* Normal termination. *)
-                         {{ b, match b with
-                               | #true  => S' ∗ ∃ x xs,
-                                   ⌜ is_true (P x) ⌝     ∗
-                                   permitted (xs ++ [x]) ∗
-                                   ⌜ Forall (not ∘ P) xs ⌝
-                               | #false => S ∗ ∃ xs,
-                                   complete   xs         ∗
-                                   ⌜ Forall (not ∘ P) xs ⌝
-                               | _ => False%I
-                               end
-                         }}.
+        (∀ (T : G A) (t : val),
+          represents t T -∗
+            WP (exists' p t)
+                 (* Effects. *)
+                 <| (Not_found, ⊥) :: E |>
+
+                 (* Normal termination. *)
+                 {{ b, match b with
+                       | #true  => ∃ Xs X x,
+                           represents x X              ∗
+                           ⌜ is_true (P X) ⌝           ∗
+                           ⌜ permitted T (Xs ++ [X]) ⌝ ∗
+                           ⌜ Forall (not ∘ P) Xs ⌝
+                       | #false =>
+                           represents t T          ∗
+                           ∃ Xs, ⌜ complete T Xs ⌝ ∗
+                           ⌜ Forall (not ∘ P) Xs ⌝
+                       | _ => False
+                       end%I
+                 }}).
 
   Proof.
-    iIntros "#Hp HS". unfold exists'.
+    iIntros "#Hp" (T t) "Ht". unfold exists'.
     wp_pure_steps.
-    iApply (wp_handle with "[HS]");
+    iApply (wp_handle with "[Ht]");
     last (rewrite is_handler_unfold; iSplit).
-    { wp_pure_steps. by iApply (find_spec with "Hp HS"). }
-    { iIntros (x) "(HS & %Hx & [%xs [Hpermitted HForall]])".
-      wp_pure_steps. iFrame. iExists x, xs. by iFrame.
+    { wp_pure_steps. by iApply (find_spec with "Hp Ht"). }
+    { iIntros (x) "[%Xs [%X (Hx & %HPX & Hpermitted & %HXs)]]".
+      wp_pure_steps. iExists Xs, X, x. by iFrame.
     }
     { iIntros (v k). rewrite exn_agreement.
       iIntros "[%u [<- [[HS Hxs] _]]] !>".
@@ -908,3 +941,96 @@ Section find.
   Qed.
 
 End find.
+
+
+Section exists_exists.
+  Context `{!heapG Σ}.
+
+  Variable Not_found : eff_name.
+
+  Notation list_exists := (exists' PersList Not_found).
+
+  Definition list_exists_exists : val := λ: "p" "xss",
+    list_exists (λ: "xs", list_exists "p" "xs")%E "xss".
+
+  Lemma list_exists_spec (A : Type) `{PersRepresentable Σ A}
+                         (p : val)
+                         (P : A → bool)
+                         (E : eff_list) :
+
+      □ (∀ (X : A) (x : val),
+           represents x X -∗
+             WP (p x) <| (Not_found, ⊥) :: E |>
+                      {{ b, ⌜ b = #(P X) ⌝ }})
+
+    -∗
+
+        (∀ (Xs : list A) (xs : val),
+          represents xs Xs -∗
+            WP (list_exists p xs)
+                 (* Effects. *)
+                 <| (Not_found, ⊥) :: E |>
+
+                 (* Normal termination. *)
+                 {{ b, ⌜ b = #(existsb P Xs) ⌝ }})%I.
+
+  Proof.
+    iIntros "#Hp" (Xs xs) "#Hxs".
+    iApply wp_mono; [|iApply (exists_spec with "[] Hxs")].
+    { iIntros (b).
+      repeat (
+        match goal with
+        | [ |- context[match (?E : val) with _ => _ end] ] =>
+            destruct E; simpl; try by iIntros "?"
+        end).
+      - iIntros "[%Us [%U [%x (Hx & % & %Hprefix & HUs)]]]".
+        rewrite (_: existsb P Xs = true). done.
+        rewrite existsb_exists. exists U.
+        split; [|done]. destruct Hprefix as [Vs ->].
+        apply in_or_app. left.
+        apply in_or_app. right.
+        by left.
+      - iIntros "[_ [%Us [<- %HXs]]]".
+        case_eq (existsb P Xs); [|done].
+        rewrite existsb_exists. intros [X [HIn HP]].
+        revert HXs. rewrite List.Forall_forall. intro HXs.
+        generalize (HXs _ HIn). simpl. rewrite HP. simpl.
+        contradiction.
+    }
+    { iIntros "!>" (X x) "#Hx".
+      iApply wp_mono; [|iApply ("Hp" with "Hx")]. simpl.
+      iIntros (b) "<-". iModIntro. by iSplit.
+    }
+  Qed.
+
+  Lemma list_exists_exists_spec
+          (A : Type) `{PersRepresentable Σ A}
+          (p : val)
+          (P : A → bool)
+          (E : eff_list) :
+
+      □ (∀ (X : A) (x : val),
+           represents x X -∗
+             WP (p x) <| (Not_found, ⊥) :: E |>
+                      {{ b, ⌜ b = #(P X) ⌝ }})
+
+    -∗
+
+        (∀ (Xss : list (list A)) (xss : val),
+          represents xss Xss -∗
+            WP (list_exists_exists p xss)
+                 (* Effects. *)
+                 <| (Not_found, ⊥) :: E |>
+
+                 (* Normal termination. *)
+                 {{ b, ⌜ b = #(existsb (existsb P) Xss) ⌝ }})%I.
+
+  Proof.
+    iIntros "#Hp" (Xss xss) "#Hxss".
+    unfold list_exists_exists. wp_pure_steps.
+    iApply (list_exists_spec with "[] Hxss").
+    iIntros "!>" (Xs xs) "#Hxs". wp_pure_steps.
+    by iApply (list_exists_spec with "[] Hxs").
+  Qed.
+
+End exists_exists.
