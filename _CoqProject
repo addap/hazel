@@ -19,7 +19,10 @@ theories/shallow_handler.v
 theories/deep_handler.v
 theories/selective_handler.v
 
+theories/iterable.v
+
 theories/named_effects.v
+theories/named_effects_another_approach.v
 
 theories/list_lib.v
 theories/queue_lib.v
