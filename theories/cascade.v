@@ -139,7 +139,7 @@ Section specification.
 
     (* Specification of sequences. *)
 
-    (* A sequence is a thunk [k] that when applied to [#(0]
+    (* A sequence is a thunk [k] that, when applied to [#()],
        produces a head [h] s.t. [isHead h us]. *)
     Definition isSeq_pre
       (isSeq :  val -d> list val -d> iPropO Σ)
