@@ -37,7 +37,7 @@ let diff (e : exp) : exp = { eval =
     let ( + ), ( * ) = add, mul in
     let open struct
 
-      type t = O | I | Var of {v : v ; mutable d : v} (* zero | one | var *)
+      type t = O | I | Var of {v : v ; mutable d : v}
 
       let mk n       = Var {v = n; d = zero}
       let get_v u    = match u with O -> zero | I -> one  | Var u     -> u.v
@@ -45,12 +45,15 @@ let diff (e : exp) : exp = { eval =
       let update u i = match u with O | I -> ()    | Var u -> u.d <- u.d + i
 
       type op = Add | Mul
-      let s : (t * (t * op * t)) Stack.t = create()
+      type letbinding = Let of t * (t * op * t)
+      type context = letbinding Stack.t
+
+      let _K : context = create()
 
       let add a b =
-        let u = mk (get_v a + get_v b) in push (u, (a, Add, b)) s; u
+        let u = mk (get_v a + get_v b) in push (Let (u, (a, Add, b))) _K; u
       let mul a b =
-        let u = mk (get_v a * get_v b) in push (u, (a, Mul, b)) s; u
+        let u = mk (get_v a * get_v b) in push (Let (u, (a, Mul, b))) _K; u
       let num = {zero = O; one = I; add; mul}
 
       let x = mk n
@@ -59,12 +62,12 @@ let diff (e : exp) : exp = { eval =
 
       let () =
         update y one;
-        while not (is_empty s) do
-          begin match pop s with
-          | u, (a, Add, b) ->
+        while not (is_empty _K) do
+          begin match pop _K with
+          | Let (u, (a, Add, b)) ->
              update a (get_d u);
              update b (get_d u) 
-          | u, (a, Mul, b) ->
+          | Let (u, (a, Mul, b)) ->
              update a (get_d u * get_v b);
              update b (get_d u * get_v a) 
           end
@@ -78,8 +81,8 @@ let diff (e : exp) : exp = { eval =
 (* -------------------------------------------------------------------------- *)
 (** Examples. *)
 
-let int   = { zero = 0; one = 1; add = ( + ); mul = ( * ) }
-let float = { zero = 0.0; one = 1.0; add = ( +. ); mul = ( *. ) }
+let int   = { zero = 0;  one = 1;  add = ( + );  mul = ( * )  }
+let float = { zero = 0.; one = 1.; add = ( +. ); mul = ( *. ) }
 
 (* [f] represents the expression [x ↦ (x+1)^3]. *)
 let f = { eval = fun (type v) ({ zero; one; add; mul } : v num) x ->
@@ -88,7 +91,7 @@ let f = { eval = fun (type v) ({ zero; one; add; mul } : v num) x ->
   cube (one + x)
 }
 
-(* [df] should [x ↦ 3(x+1)^2]. *)
+(* [df] should be [x ↦ 3(x+1)^2]. *)
 let df = diff f
 
 (* [ddf] should be [x ↦ 6(x+1)]. *)
