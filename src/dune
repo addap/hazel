@@ -7,6 +7,10 @@
   (modules ad))
 
 (executables
+  (names stack_ad)
+  (modules stack_ad))
+
+(executables
   (names multivar_ad)
   (modules dim vector multivar_ad))
 
