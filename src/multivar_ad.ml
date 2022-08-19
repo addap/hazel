@@ -73,14 +73,11 @@ let diff (type d) (e : (d, Dim.one) exp) : (d, d) exp = {eval =
       effect Add : t * t -> t
       effect Mul : t * t -> t
       (* Define the ring operations. *)
-      let num =
-        let add a b = perform (Add (a, b)) in
-        let mul a b = perform (Mul (a, b)) in
-      {
+      let num = {
         zero = O;
         one  = I;
-        add  = add;
-        mul  = mul
+        add  = (fun a b -> perform (Add (a, b)));
+        mul  = (fun a b -> perform (Mul (a, b)))
       }
 
     (* Internal Functions. *)
