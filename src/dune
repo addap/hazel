@@ -1,0 +1,27 @@
+(env
+ (dev
+  (flags (:standard -w -50 -w -32 -w -27))))
+
+(executables
+  (names ad)
+  (modules ad))
+
+(executables
+  (names multivar_ad)
+  (modules dim vector multivar_ad))
+
+(executables
+  (names promises)
+  (modules promises))
+
+(executables
+  (names invert)
+  (modules invert))
+
+(executables
+  (names ref)
+  (modules ref))
+
+(executables
+  (names test)
+  (modules test))
