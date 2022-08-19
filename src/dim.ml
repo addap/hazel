@@ -1,3 +1,7 @@
+(* dim.ml *)
+
+(* This file provides a type-level syntax for writing
+   types that denote integers. *)
 
 type    zero = unit
 type 'd succ = unit * 'd

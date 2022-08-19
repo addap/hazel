@@ -1,4 +1,3 @@
-
 open Dim
 
 type ('a, _) t =
