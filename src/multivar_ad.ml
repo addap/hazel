@@ -195,6 +195,10 @@ let mul : (Dim.two, Dim.one) exp =
       curry_two (fun x y -> ret_one (mul x y))
   }
 
+(* [const n] represents the expression [_ ↦ n]. *)
+let const n : (Dim.one, Dim.one) exp =
+  compose (diff (pow n)) one
+
 (* --------------------------------------------------------------------------- *)
 (** Examples. *)
 
@@ -215,6 +219,33 @@ let float : float num = {
   add  = ( +. );
   mul  = ( *. )
 }
+
+
+(* Differentiating the function [pow]. *)
+
+(* [dpow n] and [dpow' n] should both represent
+   the expression [x ↦ n*x^(n-1)]. *)
+let dpow n : (Dim.one, Dim.one) exp =
+  diff (pow n)
+let dpow'  n : (Dim.one, Dim.one) exp =
+  compose mul (bin_prod (const n) (pow (n - 1)))
+
+(* Tests. *)
+let () =
+  (* Check the result of [pow] at simple values. *)
+  assert ((pow 11).eval int    (ret_one 2)  = ret_one 2048);
+  assert ((pow 11).eval float  (ret_one 2.) = ret_one 2048.);
+
+  (* Check the result of [dpow] at simple values. *)
+  assert ((dpow 11).eval int    (ret_one 2)  = ret_one 11264);
+  assert ((dpow 11).eval float  (ret_one 2.) = ret_one 11264.);
+
+  (* Check that [dpow] and [dpow'] behave similarly. *)
+  let n = 5 in
+  for x=0 to 10 do
+    assert ((dpow  n).eval int (ret_one x) =
+            (dpow' n).eval int (ret_one x))
+  done
 
 
 (* Differentiating the polynomial [(x+1)^3] . *)
