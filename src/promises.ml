@@ -8,57 +8,67 @@ type 'a promise =
   'a status ref
 
 effect Async : (unit -> 'a) -> 'a promise
-
-let async e =
-  perform (Async e)
-
 effect Await : 'a promise -> 'a
 
-let await p =
-  perform (Await p)
+let async e = perform (Async e)
+let await p = perform (Await p)
+let yield() = ignore (async(fun _ -> ()))
 
 let run (main : unit -> unit) : unit =
-  let q : (unit -> unit) Queue.t =
-    Queue.create()
-  in
+  let q : (unit -> unit) Queue.t = Queue.create() in
   let next() =
-    if not (Queue.is_empty q) then Queue.take q ()
+    if not (Queue.is_empty q) then (Queue.take q) () else ()
   in
-  let rec fulfill : 'a. 'a promise -> (unit -> 'a) -> unit = fun p e ->
+  let rec fulfill : type a. a promise -> (unit -> a) -> unit = fun p e ->
     match e() with
-    | v ->
-        let Waiting ks = !p in
-        List.iter (fun k -> Queue.add (fun () -> continue k v) q) ks;
-        p := Done v;
-        next()
-    | effect (Async e') k ->
-        let p' = ref (Waiting []) in
-        Queue.add (fun () -> continue k p') q;
-        fulfill p' e'
-    | effect (Await p') k ->
-        match !p' with
-        | Done v -> continue k v
-        | Waiting ks -> p' := Waiting (k :: ks); next()
+    | effect (Async e) k ->
+        let p = ref (Waiting []) in
+        Queue.add (fun () -> continue k p) q;
+        fulfill p e
+    | effect (Await p) k ->
+        begin match !p with
+        | Done y ->
+            continue k y
+        | Waiting ks ->
+            p := Waiting (k :: ks);
+            next()
+        end
+    | y ->
+        match !p with
+        | Waiting ks ->
+            List.iter (fun k -> Queue.add (fun () -> continue k y) q) ks;
+            p := Done y;
+            next()
+        | Done _ ->
+            assert false
   in
   fulfill (ref (Waiting [])) main
 
+
 let main () =
   let r = ref None in
-  let p = async (fun () ->
-    let rec loop () =
+  let f() =
+    let rec loop() =
       match !r with
-      | None   -> let _ = async (fun () -> ()) in loop ()
-      | Some p -> await p
+      | None   ->
+          yield(); loop()
+      | Some p ->
+          Printf.printf "This line shall be printed...\n";
+          await p;
+          Printf.printf "...but this line shall never know the world!\n"
     in
-    loop ())
+    loop ()
   in
-  r := Some p;
-  await p
+  let p = async f in
+  r := Some p
 
-let _ = run main
+let _ =
+  run main;
+  Printf.printf "[run] has terminated.\n"
 
 let main () =
   let p = async (fun () -> 3) in
-  Printf.printf "%d\n" ((await p) + (await p))
+  Printf.printf "I have computed %d\n" ((await p) + (await p))
 
-let _ = run main
+let _ =
+  run main
