@@ -17,7 +17,7 @@
 
      [diff : ('d, Dim.one) exp -> ('d, 'd) exp]
 
-   [diff] takes a polynomial in ['d] variables and produces its gradiant,
+   [diff] takes a polynomial in ['d] variables and produces its gradient,
    a tuple of ['d] polynomials in ['d] variables.
  *)
 
@@ -171,25 +171,25 @@ let bin_prod : type d. (d, Dim.one) exp -> (d, Dim.one) exp -> (d, Dim.two) exp 
         ret_two res_f res_g))
     }
 
-(* [id] represents the expressions [vec ↦ vec]. *)
+(* [id] represents the expression [vec ↦ vec]. *)
 let id : type d. (d, d) exp =
   { eval = fun _num vec -> vec }
 
-(* [one] represents the expressions [_ ↦ 1]. *)
+(* [one] represents the expression [_ ↦ 1]. *)
 let one : type d. (d, Dim.one) exp =
   { eval = fun {one; _} _vec -> ret_one one }
 
-(* [zero] represents the expressions [_ ↦ 0]. *)
+(* [zero] represents the expression [_ ↦ 0]. *)
 let zero : type d. (d, Dim.one) exp =
   { eval = fun {zero; _} _vec -> ret_one zero }
 
-(* [add] represents the expressions [(x,y) ↦ x+y]. *)
+(* [add] represents the expression [(x,y) ↦ x+y]. *)
 let add : (Dim.two, Dim.one) exp =
   { eval = fun {add; _} ->
       curry_two (fun x y -> ret_one (add x y))
   }
 
-(* [mul] represents the expressions [(x,y) ↦ x*y]. *)
+(* [mul] represents the expression [(x,y) ↦ x*y]. *)
 let mul : (Dim.two, Dim.one) exp =
   { eval = fun {mul; _} ->
       curry_two (fun x y -> ret_one (mul x y))
