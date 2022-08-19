@@ -21,6 +21,7 @@
    a tuple of ['d] polynomials in ['d] variables.
  *)
 
+
 (* -------------------------------------------------------------------------- *)
 (** Type Definitions. *)
 
@@ -198,6 +199,7 @@ let mul : (Dim.two, Dim.one) exp =
 (* [const n] represents the expression [_ ↦ n]. *)
 let const n : (Dim.one, Dim.one) exp =
   compose (diff (pow n)) one
+
 
 (* --------------------------------------------------------------------------- *)
 (** Examples. *)
