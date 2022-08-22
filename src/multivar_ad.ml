@@ -19,7 +19,7 @@
 
    [diff] takes a polynomial in ['d] variables and produces its gradient,
    a tuple of ['d] polynomials in ['d] variables.
- *)
+*)
 
 
 (* -------------------------------------------------------------------------- *)
@@ -193,9 +193,17 @@ let mul : (Dim.two, Dim.one) exp =
       curry_two (fun x y -> ret_one (mul x y))
   }
 
+(* [times n] represents the expression [x ↦ x*n]. *)
+let times n : (Dim.one, Dim.one) exp =
+  { eval = fun ({zero; add; _} as num) ->
+      (pow n).eval {num with one = zero; mul = add}
+  }
+
 (* [const n] represents the expression [_ ↦ n]. *)
 let const n : (Dim.one, Dim.one) exp =
-  compose (diff (pow n)) one
+  compose (times n) one
+    (* or: compose (diff (pow n)) one *)
+    (* or: diff (time n) *)
 
 
 (* --------------------------------------------------------------------------- *)
@@ -227,7 +235,7 @@ let float : float num = {
 let dpow n : (Dim.one, Dim.one) exp =
   diff (pow n)
 let dpow'  n : (Dim.one, Dim.one) exp =
-  compose mul (bin_prod (const n) (pow (n - 1)))
+  compose (times n) (pow (n - 1))
 
 (* Tests. *)
 let () =
@@ -247,7 +255,7 @@ let () =
   done
 
 
-(* Differentiating the polynomial [(x+1)^3] . *)
+(* Differentiating the polynomial [(x+1)^3]. *)
 
 (* [f] represents the expression [x ↦ (x+1)^3]. *)
 let f : (Dim.one, Dim.one) exp =
@@ -271,7 +279,7 @@ let () =
   assert (ddf.eval float (ret_one 2.) = ret_one 18.)
 
 
-(* Differentiating the polynomial [(x+y^2)^3] . *)
+(* Differentiating the polynomial [(x+y^2)^3]. *)
 
 (* [f] represents the expression [(x,y) ↦ (x+y^2)^3]. *)
 let f : (Dim.two, Dim.one) exp =

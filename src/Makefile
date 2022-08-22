@@ -1,4 +1,4 @@
-EXE := ad.exe stack_ad.exe multivar_ad.exe promises.exe invert.exe ref.exe test.exe
+EXE := ad.exe multivar_ad.exe promises.exe invert.exe ref.exe test.exe
 
 all: $(EXE)
 
