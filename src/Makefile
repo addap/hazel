@@ -8,9 +8,11 @@ multivar_ad.exe: dim.ml vector.mli vector.ml multivar_ad.ml
 %.exe: %.ml
 	dune build $@
 
+test:
+	dune build ad.exe
+	_build/4.12.0+domains+effects/ad.exe
+
 clean:
 	dune clean
-	rm -f *.exe
-	rm -rf dune-project
 
-.PHONY: clean
+.PHONY: clean test all
