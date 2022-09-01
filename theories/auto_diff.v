@@ -31,74 +31,74 @@ Section implementation.
 
 Class Num := {
   nzero  : val;
-  none   : val; (* <- Not to be confused with [None]! *)
+  none   : val;
   nadd   : val;
   nmul   : val;
 }.
 
 Section RMAD.
 
-  Definition create {N : Num} : val := λ: "n", InjR ("n", ref nzero).
+  Definition mk {N : Num} : val := λ: "n", InjR ("n", ref nzero).
 
   Definition zero  : val := InjLV (InjLV #()).
   Definition one   : val := InjLV (InjRV #()).
   Definition add   : val := λ: "a" "b", do: (InjLV #(), ("a", "b")).
   Definition mul   : val := λ: "a" "b", do: (InjRV #(), ("a", "b")).
 
-  Definition get_val {N : Num} : val := λ: "x",
-    match: "x" with
-      (* Constant. *) InjL "x" =>
-       match: "x" with
+  Definition get_v {N : Num} : val := λ: "u",
+    match: "u" with
+      (* Constant. *) InjL "u" =>
+       match: "u" with
          (* Zero. *) InjL <> => nzero
        | (* One.  *) InjR <> => none
        end
-    | (* Variable. *) InjR "x" => Fst "x"
+    | (* Variable. *) InjR "u" => Fst "u"
     end.
 
-  Definition get_diff : val := λ: "x",
-    match: "x" with
+  Definition get_d : val := λ: "u",
+    match: "u" with
       (* Constant. *) InjL <>  => #() #() (* Unreachable. *)
-    | (* Variable. *) InjR "x" => Load (Snd "x")
+    | (* Variable. *) InjR "u" => Load (Snd "u")
     end.
 
-  Definition update {N : Num} : val := λ: "x" "incr",
-    match: "x" with
+  Definition update {N : Num} : val := λ: "u" "i",
+    match: "u" with
       (* Constant. *) InjL <>  => #()
-    | (* Variable. *) InjR "x" =>
-      let: "xd" := Snd "x" in
-      "xd" <- nadd (Load "xd") "incr"
+    | (* Variable. *) InjR "u" =>
+      let: "ud" := Snd "u" in
+      "ud" <- nadd (Load "ud") "i"
     end.
 
-  Definition handle {N : Num} : val := λ: "f" "seed",
-    try: "f" "seed" with
+  Definition run {N : Num} (e : expr) : expr :=
+    try: e with
       effect (λ: "args" "k",
         let: "op" := Fst      "args"  in
         let: "a"  := Fst (Snd "args") in
         let: "b"  := Snd (Snd "args") in
 
-        let: "av" := get_val "a"      in
-        let: "bv" := get_val "b"      in
+        let: "av" := get_v "a"      in
+        let: "bv" := get_v "b"      in
 
         match: "op" with
           (* Add *) InjL <> =>
-           let: "x" := create (nadd "av" "bv") in
-           "k" "x";;
-           let: "xd" := get_diff "x" in
-           update "a" "xd";;
-           update "b" "xd"
+           let: "u" := mk (nadd "av" "bv") in
+           "k" "u";;
+           let: "ud" := get_d "u" in
+           update "a" "ud";;
+           update "b" "ud"
 
         | (* Mul *) InjR <> =>
-           let: "x" := create (nmul "av" "bv") in
-           "k" "x";;
-           let: "xd" := get_diff "x"   in
-           let: "ad" := nmul "bv" "xd" in
-           let: "bd" := nmul "av" "xd" in
+           let: "u" := mk (nmul "av" "bv") in
+           "k" "u";;
+           let: "ud" := get_d "u"   in
+           let: "ad" := nmul "bv" "ud" in
+           let: "bd" := nmul "av" "ud" in
            update "a" "ad";;
            update "b" "bd"
         end
       )
-    | return (λ: "res",
-           update "res" none)
+    | return (λ: "y",
+           update "y" none)
     end.
 
   Program Instance ADNum : Num := {
@@ -108,12 +108,75 @@ Section RMAD.
     nmul  := mul;
   }.
 
-  Definition diff (f : Num → expr) (N : Num) : expr :=
-    let: "vf" := f ADNum in
+  Definition to_struct (N : Num) : val :=
+    (nzero, (none, (nadd, nmul)))%V.
+
+  Definition to_Num (zero one add mul : val) : Num :=
+    {| nzero := zero; none := one; nadd := add; nmul := mul |}.
+
+  Definition diff : val := λ: "e" "num",
+    let: "nzero" := Fst "num" in
+    let: "none"  := Fst (Snd "num") in
+    let: "nadd"  := Fst (Snd (Snd "num")) in
+    let: "nmul"  := Snd (Snd (Snd "num")) in
+
+    let: "mk" := λ: "n", InjR ("n", ref "nzero") in
+
+    let: "get_v" := λ: "u",
+      match: "u" with
+        (* Constant. *) InjL "u" =>
+         match: "u" with
+           (* Zero. *) InjL <> => "nzero"
+         | (* One.  *) InjR <> => "none"
+         end
+      | (* Variable. *) InjR "u" => Fst "u"
+      end
+    in
+
+    let: "update" := λ: "u" "i",
+      match: "u" with
+        (* Constant. *) InjL <>  => #()
+      | (* Variable. *) InjR "u" =>
+        let: "ud" := Snd "u" in
+        "ud" <- "nadd" (Load "ud") "i"
+      end
+    in
+
     λ: "a",
-      let: "x" := @create N "a" in
-      @handle N "vf" "x";;
-      get_diff "x".
+      let: "x" := "mk" "a" in
+
+      try: ("e" (to_struct ADNum) "x") with
+        effect (λ: "args" "k",
+          let: "op" := Fst      "args"  in
+          let: "a"  := Fst (Snd "args") in
+          let: "b"  := Snd (Snd "args") in
+
+          let: "av" := "get_v" "a"      in
+          let: "bv" := "get_v" "b"      in
+
+          match: "op" with
+            (* Add *) InjL <> =>
+             let: "u" := "mk" ("nadd" "av" "bv") in
+             "k" "u";;
+             let: "ud" := get_d "u" in
+             "update" "a" "ud";;
+             "update" "b" "ud"
+
+          | (* Mul *) InjR <> =>
+             let: "u" := "mk" ("nmul" "av" "bv") in
+             "k" "u";;
+             let: "ud" := get_d "u"   in
+             let: "ad" := "nmul" "bv" "ud" in
+             let: "bd" := "nmul" "av" "ud" in
+             "update" "a" "ad";;
+             "update" "b" "bd"
+          end
+        )
+      | return (λ: "y",
+             "update" "y" "none")
+      end;;
+
+      get_d "x".
 
 End RMAD.
 
@@ -153,7 +216,7 @@ Section definitions.
 Inductive Binop : Set := Add | Mul.
 
 Inductive Expr (I : Set) : Set :=
-  Zero | One | Leaf (i : I) | Node (op : Binop) (el er : Expr I).
+  Zero | One | Leaf (i : I) | Node (op : Binop) (El Er : Expr I).
 
 Definition vars {I : Set} `{CI : Countable I} : Expr I → gset I :=
   fix vars (e : Expr I) : gset I :=
@@ -161,16 +224,16 @@ Definition vars {I : Set} `{CI : Countable I} : Expr I → gset I :=
     | Zero _
     | One  _         => ∅
     | Leaf _ i       => {[i]}
-    | Node _ _ el er => vars el ∪ vars er
+    | Node _ _ El Er => vars El ∪ vars Er
     end.
 
 Definition bind {I J : Set} (f : I → Expr J) : Expr I → Expr J :=
-  fix bind (e : Expr I) : Expr J :=
-    match e with
+  fix bind (E : Expr I) : Expr J :=
+    match E with
     | Zero _          => Zero _
     | One  _          => One  _
     | Leaf _ i        => f i
-    | Node _ op el er => Node _ op (bind el) (bind er)
+    | Node _ op El Er => Node _ op (bind El) (bind Er)
     end.
 
 Definition map {I J : Set} (ϱ : I → J) : Expr I → Expr J :=
@@ -185,17 +248,17 @@ Definition eval {R : Set} {RS : RingSig R} : Expr R → R :=
     | Zero _          => rzero
     | One  _          => rone
     | Leaf _ r        => r
-    | Node _ op el er => denote op (eval el) (eval er)
+    | Node _ op El Er => denote op (eval El) (eval Er)
     end.
 
 Inductive Expr_equiv {I : Set} : Expr I → Expr I → Prop :=
  (* Equivalence. *)
- | Expr_equiv_refl  e        :
-     Expr_equiv e e
- | Expr_equiv_symm  e₁ e₂    :
-     Expr_equiv e₁ e₂ → Expr_equiv e₂ e₁
- | Expr_equiv_trans e₁ e₂ e₃ :
-     Expr_equiv e₁ e₂ → Expr_equiv e₂ e₃ → Expr_equiv e₁ e₃
+ | Expr_equiv_refl E :
+     Expr_equiv E E
+ | Expr_equiv_symm  E₁ E₂ :
+     Expr_equiv E₁ E₂ → Expr_equiv E₂ E₁
+ | Expr_equiv_trans E₁ E₂ E₃ :
+     Expr_equiv E₁ E₂ → Expr_equiv E₂ E₃ → Expr_equiv E₁ E₃
 
  (* [Node _ Add] and [Node _ Mul] are instances of [Proper]. *)
  | Expr_equiv_ext op :
@@ -206,22 +269,22 @@ Inductive Expr_equiv {I : Set} : Expr I → Expr I → Prop :=
    Expr_equiv_add_0_l e :
      Expr_equiv (Node _ Add (Zero _) e) e
  | (* SR(add|mul)_comm. *)
-   Expr_equiv_comm op e₁ e₂ :
-     Expr_equiv (Node _ op e₁ e₂) (Node _ op e₂ e₁)
+   Expr_equiv_comm op E₁ E₂ :
+     Expr_equiv (Node _ op E₁ E₂) (Node _ op E₂ E₁)
  | (* SR(add|mul)_assoc. *)
-   Expr_equiv_assoc op e₁ e₂ e₃ :
-     Expr_equiv (Node _ op e₁ (Node _ op e₂ e₃))
-                (Node _ op (Node _ op e₁ e₂) e₃)
+   Expr_equiv_assoc op E₁ E₂ E₃ :
+     Expr_equiv (Node _ op E₁ (Node _ op E₂ E₃))
+                (Node _ op (Node _ op E₁ E₂) E₃)
  | (* SRmul_1_l. *)
-   Expr_equiv_mul_1_l e :
-     Expr_equiv (Node _ Mul (One  _) e) e
+   Expr_equiv_mul_1_l E :
+     Expr_equiv (Node _ Mul (One  _) E) E
  | (* SRmul_0_l. *)
-   Expr_equiv_mul_0_l e :
-     Expr_equiv (Node _ Mul (Zero _) e) (Zero _)
+   Expr_equiv_mul_0_l E :
+     Expr_equiv (Node _ Mul (Zero _) E) (Zero _)
  | (* SRdistr_l. *)
-   Expr_equiv_distr_l e₁ e₂ e₃ :
-     Expr_equiv (Node _ Mul (Node _ Add e₁ e₂) e₃)
-                (Node _ Add (Node _ Mul e₁ e₃) (Node _ Mul e₂ e₃)).
+   Expr_equiv_distr_l E₁ E₂ E₃ :
+     Expr_equiv (Node _ Mul (Node _ Add E₁ E₂) E₃)
+                (Node _ Add (Node _ Mul E₁ E₃) (Node _ Mul E₂ E₃)).
 
 Global Instance ExprRing (I : Set) : RingSig (Expr I) := {
   rzero := Zero I;
@@ -235,14 +298,14 @@ Definition diffₑ
   {R : Set} {RS : RingSig R}
   {I : Set} {EI : EqDecision I}
   (ϱ : I → R) : Expr I → I → R :=
-  fix diff (e : Expr I) (i : I) : R :=
-    match e with
+  fix diff (E : Expr I) (i : I) : R :=
+    match E with
     | Zero _           => rzero
     | One  _           => rzero
     | Leaf _ j         => if decide (i = j) then rone else rzero
-    | Node _ Add el er => radd (diff el i) (diff er i)
-    | Node _ Mul el er => radd (rmul (diff el i) (eval (map ϱ er)))
-                               (rmul (eval (map ϱ el)) (diff er i))
+    | Node _ Add El Er => radd (diff El i) (diff Er i)
+    | Node _ Mul El Er => radd (rmul (diff El i) (eval (map ϱ Er)))
+                               (rmul (eval (map ϱ El)) (diff Er i))
     end.
 
 Definition node : Set := (Binop * val * val)%type.
@@ -315,14 +378,14 @@ Section vars.
     vars (Node _ op el er) = vars el ∪ vars er.
   Proof. done. Qed.
 
-  Lemma vars_suppressing (e : Expr I) (f : I → Expr I) (i : I) :
+  Lemma vars_suppressing (E : Expr I) (f : I → Expr I) (i : I) :
     vars (f i) = ∅ →
       (∀ j, vars (f j) ⊆ {[j]}) →
-        vars (bind f e) ⊆ (vars e) ∖ {[i]}.
-  Proof. induction e; [done|done| |]; set_solver. Qed.
+        vars (bind f E) ⊆ (vars E) ∖ {[i]}.
+  Proof. induction E; [done|done| |]; set_solver. Qed.
 
-  Instance eq_vars_proper (e : Expr I) :
-    Proper (equiv ==> flip impl) (eq (vars e)).
+  Instance eq_vars_proper (E : Expr I) :
+    Proper (equiv ==> flip impl) (eq (vars E)).
   Proof. intros ??? [=->]. by apply gset_leibniz. Qed.
 
 End vars.
@@ -331,13 +394,13 @@ End vars.
 
 Section bind.
 
-  Lemma bind_leaf {I : Set} (e : Expr I) :
-    bind (Leaf _) e = e.
-  Proof. by induction e as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
+  Lemma bind_leaf {I : Set} (E : Expr I) :
+    bind (Leaf _) E = E.
+  Proof. by induction E as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
 
-  Lemma bind_compose {I J K : Set} (e : Expr I) (g : I → Expr J) (f : J → Expr K) :
-    bind f (bind g e) = bind (bind f ∘ g) e.
-  Proof. by induction e as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
+  Lemma bind_compose {I J K : Set} (E : Expr I) (g : I → Expr J) (f : J → Expr K) :
+    bind f (bind g E) = bind (bind f ∘ g) E.
+  Proof. by induction E as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
 
   (* From iris.algebra Require Import gset.
 
@@ -352,24 +415,24 @@ End bind.
 
 Section map.
 
-  Lemma map_compose {I J K : Set} (ϱ : I → J) (ϑ : J → K) (e : Expr I) :
-    map (ϑ ∘ ϱ) e = map ϑ (map ϱ e).
-  Proof. by induction e as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
+  Lemma map_compose {I J K : Set} (ϱ : I → J) (ϑ : J → K) (E : Expr I) :
+    map (ϑ ∘ ϱ) E = map ϑ (map ϱ E).
+  Proof. by induction E as [| | |?? IHl ? IHr]; last rewrite //= IHl IHr. Qed.
 
   Lemma map_strong_ext
-    {I J : Set} `{CI : Countable I} (ϱ ϑ : I → J) (e : Expr I) :
-    (∀ i, i ∈ vars e → ϱ i = ϑ i) →
-      map ϱ e = map ϑ e.
+    {I J : Set} `{CI : Countable I} (ϱ ϑ : I → J) (E : Expr I) :
+    (∀ i, i ∈ vars E → ϱ i = ϑ i) →
+      map ϱ E = map ϑ E.
   Proof.
-    induction e as [| | |op el IHel er IHer]; [done|done| |].
+    induction E as [| | |op el IHel er IHer]; [done|done| |].
     { intros Hvars. simpl. f_equal. apply Hvars. set_solver. }
     { intros Hvars. rewrite //= IHel; [rewrite IHer; [done|]|]; set_solver. }
   Qed.
 
-  Lemma map_ext {I J : Set} (ϱ ϑ : I → J) (e : Expr I) :
-    (∀ i, ϱ i = ϑ i) → map ϱ e = map ϑ e.
+  Lemma map_ext {I J : Set} (ϱ ϑ : I → J) (E : Expr I) :
+    (∀ i, ϱ i = ϑ i) → map ϱ E = map ϑ E.
   Proof.
-    by intros Hext; induction e as [| | |?? IHl ? IHr];
+    by intros Hext; induction E as [| | |?? IHl ? IHr];
     [| |rewrite //= Hext|rewrite //= IHl IHr].
   Qed.
 
@@ -595,23 +658,23 @@ Section diff.
   Proof. intros ??. by rewrite //= decide_False. Qed.
 
   Lemma diff_bind_overwrite_leaf_id
-    (ϱ : I → R) (e eⱼ : Expr I) (i j : I) :
-    let f := (λ i, Leaf _ i).{[j := eⱼ]} in
-    let ϑ := ϱ.{[j := eval (map ϱ eⱼ)]} in
+    (ϱ : I → R) (E Eⱼ : Expr I) (i j : I) :
+    let f := (λ i, Leaf _ i).{[j := Eⱼ]} in
+    let ϑ := ϱ.{[j := eval (map ϱ Eⱼ)]} in
     i ≠ j →
-      (∂ eⱼ ./ ∂ i .at ϱ) = (Oᵣ) →
-        (∂ (bind f e) ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+      (∂ Eⱼ ./ ∂ i .at ϱ) = (Oᵣ) →
+        (∂ (bind f E) ./ ∂ i .at ϱ) = (∂ E ./ ∂ i .at ϑ).
   Proof.
     intros ?? Hneq Hdiff.
-    assert (∀ e, eval (map ϱ (bind f e)) = (eval (map ϑ e))) as Heval_bind.
-    { clear e.
-      induction e as [| |i'|[|] el IHel er IHer]; simpl;
+    assert (∀ E, eval (map ϱ (bind f E)) = (eval (map ϑ E))) as Heval_bind.
+    { clear E.
+      induction E as [| |i'|[|] El IHel Er IHer]; simpl;
       [done|done| |by rewrite IHel IHer|by rewrite IHel IHer].
       case (decide (i' = j)).
       - intros ->. unfold f, ϑ. by rewrite !overwrite_eq.
       - intros  ?. unfold f, ϑ. by rewrite !overwrite_neq.
     }
-    induction e as [| |i'|[|] el IHel er IHer]; simpl;
+    induction E as [| |i'|[|] El IHel Er IHer]; simpl;
     [done|done| |by rewrite IHel IHer|by rewrite IHel IHer !Heval_bind].
     { case (decide (j = i')).
       - intros ->. unfold f. by rewrite overwrite_eq Hdiff decide_False.
@@ -620,37 +683,38 @@ Section diff.
   Qed.
 
   Corollary diff_bind_overwrite_leaf_id_with_zero
-    (ϱ : I → R) (e : Expr I) (i j : I) :
+    (ϱ : I → R) (E : Expr I) (i j : I) :
     let f := (λ i, Leaf _ i).{[j := (Oₑ)]} in
     let ϑ := ϱ.{[j := (Oᵣ)]} in
     i ≠ j →
-      (∂ (bind f e) ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+      (∂ (bind f E) ./ ∂ i .at ϱ) = (∂ E ./ ∂ i .at ϑ).
   Proof. intros. by rewrite diff_bind_overwrite_leaf_id; [simpl; fold ϑ| |]. Qed.
 
   Corollary diff_bind_overwrite_leaf_id_with_one
-    (ϱ : I → R) (e : Expr I) (i j : I) :
+    (ϱ : I → R) (E : Expr I) (i j : I) :
     let f := (λ i, Leaf _ i).{[j := (Iₑ)]} in
     let ϑ := ϱ.{[j := (Iᵣ)]} in
     i ≠ j →
-      (∂ (bind f e) ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+      (∂ (bind f E) ./ ∂ i .at ϱ) = (∂ E ./ ∂ i .at ϑ).
   Proof. intros. by rewrite diff_bind_overwrite_leaf_id; [simpl; fold ϑ| |]. Qed.
 
   Lemma diff_strong_ext {CI : Countable I}
-    (ϱ ϑ : I → R) (e : Expr I) (i : I) :
-    (∀ j, j ∈ vars e → ϱ j = ϑ j) →
-      (∂ e ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+    (ϱ ϑ : I → R) (E : Expr I) (i : I) :
+    (∀ j, j ∈ vars E → ϱ j = ϑ j) →
+      (∂ E ./ ∂ i .at ϱ) = (∂ E ./ ∂ i .at ϑ).
   Proof.
-    induction e as [| | |[|] ? IHl ? IHr]; [done|done|done| |].
+    induction E as [| | |[|] ? IHl ? IHr]; [done|done|done| |].
     { intros Hvars. rewrite //= IHl; [rewrite IHr; [done|]|]; set_solver. }
     { intros Hvars. rewrite //= IHl; [rewrite IHr; [|]|]; [|set_solver|set_solver].
       rewrite !(map_strong_ext ϱ ϑ); [done| |]; set_solver.
     }
   Qed.
 
-  Lemma diff_ext (ϱ ϑ : I → R) (e : Expr I) (i : I) :
-    (∀ j, ϱ j = ϑ j) → (∂ e ./ ∂ i .at ϱ) = (∂ e ./ ∂ i .at ϑ).
+  Lemma diff_ext (ϱ ϑ : I → R) (E : Expr I) (i : I) :
+    (∀ j, ϱ j = ϑ j) → (∂ E ./ ∂ i .at ϱ) = (∂ E ./ ∂ i .at ϑ).
   Proof.
-    intros Hext. induction e as [| | |[|] ? IHl ? IHr]; [done|done|done| |].
+    intros Hext.
+    induction E as [| | |[|] ? IHl ? IHr]; [done|done|done| |].
     { by rewrite //= IHl IHr. }
     { by rewrite //= IHl IHr !(map_ext ϱ ϑ). }
   Qed.
@@ -658,11 +722,11 @@ Section diff.
   Lemma diff_map
                {CI : Countable  I}
     {J : Set}  {EJ : EqDecision J}
-    (ϱ : I → J) (ϑ : J → R) (e : Expr I) (i : I) :
-    (∀ j, j ∈ vars e → ϱ i = ϱ j → i = j) →
-      (∂ (map ϱ e) ./ ∂ (ϱ i) .at ϑ) = (∂ e ./ ∂ i .at (ϑ ∘ ϱ)).
+    (ϱ : I → J) (ϑ : J → R) (E : Expr I) (i : I) :
+    (∀ j, j ∈ vars E → ϱ i = ϱ j → i = j) →
+      (∂ (map ϱ E) ./ ∂ (ϱ i) .at ϑ) = (∂ E ./ ∂ i .at (ϑ ∘ ϱ)).
   Proof.
-    induction e as [| |j|[|] el IHel er IHer]; [done|done| | |].
+    induction E as [| |j|[|] el IHel er IHer]; [done|done| | |].
     { intros Hϱ. simpl.
       case (decide (ϱ i = ϱ j)).
       - intros Heq. rewrite (Hϱ j _ Heq); [|set_solver]. by rewrite decide_True.
@@ -674,36 +738,36 @@ Section diff.
     }
   Qed.
 
-  Lemma diff_trivial (e : Expr I) (i : I) (r : R) :
-    eval (map (λ _, r) (∂ e ./ ∂ i .at (λ j, Leaf _ j))) = 
-      (∂ e ./ ∂ i .at (λ _, r)).
+  Lemma diff_trivial (E : Expr I) (i : I) (r : R) :
+    eval (map (λ _, r) (∂ E ./ ∂ i .at (λ j, Leaf _ j))) = 
+      (∂ E ./ ∂ i .at (λ _, r)).
   Proof.
-    induction e as [| |j|[|]]; try done.
+    induction E as [| |j|[|]]; try done.
     { simpl. by case (decide (i = j)). }
-    { by rewrite //= IHe1 IHe2. }
-    { by rewrite //= IHe1 IHe2 !eval_trivial. }
+    { by rewrite //= IHE1 IHE2. }
+    { by rewrite //= IHE1 IHE2 !eval_trivial. }
   Qed.
 
 End diff.
 
 Section univariate_expr.
 
-  Lemma eval_univariate_expr (e : Expr ()) :
-    eval (map (λ _, Xₑ) e) = e.
+  Lemma eval_univariate_expr (E : Expr ()) :
+    eval (map (λ _, Xₑ) E) = E.
   Proof.
-   evar(e' : Expr ()).
-   transitivity ?e';[|apply (eval_trivial e)].
+   evar(E' : Expr ()).
+   transitivity ?E';[|apply (eval_trivial E)].
    f_equal. apply map_ext. by intros ().
   Qed.
 
   Lemma diff_univariate_expr
     {R : Set} {RS : RingSig R}
-    (e : Expr ()) (r : R) :
-    eval (map (λ _, r) (∂ e ./ ∂ tt .at (λ _, Xₑ))) = 
-      (∂ e ./ ∂ tt .at (λ _, r)).
+    (E : Expr ()) (r : R) :
+    eval (map (λ _, r) (∂ E ./ ∂ tt .at (λ _, Xₑ))) = 
+      (∂ E ./ ∂ tt .at (λ _, r)).
   Proof.
     evar (s : R).
-    transitivity ?s; [| apply (diff_trivial e tt r)].
+    transitivity ?s; [| apply (diff_trivial E tt r)].
     do 2 f_equal. apply diff_ext. by intros ().
   Qed.
 
@@ -738,9 +802,9 @@ Section proofs_using_ring_tactic.
     }
   Qed.
 
-  Lemma eval_equiv {I : Set} (e₁ e₂ : Expr I) (ϱ : I → R) :
-    e₁ =ₑ e₂ →
-      eval (map ϱ e₁) =ᵣ eval (map ϱ e₂).
+  Lemma eval_equiv {I : Set} (E₁ E₂ : Expr I) (ϱ : I → R) :
+    E₁ =ₑ E₂ →
+      eval (map ϱ E₁) =ᵣ eval (map ϱ E₂).
   Proof using RA.
     induction 1; try done; try (try (destruct op); simpl; ring).
     { by rewrite IHExpr_equiv1. }
@@ -749,9 +813,9 @@ Section proofs_using_ring_tactic.
 
   Lemma diff_equiv
     {I : Set} {EI : EqDecision I}
-    (e₁ e₂ : Expr I) (ϱ : I → R) (i : I) :
-    e₁ =ₑ e₂ →
-      (∂ e₁ ./ ∂ i .at ϱ) =ᵣ (∂ e₂ ./ ∂ i .at ϱ).
+    (E₁ E₂ : Expr I) (ϱ : I → R) (i : I) :
+    E₁ =ₑ E₂ →
+      (∂ E₁ ./ ∂ i .at ϱ) =ᵣ (∂ E₂ ./ ∂ i .at ϱ).
   Proof using RA.
     induction 1; try done; try (try (destruct op); simpl; ring).
     { by rewrite IHExpr_equiv1. }
@@ -778,11 +842,11 @@ Section chain_rule.
      corollaries of this property. However, we find that proving them
      directly ends up being simpler.
    *)
-  Definition chain_rule_statement (e : Expr I) (f : I → Expr J) (ϱ : J → R) (j : J) :=
+  Definition chain_rule_statement (E : Expr I) (f : I → Expr J) (ϱ : J → R) (j : J) :=
     let ϑ : I → R := λ i, eval (map ϱ (f i)) in
-    (∂ (bind f e) ./ ∂ j .at ϱ) =ᵣ
-      Σ i .∈ (vars e) ;
-        (∂ e ./ ∂ i .at ϑ) ×ᵣ (∂ (f i) ./ ∂ j .at ϱ).
+    (∂ (bind f E) ./ ∂ j .at ϱ) =ᵣ
+      Σ i .∈ (vars E) ;
+        (∂ E ./ ∂ i .at ϑ) ×ᵣ (∂ (f i) ./ ∂ j .at ϱ).
 
 End chain_rule.
 
@@ -847,6 +911,10 @@ Section specification.
 
 Context `{!irisGS eff_lang Σ}.
 
+(* The class [NumSpec N Ψ RS] can be seen as the domain of predicates
+   [implements : val → R → iProp Σ] for which the assertions [nzero_spec],
+   [none_spec], [nadd_spec], [nmul_spec] and [implements_pers] hold.
+*)
 Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
   implements : val → R → iProp Σ;
 
@@ -884,15 +952,15 @@ Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
   (* implements_ne   u n : Proper (req ==> (dist n)) (implements u); *)
 }.
 
-Definition isExp (f : Num → expr) (e : Expr ()) : iProp Σ :=
-  (∀ (N : Num),
-    EWP (f N) <| ⊥ |> {{ vf,
-      (∀ (R : Set) (RS : RingSig R) (RA : IsRing R),
-        (∀ (Ψ : iEff Σ) (NSpec : NumSpec N Ψ RS),
-          (∀ x r,
+Definition isExp (e : val) (E : Expr ()) : iProp Σ :=
+  □ ∀ (N : Num),
+      ∀ (R : Set) (RS : RingSig R) (RA : IsRing R),
+        ∀ (Ψ : iEff Σ) (NSpec : NumSpec N Ψ RS),
+          ∀ (x : val) (r : R),
             implements x r -∗
-              EWP vf x <| Ψ |> {{ y, ∃ s,
-                implements y s ∗ ⌜ s =ᵣ (eval (map (λ _, r) e)) ⌝ }})))}}).
+              EWP (e (to_struct N) x) <| Ψ |> {{ y, ∃ s,
+                implements y s ∗
+                  ⌜ s =ᵣ eval (map (λ _, r) E) ⌝ }}.
 
 (* Remark:
    -- The existentially quantified ring element [s] that appears in the
@@ -904,21 +972,20 @@ Definition isExp (f : Num → expr) (e : Expr ()) : iProp Σ :=
       the [implements] predicate non-expansive, but again, we choose simplicity.
 *)
 
-Definition diff_spec : iProp Σ :=
-  (∀ (f : Num → expr) (e : Expr ()),
-    isExp f e -∗
-      isExp (diff f) (∂ e ./ ∂ tt .at (λ _, Xₑ))).
+Definition diff_spec : Prop :=
+  ⊢ ∀ (e : val) (E : Expr ()),
+      isExp e E -∗
+        EWP diff e {{ e',
+          isExp e' (∂ E ./ ∂ tt .at (λ _, Xₑ)) }}.
 
-Lemma isExp_ext (f : Num → expr) (e₁ e₂ : Expr ()) :
-  e₁ =ₑ e₂ →
-    isExp f e₁ -∗ isExp f e₂.
+Lemma isExp_ext (e : val) (E₁ E₂ : Expr ()) :
+  E₁ =ₑ E₂ →
+    isExp e E₁ -∗ isExp e E₂.
 Proof.
-  iIntros (He) "Hf". iIntros (N).
+  iIntros (He) "#Hf !>".
+  iIntros (????????) "#Hx".
+  iSpecialize ("Hf" with "Hx").
   iApply (ewp_mono' with "Hf").
-  iIntros (vf) "Hvf". iModIntro.
-  iIntros (R RS RA Ψ NSpec x r) "Hx".
-  iSpecialize ("Hvf" with "Hx").
-  iApply (ewp_mono' with "Hvf").
   iIntros (y) . iDestruct 1 as (s) "[Hs %]".
   iExists s. iModIntro. iFrame. iPureIntro.
   rewrite H. by apply eval_equiv.
@@ -1625,7 +1692,7 @@ Section backward_invariant.
   Qed.
 
   (* Remark: the first assumptions could be suppressed,
-             but in the actual proof they are easily met.
+             but, in the actual proof, they are easily met.
    *)
   Lemma backward_inv_update (K₁ K₂ : context) y x op a b :
     (∀ a, a ∈ (defs K₁ ++ [aₓ]) → ∃ v (ℓ : loc), a = InjRV (v, #ℓ)%V) →
@@ -1875,21 +1942,22 @@ Section proof_of_handle.
   Notation forward_inv     := (forward_inv  γ ℓₓ r nᵣ)   (only parsing).
   Notation backward_inv    := (backward_inv   ℓₓ r nᵣ e) (only parsing).
 
-  Lemma create_spec (v : val) :
-    ⊢ EWP create v <| Ψ |> {{ w, ∃ (ℓ : loc),
+  Lemma mk_spec (v : val) :
+    ⊢ EWP mk v <| Ψ |> {{ w, ∃ (ℓ : loc),
         ⌜ w = InjRV (v, #ℓ)%V ⌝ ∗ ℓ ↦ nzero }}.
   Proof.
-    unfold create. ewp_pure_steps. ewp_bind_rule.
-    iApply ewp_alloc. iIntros "!>" (l) "Hl !>".
+    unfold mk. ewp_pure_steps. ewp_bind_rule.
+    iApply ewp_alloc. iNext.
+    iIntros (l) "Hl !>". simpl.
     simpl. ewp_pure_steps.
     by iExists l; eauto.
   Qed.
 
-  Lemma get_val_spec K u eᵤ :
+  Lemma get_v_spec K u eᵤ :
     let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
     forward_inv K -∗
       represents u eᵤ -∗
-        EWP get_val u <| Ψ |> {{ v,
+        EWP get_v u <| Ψ |> {{ v,
           forward_inv K            ∗
           implements v (ϱ.{[K]} u) }}.
   Proof.
@@ -1897,7 +1965,7 @@ Section proof_of_handle.
     iDestruct (adj_var_0_not_in_defs with "Hinv") as %Ha₀.
     iDestruct (adj_var_1_not_in_defs with "Hinv") as %Ha₁.
     iDestruct (adj_var_cases with "Hinv Hu") as %Hcases.
-    unfold get_val. ewp_pure_steps.
+    unfold get_v. ewp_pure_steps.
     destruct Hcases as [Hu|[Hu|Hu]]; try rewrite Hu.
     (* TODO: cleanup. *)
     { iDestruct "Hinv" as "(? & ? & Hheap)".
@@ -1925,12 +1993,12 @@ Section proof_of_handle.
     }
   Qed.
 
-  Corollary get_diff_spec K₁ K₂ y x v (ℓ : loc) :
+  Corollary get_d_spec K₁ K₂ y x v (ℓ : loc) :
     let ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]} in
     let ϑ := ϱ.{[K₁]} in
     x = InjRV (v, #ℓ)%V →
       mapsto_diff K₁ K₂ y x -∗
-        EWP get_diff x <| Ψ |> {{ d,
+        EWP get_d x <| Ψ |> {{ d,
           mapsto_diff K₁ K₂ y x ∗ ∃ (s : R),
           implements d s ∗
           ⌜ s =ᵣ ∂ (Let K₂ .in y) ./ ∂ x .at ϑ ⌝ }}.
@@ -1938,11 +2006,11 @@ Section proof_of_handle.
     iIntros (?? Hx) "Hx".
     iDestruct ("Hx" $! v ℓ Hx) as (d s) "(#Hs & % & Hℓ)".
     rename H into Hs.
-    unfold get_diff. ewp_pure_steps.
+    unfold get_d. ewp_pure_steps.
     rewrite_strat outermost Hx.
     ewp_pure_steps.
-    iApply (ewp_load with "Hℓ").
-    iIntros "!> Hℓ !>".
+    iApply (ewp_load with "Hℓ"). iNext.
+    iIntros "Hℓ !>".
     iSplitL "Hℓ".
     { iIntros (v' ℓ' ->).
       inversion Hx. simplify_eq.
@@ -1951,25 +2019,25 @@ Section proof_of_handle.
     { iExists s. unfold ϑ. by iSplit. }
   Qed.
 
-  Lemma update_spec_crude x v (ℓ : loc) (d i : val) (s ds : R) :
-    x = InjRV (v, #ℓ)%V →
+  Lemma update_spec_crude u v (ℓ : loc) (d i : val) (s ds : R) :
+    u = InjRV (v, #ℓ)%V →
       ℓ ↦ d -∗
         implements d  s -∗
           implements i ds -∗
-            EWP update x i <| Ψ |> {{ _, ∃ d,
+            EWP update u i <| Ψ |> {{ _, ∃ d,
               ℓ ↦ d ∗ implements d (s +ᵣ ds) }}.
   Proof.
     iIntros (->) "Hℓ #Hd #Hi".
     unfold update.
     ewp_pure_steps.
     ewp_bind_rule.
-    iApply (ewp_load with "Hℓ").
-    iIntros "!> Hℓ !>". simpl.
+    iApply (ewp_load with "Hℓ"). iNext.
+    iIntros "Hℓ !>". simpl.
     iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
     iApply ewp_mono'; [iApply (nadd_spec with "Hd Hi")|].
     iIntros (w) "Hw". iModIntro.
-    iApply (ewp_store with "Hℓ").
-    iIntros "!> Hℓ !>". by eauto.
+    iApply (ewp_store with "Hℓ"). iNext.
+    iIntros "Hℓ". iModIntro. by eauto.
   Qed.
 
   Lemma update_constant_spec (x w i : val) :
@@ -1977,7 +2045,6 @@ Section proof_of_handle.
       ⊢ EWP update x i <| Ψ |> {{ _, True }}.
   Proof. intros ->. unfold update. by ewp_pure_steps. Qed.
 
-  (* This lemma will be useful in the verification of the return branch. *)
   Lemma trigger_backward_phase K y s :
     e =ₑ s →
       forward_inv K -∗
@@ -2191,16 +2258,16 @@ Section proof_of_handle.
 
   End update_twice_spec.
 
-  Lemma handle_spec K₁ (f : val) :
+  Lemma run_spec K₁ (f : expr) :
     EWP f aₓ <| AD |> {{ y, ∃ s, represents y s ∗ ⌜ e =ₑ s ⌝ }} -∗
       forward_inv K₁ -∗
-        EWP handle f aₓ <| Ψ |> {{_, ∃ K₂ y,
+        EWP run (f aₓ) <| Ψ |> {{_, ∃ K₂ y,
           backward_inv K₁ K₂ y }}.
   Proof using RA.
     set ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]}.
     iIntros "Hf Hinv".
-    unfold handle.
-    do 8 ewp_value_or_step.
+    unfold run.
+    do 4 ewp_value_or_step.
     iApply (ewp_deep_try_with with "Hf").
 
     iLöb as "IH" forall (K₁).
@@ -2224,12 +2291,12 @@ Section proof_of_handle.
       ewp_pure_steps.
       iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
       iApply (ewp_mono' with "[Hinv]"); [
-      iApply (get_val_spec with "Hinv Ha")|]. fold ϱ.
+      iApply (get_v_spec with "Hinv Ha")|]. fold ϱ.
       iIntros (av) "[Hinv #Hav]". iModIntro. simpl.
       ewp_pure_steps.
       iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
       iApply (ewp_mono' with "[Hinv]"); [
-      iApply (get_val_spec with "Hinv Hb")|]. fold ϱ.
+      iApply (get_v_spec with "Hinv Hb")|]. fold ϱ.
       iIntros (bv) "[Hinv #Hbv]". iModIntro. simpl.
       ewp_pure_steps.
       iDestruct   (NoDup_defs_app_adj_vars with "Hinv"   ) as %HND.
@@ -2239,13 +2306,13 @@ Section proof_of_handle.
       destruct op.
 
       (* Add. *)
-      { simpl. ewp_pure_steps.
+      { unfold to_val. ewp_pure_steps.
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply ewp_mono'; [
         iApply (nadd_spec with "Hav Hbv")|].
         iIntros (xv) "#Hxv". iModIntro. simpl.
-        iApply ewp_mono'; [iApply create_spec|].
+        iApply ewp_mono'; [iApply mk_spec|].
         iIntros (x'). iDestruct 1 as (x) "[-> Hx]".
         iDestruct (forward_inv_fresh_loc with "Hx Hinv") as %Hx.
         iMod ((forward_inv_update _ _ _ _ _ _ Add)
@@ -2267,7 +2334,7 @@ Section proof_of_handle.
           as "(Hx & Hab & Hfinisher)"; try done.
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply (ewp_mono' with "[Hx]"); [
-        by iApply (get_diff_spec with "Hx")|].
+        by iApply (get_d_spec with "Hx")|].
         iIntros (xd) "[_ Hxd]". fold ϱ.
         iDestruct "Hxd" as (s) "[#Hxd %]". rename H into Hs.
         iModIntro. simpl.
@@ -2281,13 +2348,13 @@ Section proof_of_handle.
       }
 
       (* Mul. *)
-      { simpl. ewp_pure_steps.
+      { unfold to_val. ewp_pure_steps.
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
         iApply ewp_mono'; [
         iApply (nmul_spec with "Hav Hbv")|].
         iIntros (xv) "#Hxv". iModIntro. simpl.
-        iApply ewp_mono'; [iApply create_spec|].
+        iApply ewp_mono'; [iApply mk_spec|].
         iIntros (x'). iDestruct 1 as (x) "[-> Hx]".
         iDestruct (forward_inv_fresh_loc with "Hx Hinv") as %Hx.
         iMod ((forward_inv_update _ _ _ _ _ _ Mul)
@@ -2307,7 +2374,7 @@ Section proof_of_handle.
         iDestruct (backward_inv_update with "Hinv")
           as "(Hx & Hab & Hfinisher)"; try done.
         iApply (ewp_mono' with "[Hx]"); [
-        by iApply (get_diff_spec with "Hx")|].
+        by iApply (get_d_spec with "Hx")|].
         iIntros (xd) "[_ Hxd]". fold ϱ.
         iDestruct "Hxd" as (s) "[#Hxd %]". rename H into Hs.
         iModIntro. simpl.
@@ -2335,35 +2402,35 @@ End proof_of_handle.
 Section proof_of_diff.
   Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
 
-  Theorem diff_correct : ⊢ diff_spec.
-  Proof using R₁ R₂.
-    iIntros (f e) "Hclient".
-    iIntros (N).
-    unfold diff.
+  Theorem diff_correct : diff_spec.
+  Proof using R₁ R₂ Σ.
+    iIntros (e E) "#He".
+    unfold diff. ewp_pure_steps.
+    iIntros "!#" (N R RS RA Ψ HNS x r) "Hx".
+    unfold to_struct.
+    do 49 ewp_value_or_step.
     iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-    iSpecialize ("Hclient" $! ADNum).
-    iApply (ewp_mono' with "Hclient").
-    iIntros (vf) "Hvf". iModIntro. simpl.
-    ewp_pure_steps.
-    iIntros (R RS RA Ψ NSpec x r) "Hx".
-    ewp_pure_steps.
-    iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-    iApply ewp_mono'; [iApply create_spec|].
-    iIntros (ℓₓ') "Hℓₓ !>".
+    iApply ewp_mono'; [iApply mk_spec|].
+    iIntros (ℓₓ') "Hℓₓ !>". simpl.
     iDestruct "Hℓₓ" as (ℓₓ) "[-> Hℓₓ]". simpl.
-    ewp_pure_steps.
+    do 3 ewp_value_or_step.
     iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
     iApply fupd_ewp.
+
+    (* Allocation of the Forward Invariant. *)
     iMod (forward_inv_alloc with "Hx Hℓₓ") as (γ) "Hinv".
-    iModIntro.
+
     set Ψ_client := AD γ ℓₓ x.
     set NSpec_client := ADNumSpec γ ℓₓ x.
     set aₓ := InjRV (x, #ℓₓ)%V.
-    iSpecialize ("Hvf" $! (Expr ()) (ExprRing ()) ExprIsRing).
-    iSpecialize ("Hvf" $! Ψ_client NSpec_client aₓ (Xₑ) with "[//]").
-    iApply (ewp_mono' with "[Hinv Hvf]").
-    { iApply (handle_spec with "[Hvf] Hinv").
-      iApply (ewp_mono' with "Hvf"). iIntros (y).
+    iSpecialize ("He" $! ADNum (Expr ()) (ExprRing ()) ExprIsRing).
+    iSpecialize ("He" $! Ψ_client NSpec_client).
+    iSpecialize ("He" $! aₓ (Xₑ) with "[//]").
+
+    iModIntro. simpl.
+    iApply (ewp_mono' with "[Hinv He]").
+    { iApply (run_spec _ _ _ _ _ _ _ with "[He] Hinv").
+      iApply (ewp_mono' with "He"). iIntros (y).
       iDestruct 1 as (s) "[Hs %]". rename H into He.
       iModIntro. iExists s. iFrame. iPureIntro.
       symmetry. by apply He.
@@ -2375,7 +2442,7 @@ Section proof_of_diff.
     iDestruct "Hx" as (v ℓ) "[Hx %]". simplify_eq. fold aₓ.
     ewp_pure_steps.
     iApply (ewp_mono' with "[Hx]");[
-    by iApply (get_diff_spec with "Hx")|].
+    by iApply (get_d_spec with "Hx")|].
     iIntros (d). iIntros "[_ Hd] !>". 
     iDestruct "Hd" as (s) "[Hs %]".
     iExists s. iFrame. iPureIntro.
@@ -2426,20 +2493,21 @@ Section clients.
     (* Implements ×ᵣ. *)
     Next Obligation. iIntros (E a b r s) "-> ->". by simpl; ewp_pure_steps. Qed.
 
-
   End ring_of_integers.
 
   Section x_cube.
     Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
 
-    Definition x_cube (N : Num) : val := λ: "x",
-      nmul "x" (nmul "x" "x").
+    Definition x_cube : val := λ: "num" "x",
+      let: "nmul"  := Snd (Snd (Snd "num")) in
+      "nmul" "x" ("nmul" "x" "x").
 
     Lemma x_cube_spec :
-      ⊢ isExp (@x_cube) (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)).
+      ⊢ isExp x_cube (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)).
     Proof.
-      iIntros (?). iApply ewp_value.
-      iIntros (?? ??? ??) "#Hx". unfold x_cube. ewp_pure_steps.
+      iIntros "!>" (????????) "#Hx".
+      unfold x_cube, to_struct.
+      ewp_pure_steps.
       iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
       iApply ewp_mono'; [iApply (nmul_spec with "Hx Hx")|].
       iIntros (y) "#Hy". iModIntro. simpl.
@@ -2449,50 +2517,46 @@ Section clients.
     Qed.
 
     Lemma x_cube'_spec :
-      ⊢ isExp (diff x_cube)
-          (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)).
+      ⊢ EWP diff x_cube {{ e,
+          isExp e (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)) }}.
     Proof using R₁ R₂.
       iPoseProof (diff_correct $! (@x_cube) (Xₑ ×ₑ (Xₑ ×ₑ Xₑ))) as "Hdiff".
       iApply "Hdiff". by iApply x_cube_spec.
     Qed.
 
     Lemma x_cube''_spec :
-      ⊢ isExp
-          (diff (diff x_cube))
-          (∂ (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)) ./ ∂ tt .at (λ _, Xₑ)).
+      ⊢ EWP (diff (diff x_cube)) {{ e,
+          isExp e
+            (∂ (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)) ./ ∂ tt .at (λ _, Xₑ)) }}.
     Proof using R₁ R₂.
-      iPoseProof (diff_correct $! _
-        (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)))
-      as "Hdiff".
-      iApply "Hdiff". by iApply x_cube'_spec.
+      ewp_bind_rule.
+      iApply ewp_mono'; [iApply x_cube'_spec|].
+      iIntros (e) "He !>". simpl.
+      by iApply (diff_correct $! _
+        (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ))).
     Qed.
 
     Lemma x_cube'_int_spec (n : Z) :
-      ⊢ EWP (diff (x_cube)) ZNum #n {{ y, ⌜ y = #(3 * (n * n))%Z ⌝ }}.
+      ⊢ EWP (diff (x_cube)) (to_struct ZNum) #n {{ y, ⌜ y = #(3 * (n * n))%Z ⌝ }}.
     Proof using R₁ R₂.
-      iPoseProof (x_cube'_spec $! ZNum) as "Hdiff".
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply (ewp_mono' with "Hdiff").
-      iClear "Hdiff".
-      iIntros (vdiff) "Hdiff".
-      iSpecialize ("Hdiff" $!
-        Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
-      iApply (ewp_mono' with "Hdiff"). iModIntro.
+      ewp_bind_rule.
+      iApply ewp_mono'; [iApply x_cube'_spec|].
+      iIntros (e) "He !>". simpl. unfold isExp.
+      iSpecialize ("He" $! ZNum Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
+      iApply (ewp_mono' with "He").
       iIntros (v). iDestruct 1 as (s) "[-> ->]". iPureIntro. simpl. f_equal.
       rewrite (_: (∀ (n : Z), 3 * n = n + n + n)%Z); [|lia].
       by rewrite !Z.mul_1_l Z.mul_1_r Z.mul_add_distr_l Z.add_assoc.
     Qed.
 
     Lemma x_cube''_int_spec (n : Z) :
-      ⊢ EWP (diff (diff (x_cube))) ZNum #n {{ y, ⌜ y = #(6 * n)%Z ⌝ }}.
+      ⊢ EWP (diff (diff (x_cube))) (to_struct ZNum) #n {{ y, ⌜ y = #(6 * n)%Z ⌝ }}.
     Proof using R₁ R₂.
-      iPoseProof (x_cube''_spec $! ZNum) as "Hdiff".
-      iApply (Ectxi_ewp_bind (AppLCtx _)). done.
-      iApply (ewp_mono' with "Hdiff").
-      iClear "Hdiff". iIntros (vdiff) "Hdiff".
-      iSpecialize ("Hdiff" $!
-        Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
-      iApply (ewp_mono' with "Hdiff"). iModIntro.
+      iApply (ewp_bind (ConsCtx (AppLCtx _) (ConsCtx (AppLCtx _) _))). done.
+      iApply ewp_mono'; [iApply x_cube''_spec|]. simpl.
+      iIntros (e) "He". iModIntro.
+      iSpecialize ("He" $! ZNum Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
+      iApply (ewp_mono' with "He").
       iIntros (v). iDestruct 1 as (s) "[-> ->]". iPureIntro. simpl. f_equal.
       rewrite !Z.mul_1_l Z.mul_add_distr_l //=.
       rewrite !Z.mul_0_l !Z.mul_0_r !Z.add_0_l !Z.add_0_r !Z.mul_1_r //=.
@@ -2503,217 +2567,3 @@ Section clients.
   End x_cube.
 
 End clients.
-
-
-(** * Implementation in HH. *)
-
-(** An attentive reader might have noticed that the algorithm we verified
-    in the previous sections was not entirely written in [HH]. Indeed,
-    the function [diff] is a Coq function of two arguments. One of its
-    arguments, for example, is a record of type [Num], which is used in
-    the definition of [diff] as the provider of arithmetical operations and
-    constants. This diverges from the actual code that we would write in [HH]
-    or in another programming language, because that is not how these numerical
-    operations would be accessed. A program that takes such record as one of
-    its arguments would have to deconstruct it and bind its components using
-    binders of the language itself, not meta-level ones.
-
-    Writing the code with constructors and deconstrutors for these record
-    values would make it harder to decompose the implementation of [diff]
-    as separate functions -- [handle], [update], [create] -- which would
-    consequently complicate the Coq proofs. Nevertheless, in the following
-    section, we show that our effort from previous sections was not in vain:
-    we can reuse what was proven for [diff] in verifying a full [HH]
-    implementation of automatic differentiation.
-*)
-
-Section hh_implementation.
-  Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
-
-  Definition to_struct (N : Num) : val :=
-    (nzero, (none, (nadd, nmul)))%V.
-
-  Definition to_Num (zero one add mul : val) : Num :=
-    {| nzero := zero; none := one; nadd := add; nmul := mul |}.
-
-  Definition hh_diff : val := λ: "f" "num",
-    let: "nzero" := Fst "num" in
-    let: "none"  := Fst (Snd "num") in
-    let: "nadd"  := Fst (Snd (Snd "num")) in
-    let: "nmul"  := Snd (Snd (Snd "num")) in
-
-    let: "create" := λ: "n", InjR ("n", ref "nzero") in
-
-    let: "get_val" := λ: "x",
-      match: "x" with
-        (* Constant. *) InjL "x" =>
-         match: "x" with
-           (* Zero. *) InjL <> => "nzero"
-         | (* One.  *) InjR <> => "none"
-         end
-      | (* Variable. *) InjR "x" => Fst "x"
-      end
-    in
-
-    let: "update" := λ: "x" "incr",
-      match: "x" with
-        (* Constant. *) InjL <>  => #()
-      | (* Variable. *) InjR "x" =>
-        let: "xd" := Snd "x" in
-        "xd" <- "nadd" (Load "xd") "incr"
-      end
-    in
-
-    let: "handle" := λ: "f" "seed",
-      try: "f" "seed" with
-        effect (λ: "args" "k",
-          let: "op" := Fst      "args"  in
-          let: "a"  := Fst (Snd "args") in
-          let: "b"  := Snd (Snd "args") in
-
-          let: "av" := "get_val" "a"      in
-          let: "bv" := "get_val" "b"      in
-
-          match: "op" with
-            (* Add *) InjL <> =>
-             let: "x" := "create" ("nadd" "av" "bv") in
-             "k" "x";;
-             let: "xd" := get_diff "x" in
-             "update" "a" "xd";;
-             "update" "b" "xd"
-
-          | (* Mul *) InjR <> =>
-             let: "x" := "create" ("nmul" "av" "bv") in
-             "k" "x";;
-             let: "xd" := get_diff "x"   in
-             let: "ad" := "nmul" "bv" "xd" in
-             let: "bd" := "nmul" "av" "xd" in
-             "update" "a" "ad";;
-             "update" "b" "bd"
-          end
-        )
-      | return (λ: "res",
-             "update" "res" "none")
-      end
-    in
-
-    let: "vf" := "f" (to_struct ADNum) in
-    λ: "a",
-      let: "x" := "create" "a" in
-      "handle" "vf" "x";;
-      get_diff "x".
-
-  (* The class [NumSpec N Ψ RS] can be seen as the domain of predicates
-     [implements : val → R → iProp Σ] for which the assertions [nzero_spec],
-     [none_spec], [nadd_spec], [nmul_spec] and [implements_pers] hold.
-
-     In the following, we detach the type of predicates, [val → R → iProp Σ],
-     from its restrictions, which will be bundled into the new typeclass [numSpec].
-
-     This allows the specification of [hh_diff] to quantify directly over
-     predicates, instead of terms of type [NumSpec N Ψ RS]. We believe this
-     leads to a more readable definition of [IsExp].
-   *)
-
-  Class numSpec {R : Set}
-    (zero one add mul : val)
-    (implements : val → R → iProp Σ)
-    (Ψ : iEff Σ)
-    (RS : RingSig R) :=
-  {
-    nzero_spec' : ⊢ implements zero (Oᵣ);
-    none_spec'  : ⊢ implements one  (Iᵣ);
-
-    nadd_spec' E a b r s :
-      implements a r -∗
-        implements b s -∗
-          EWP add a b @ E <| Ψ |> {{ x,
-            implements x (radd r s) }};
-
-    nmul_spec' E a b r s :
-      implements a r -∗
-        implements b s -∗
-          EWP mul a b @ E <| Ψ |> {{ x,
-            implements x (rmul r s) }};
-
-    implements_pers' u r :> Persistent (implements u r);
-  }.
-
-  Program Instance NumSpec' {R : Set} (RS : RingSig R)
-    (zero one add mul : val)
-    (implements : val → R → iProp Σ)
-    (Ψ : iEff Σ)
-    (nSpec : numSpec zero one add mul implements Ψ RS) :
-    NumSpec (to_Num zero one add mul) Ψ RS :=
-  {|
-    implements := implements;
-    nzero_spec := nzero_spec';
-    none_spec  := none_spec';
-    nadd_spec  := nadd_spec';
-    nmul_spec  := nmul_spec';
-    implements_pers := implements_pers'
-  |}.
-
-  Program Instance numSpec'  {R : Set}
-    (RS : RingSig R) (N : Num) (Ψ : iEff Σ)
-    (NSpec : NumSpec N Ψ RS) :
-    numSpec nzero none nadd nmul implements Ψ RS :=
-  {|
-    nzero_spec' := nzero_spec;
-    none_spec'  := none_spec;
-    nadd_spec'  := nadd_spec;
-    nmul_spec'  := nmul_spec;
-    implements_pers' := implements_pers
-  |}.
-
-  Definition IsExp (e : val) (E : Expr ()) : iProp Σ :=
-    ∀ (zero one add mul : val),
-      EWP (e (zero, (one, (add, mul)))%V) {{ f,
-        ∀ (R : Set) (RS : RingSig R) (RA : IsRing R) (Ψ : iEff Σ),
-          ∀ (implements : val → R → iProp Σ),
-            ⌜ numSpec zero one add mul implements Ψ RS ⌝ -∗
-              ∀ (x : val) (r : R),
-                implements x r -∗
-                  EWP (f x) <| Ψ |> {{ y, ∃ s,
-                    implements y s ∗
-                      ⌜ s =ᵣ eval (map (λ _, r) E) ⌝ }} }}.
-
-  Definition hh_diff_spec : Prop :=
-    ⊢ ∀ (e : val) (E : Expr ()),
-        IsExp e E -∗
-          EWP hh_diff e {{ e',
-            IsExp e' (∂ E ./ ∂ tt .at (λ _, Xₑ)) }}.
-
-  Theorem hh_diff_correct : hh_diff_spec.
-  Proof using R₁ R₂ Σ.
-    iIntros (e E) "He".
-    unfold hh_diff. ewp_pure_steps.
-    iIntros (zero one add mul). ewp_pure_steps.
-    iPoseProof (diff_correct) as "Hdiff".
-    iSpecialize ("Hdiff" $! (λ N, e (to_struct N)) E).
-    iSpecialize ("Hdiff" with "[He]").
-    { iIntros (N). destruct N as [nzero none nadd nmul].
-      rewrite /to_struct //=.
-      iSpecialize ("He" $! nzero none nadd nmul).
-      iApply (ewp_mono with "He").
-      iIntros (f) "Hf". simpl. iModIntro.
-      iIntros (R RS RA Ψ NSpec).
-      set N := to_Num nzero none nadd nmul.
-      by iApply ("Hf" $! R RS RA Ψ implements
-        (numSpec' RS N Ψ NSpec)).
-    }
-    set N := to_Num zero one add mul.
-    iSpecialize ("Hdiff" $! N).
-    iApply (ewp_mono with "Hdiff").
-    iIntros (f) "Hf". simpl. iModIntro.
-    iIntros (R RS RA Ψ implements) "%".
-    iSpecialize ("Hf" $! R RS RA Ψ).
-    iSpecialize ("Hf" $!
-      (NumSpec' RS zero one add mul implements Ψ H)).
-    iIntros (x X) "Hx".
-    iSpecialize ("Hf" $! x X with "Hx").
-    iApply (ewp_mono with "Hf"). simpl.
-    by iIntros (y) "Hy".
-  Qed.
-
-End hh_implementation.
