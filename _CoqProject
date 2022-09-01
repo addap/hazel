@@ -34,5 +34,6 @@ theories/exceptions.v
 theories/scheduler.v
 theories/auto_diff.v
 theories/ml_references.v
+theories/shift_reset.v
 
 theories/adequacy.v
