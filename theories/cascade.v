@@ -298,7 +298,7 @@ Section verification.
         iExists us, u. iFrame. iSplit; [done|].
         iIntros "HiterSt". by ewp_pure_steps.
       - rewrite -isSeq_eq.
-        by iApply (handler_judgment with "HhandlerSt").
+        by iApply (yield_handler_correct with "HhandlerSt").
     Qed.
 
   End invert_correct.

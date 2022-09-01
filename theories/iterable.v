@@ -40,7 +40,7 @@ Section representation.
 
   (* A representable type [A] is persistently representable
      if its representation predicate holds persistently. *)
-  Class PersRepresentable A `{!Representable A} :=
+  Class PersRepresentable A `{Representable A} :=
     pers_representable x X :> Persistent (represents x X).
 
   (* A type family [G] is a data structure if [G A] is
@@ -50,7 +50,7 @@ Section representation.
 
   (* A data structure [G] is persistent if [G A] is persistently
      representable for every persistently representable type [A]. *)
-  Class PersStructure G `{!DataStructure G} :=
+  Class PersStructure G `{DataStructure G} :=
     is_pers_representable A `{PersRepresentable A} :>
       PersRepresentable (G A).
 
@@ -62,7 +62,7 @@ End representation.
 Section iterable.
   Context `{!heapG Σ}.
 
-  Class Iterable G `{!DataStructure G} := {
+  Class Iterable G `{DataStructure _ G} := {
 
     (* [iter] is the iteration method. *)
     iter : val;
@@ -76,7 +76,7 @@ Section iterable.
     complete  {A : Type} : G A → list A → Prop;
 
     (* Specification of [iter]. *)
-    iter_spec E (A : Type) `{!Representable A}
+    iter_spec E (A : Type) `{Representable _ A}
                 (I : list A → iProp Σ)
                 (Ψ : iEff Σ)
                 (T : G A)

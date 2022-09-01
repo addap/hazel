@@ -209,12 +209,11 @@ Local Definition S' : iProp Σ := True.
 Lemma iter_spec E (I : list val → iProp Σ)
                   (Ψ : iEff Σ) (f : val) :
   □ (∀ us u, permitted (us ++ [u]) -∗
-     S' -∗
-       I us -∗
-         EWP f u @ E <| Ψ |> {{ _, S' ∗ I (us ++ [u]) }}) -∗
+     I us -∗
+       EWP f u @ E <| Ψ |> {{ _, I (us ++ [u]) }}) -∗
   S -∗
     I [] -∗
-      EWP iter f @ E <| Ψ |> {{ _, ∃ xs, S ∗ I xs ∗ complete xs }}.
+      EWP iter f @ E <| Ψ |> {{ _, ∃ xs, I xs ∗ complete xs ∗ S }}.
 Proof.
   unfold iter, permitted, complete, S, S'.
   iIntros "#f_spec Hl HI".
@@ -232,18 +231,17 @@ Proof.
     rewrite app_length app_length //=; by lia ].
     rewrite take_app cons_middle app_assoc take_app.
     iIntros "HI".
-    iApply ewp_mono; [| iApply ("f_spec" with "[] [//] HI") ].
-    { by iIntros (_) "[_ HI]". }
+    iApply ewp_mono; [| iApply ("f_spec" with "[] HI") ].
+    { by iIntros (_) "HI". }
     { by iExists vs. }
   - by rewrite Nat.sub_diag firstn_O.
 Qed.
 
-Program Instance IterLib_valid : IterLib Σ := {
-  iter      := iter;
-  permitted := permitted;
-  complete  := complete;
-  S         := S;
-  S'        := S';
+Program Instance isIter_valid : isIter Σ := {
+  iter        := iter;
+  permitted   := permitted;
+  complete    := complete;
+  canTraverse := S;
   iter_spec := iter_spec
 }.
 

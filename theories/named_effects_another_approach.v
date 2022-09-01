@@ -945,6 +945,7 @@ End find.
 
 Section exists_exists.
   Context `{!heapG Σ}.
+  Context G `{Iterable (Σ:=Σ) G}.
 
   Variable Not_found : eff_name.
 
