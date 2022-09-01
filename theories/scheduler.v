@@ -758,12 +758,13 @@ Proof.
   iExists ∅. rewrite fmap_empty. by iFrame.
 Qed.
 
-Lemma run_spec (main : val) : ⊢ |==> ∃ γ,
-  EWP main #() <| Ψ_conc γ |> {{ _, True }} -∗
+Lemma run_spec (main : val) : ⊢
+  (∀ γ, EWP main #() <| Ψ_conc γ |> {{ _, True }}) -∗
     EWP run main {{ _, True }}.
 Proof.
+  iIntros "Hmain". iApply fupd_ewp.
   iMod promise_inv_alloc as (γ) "Hpromise_inv".
-  iModIntro. iExists γ. iIntros "Hmain".
+  iModIntro.
   iApply (run_spec' _ _ (λ _, True%I) with "Hpromise_inv").
   iApply (ewp_mono with "Hmain"). by auto.
 Qed.
