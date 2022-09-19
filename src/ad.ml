@@ -46,8 +46,8 @@ let diff (e : exp) : exp = { eval =
         let zero = mk zero zero
         and one = mk one zero
         and add a b = mk (a.v + b.v) (a.d + b.d)
-        and mul a b = mk (a.v * b.v) (a.d * b.v + a.v * b.d) in
-        { zero; one; add; mul }
+        and mul a b = mk (a.v * b.v) (a.d * b.v + a.v * b.d)
+        in { zero; one; add; mul }
       let x = mk n one
       let y = e.eval num x
     end in
@@ -65,32 +65,36 @@ let diff (e : exp) : exp = { eval =
   fun (type v) ({ zero; one; add; mul } : v num) (n : v) ->
     let ( + ), ( * ) = add, mul in
     let open struct
-      open Stack
+      (* The graph. *)
       type t = O | I | Var of { v : v ; mutable d : v }
-      type op = Add | Mul
-      type letbinding = Let of t * (t * op * t)
-      type context = letbinding Stack.t
-
-      let cont = create()
-
       let mk n       = Var { v = n; d = zero }
       let get_v u    = match u with O -> zero | I -> one  | Var u     -> u.v
       let get_d u    = match u with O | I -> assert false | Var u     -> u.d
       let update u i = match u with O | I -> ()    | Var u -> u.d <- u.d + i
-
-      let add a b =
-        let u = mk (get_v a + get_v b) in push (Let (u, (a, Add, b))) cont; u
-      let mul a b =
-        let u = mk (get_v a * get_v b) in push (Let (u, (a, Mul, b))) cont; u
+      (* The stack. *)
+      type op = Add | Mul
+      type binding = Let of t * (t * op * t)
+      open Stack
+      let stack : binding Stack.t = create()
+      (* The dictionary used in the forward phase. *)
       let num =
-        { zero = O; one = I; add; mul }
-
+        let zero = O
+        and one = I
+        and add a b =
+          let u = mk (get_v a + get_v b) in
+          push (Let (u, (a, Add, b))) stack; u
+        and mul a b =
+          let u = mk (get_v a * get_v b) in
+          push (Let (u, (a, Mul, b))) stack; u
+        in { zero; one; add; mul }
+      (* The forward phase. *)
       let x = mk n
       let y = e.eval num x
+      (* The backward phase. *)
       let () =
         update y one;
-        while not (is_empty cont) do
-          match pop cont with
+        while not (is_empty stack) do
+          match pop stack with
           | Let (u, (a, Add, b)) ->
               update a (get_d u);
               update b (get_d u)
@@ -98,7 +102,6 @@ let diff (e : exp) : exp = { eval =
               update a (get_d u * get_v b);
               update b (get_d u * get_v a)
         done
-
     end in
     get_d x
 }
@@ -114,25 +117,23 @@ let diff (e : exp) : exp = { eval =
   fun (type v) ({ zero; one; add; mul } : v num) (n : v) ->
     let ( + ), ( * ) = add, mul in
     let open struct
-
-      type t = O | I | Var of { v : v ; mutable d : v } (* zero | one | var *)
-      effect Add : t * t -> t
-      effect Mul : t * t -> t
-
+      (* The graph. *)
+      type t = O | I | Var of { v : v ; mutable d : v }
       let mk n       = Var { v = n; d = zero }
       let get_v u    = match u with O -> zero | I -> one  | Var u     -> u.v
       let get_d u    = match u with O | I -> assert false | Var u     -> u.d
       let update u i = match u with O | I -> ()    | Var u -> u.d <- u.d + i
-
+      (* The dictionary. *)
+      effect Add : t * t -> t
+      effect Mul : t * t -> t
       let num =
         let zero = O
         and one = I
         and add a b = perform (Add (a, b))
-        and mul a b = perform (Mul (a, b)) in
-        { zero; one; add; mul }
-
+        and mul a b = perform (Mul (a, b))
+        in { zero; one; add; mul }
+      (* The forward and backward phases. *)
       let x = mk n
-
       let () =
         match e.eval num x with
         | effect (Add (a, b)) k ->
@@ -147,7 +148,6 @@ let diff (e : exp) : exp = { eval =
             update b (get_d u * get_v a)
         | y ->
             update y one
-
     end in
     get_d x
 }
