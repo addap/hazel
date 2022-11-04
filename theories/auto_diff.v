@@ -11,15 +11,15 @@ Set Default Proof Using "Type".
 
 (** * Implementation. *)
 
-(** In this section, we introduce an implementation of reverse mode automatic
+(** In this section, we introduce an implementation of reverse-mode automatic
     differentiation written in our calculus [HH]. This is the code that we are
     going to study throughout this theory. The idea is to use effects as a way
-    to infer the sequence of arithmetic operations performed by the client
+    to infer the sequence of arithmetic operations performed by a program
     during its evaluation. This list is known in the literature as the Wengert
     list.
 
-    Notice that this idea is not new. Many implementations of reverse mode AD
-    using effect handlers or delimited continuations already exist.
+    This idea is not new. Many implementations of reverse-mode AD using effect
+    handlers or delimited continuations already exist.
 *)
 
 Section implementation.
@@ -921,19 +921,6 @@ Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
   nzero_spec : ⊢ implements nzero rzero;
   none_spec  : ⊢ implements none  rone;
 
-  (* The following specifications are an alternative to the above ones.
-     The difference is that [nzero] and [none] would no longer be values.
-     They would be programs that the client could choose to execute to have
-     access to a representation of the neutral elements of the ring.
-     However, doing so leads to trickier internal specifications (the internal
-     definition of [implements]), because the derivative field would not
-     have meaning. It would have to be described by an invariant just so
-     the update operations could go through. The same idea applies if we
-     expose the function [create] to the client.
-   *)
-  (* nzero_spec E : ⊢ EWP nzero @ E <| Ψ |> {{ x, implements x rzero }}; *)
-  (* none_spec  E : ⊢ EWP none  @ E <| Ψ |> {{ x, implements x rone  }}; *)
-
   nadd_spec E a b r s :
     implements a r -∗
       implements b s -∗
@@ -946,10 +933,9 @@ Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
         EWP nmul a b @ E <| Ψ |> {{ x,
           implements x (rmul r s) }};
 
-  implements_pers u r :> Persistent (implements u r);
+  implements_comp u a b : req a b → implements u a -∗ implements u b;
 
-  (* See the remark bellow to understand the purpose of the following line. *)
-  (* implements_ne   u n : Proper (req ==> (dist n)) (implements u); *)
+  implements_pers u r :> Persistent (implements u r);
 }.
 
 Definition isExp (e : val) (E : Expr ()) : iProp Σ :=
@@ -958,19 +944,8 @@ Definition isExp (e : val) (E : Expr ()) : iProp Σ :=
         ∀ (Ψ : iEff Σ) (NSpec : NumSpec N Ψ RS),
           ∀ (x : val) (r : R),
             implements x r -∗
-              EWP (e (to_struct N) x) <| Ψ |> {{ y, ∃ s,
-                implements y s ∗
-                  ⌜ s =ᵣ eval (map (λ _, r) E) ⌝ }}.
-
-(* Remark:
-   -- The existentially quantified ring element [s] that appears in the
-      postcondition of [diff] could be avoided by asking the predicate
-      [implements] to be non-expansive. However, this would complicate the
-      verification of [diff] because the numerical implementation of symbolic
-      expressions that it provides to the client doesn't satisfy this property.
-      The same trick of the existential quantification might work for turning
-      the [implements] predicate non-expansive, but again, we choose simplicity.
-*)
+              EWP (e (to_struct N) x) <| Ψ |> {{ y,
+                implements y (eval (map (λ _, r) E)) }}.
 
 Definition diff_spec : Prop :=
   ⊢ ∀ (e : val) (E : Expr ()),
@@ -986,9 +961,8 @@ Proof.
   iIntros (????????) "#Hx".
   iSpecialize ("Hf" with "Hx").
   iApply (ewp_mono' with "Hf").
-  iIntros (y) . iDestruct 1 as (s) "[Hs %]".
-  iExists s. iModIntro. iFrame. iPureIntro.
-  rewrite H. by apply eval_equiv.
+  iIntros (y) . iIntros "Hs !>".
+  by iApply implements_comp; [apply (eval_equiv _ _ _ He)|].
 Qed.
 
 End specification.
@@ -1840,12 +1814,8 @@ Section library_implementation_of_expressions.
   Notation adj_vars   := ([a₀; a₁; aₓ])        (only parsing).
   Notation represents := (represents γ ℓₓ nᵣ)  (only parsing).
 
-  (* If we give the predicate [represents] directly in the definition
-     of [ExprNumSpec], then some unsolved goals remain. With this
-     silly definition they don't.
-   *)
   Definition implements_expr : val → Expr () → iProp Σ :=
-    represents.
+    (λ u E, ∃ E', represents u E' ∗ ⌜ Expr_equiv E' E ⌝)%I.
 
   Definition to_val : Binop → val :=
     λ op, match op with Add => InjLV #() | Mul => InjRV #() end.
@@ -1877,14 +1847,17 @@ Section library_implementation_of_expressions.
         EWP (perform op) a b @ E <| AD |> {{ x,
           implements_expr x (Node _ op el er) }}.
   Proof.
-    iIntros "Ha Hb".
+    iIntros "[%el' [Ha %Hel]] [%er' [Hb %Her]]".
     unfold perform. ewp_pure_steps.
     iApply ewp_eff.
     rewrite AD_agreement.
-    iExists op, a, b, el, er.
+    iExists op, a, b, el', er'.
     iFrame. iSplit; [done|].
     iIntros (x) "Hx". iNext.
-    iApply ewp_value. iFrame.
+    iApply ewp_value.
+    iExists (Node () op el' er'). iFrame.
+    iPureIntro.
+    by apply Expr_equiv_ext.
   Qed.
 
   Corollary add_spec E (a b : val) (el er : Expr ()) :
@@ -1902,10 +1875,20 @@ Section library_implementation_of_expressions.
   Proof. apply (perform_spec E Mul). Qed.
 
   Lemma adj_var_0_spec : ⊢ implements_expr a₀ (Oₑ).
-  Proof. by iPureIntro. Qed.
+  Proof. iExists (Oₑ). by iPureIntro. Qed.
 
   Lemma adj_var_1_spec : ⊢ implements_expr a₁ (Iₑ).
-  Proof. by iPureIntro. Qed.
+  Proof. iExists (Iₑ). by iPureIntro. Qed.
+
+  Lemma implements_expr_comp u El Er :
+    Expr_equiv El Er →
+      implements_expr u El -∗
+        implements_expr u Er.
+  Proof.
+    iIntros (Heq) "[%El' [HEl %HEl]]".
+    iExists El'. iFrame. iPureIntro.
+    by apply (Expr_equiv_trans _ El).
+  Qed.
 
   Program Instance ADNumSpec : NumSpec ADNum AD (ExprRing ()) := {
     implements := implements_expr;
@@ -1915,6 +1898,8 @@ Section library_implementation_of_expressions.
 
     nadd_spec  := add_spec;
     nmul_spec  := mul_spec;
+
+    implements_comp := implements_expr_comp;
   }.
 
 End library_implementation_of_expressions.
@@ -2425,7 +2410,7 @@ Section proof_of_diff.
     set aₓ := InjRV (x, #ℓₓ)%V.
     iSpecialize ("He" $! ADNum (Expr ()) (ExprRing ()) ExprIsRing).
     iSpecialize ("He" $! Ψ_client NSpec_client).
-    iSpecialize ("He" $! aₓ (Xₑ) with "[//]").
+    iSpecialize ("He" $! aₓ (Xₑ) with "[]"). { by iExists (Xₑ). }
 
     iModIntro. simpl.
     iApply (ewp_mono' with "[Hinv He]").
@@ -2445,7 +2430,7 @@ Section proof_of_diff.
     by iApply (get_d_spec with "Hx")|].
     iIntros (d). iIntros "[_ Hd] !>". 
     iDestruct "Hd" as (s) "[Hs %]".
-    iExists s. iFrame. iPureIntro.
+    iApply (implements_comp with "Hs").
     rewrite eval_univariate_expr in Hdiff_output.
     rewrite diff_univariate_expr.
     by rewrite Hdiff_output.
@@ -2492,6 +2477,8 @@ Section clients.
     Next Obligation. iIntros (E a b r s) "-> ->". by simpl; ewp_pure_steps. Qed.
     (* Implements ×ᵣ. *)
     Next Obligation. iIntros (E a b r s) "-> ->". by simpl; ewp_pure_steps. Qed.
+    (* Compatibility. *)
+    Next Obligation. by intros u a b ->. Qed.
 
   End ring_of_integers.
 
@@ -2512,8 +2499,7 @@ Section clients.
       iApply ewp_mono'; [iApply (nmul_spec with "Hx Hx")|].
       iIntros (y) "#Hy". iModIntro. simpl.
       iApply ewp_mono'; [iApply (nmul_spec with "Hx Hy")|].
-      iIntros (z) "Hz". iModIntro.
-      iExists (r ×ᵣ (r ×ᵣ r)). by iFrame.
+      by iIntros (z) "Hz".
     Qed.
 
     Lemma x_cube'_spec :
@@ -2544,7 +2530,7 @@ Section clients.
       iIntros (e) "He !>". simpl. unfold isExp.
       iSpecialize ("He" $! ZNum Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
       iApply (ewp_mono' with "He").
-      iIntros (v). iDestruct 1 as (s) "[-> ->]". iPureIntro. simpl. f_equal.
+      iIntros (v) "-> !>". iPureIntro. simpl. f_equal.
       rewrite (_: (∀ (n : Z), 3 * n = n + n + n)%Z); [|lia].
       by rewrite !Z.mul_1_l Z.mul_1_r Z.mul_add_distr_l Z.add_assoc.
     Qed.
@@ -2557,7 +2543,7 @@ Section clients.
       iIntros (e) "He". iModIntro.
       iSpecialize ("He" $! ZNum Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
       iApply (ewp_mono' with "He").
-      iIntros (v). iDestruct 1 as (s) "[-> ->]". iPureIntro. simpl. f_equal.
+      iIntros (v) "-> !>". iPureIntro. simpl. f_equal.
       rewrite !Z.mul_1_l Z.mul_add_distr_l //=.
       rewrite !Z.mul_0_l !Z.mul_0_r !Z.add_0_l !Z.add_0_r !Z.mul_1_r //=.
       rewrite (_: (∀ (n : Z), 6 * n = n + n + n + n + n + n)%Z); [|lia].
