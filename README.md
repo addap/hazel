@@ -30,53 +30,79 @@ according to their versions as listed in the file [opam](../opam).
 
 ### Preliminaries
 
- - [theories/lib.v](theories/lib.v): General definitions and lemmas.
+ - [lib/lib.v](theories/lib/lib.v): General definitions and lemmas.
 
 ### Language
 
- - [theories/lang.v](theories/lang.v): Definition of the HH programming language.
- - [theories/notation.v](theories/notation.v): Syntactic sugar for common
-   constructs of the language.
+ - [language/syntax.v](theories/language/syntax.v): Definition of the
+   `eff_lang` programming language.
+ - [language/notation.v](theories/language/notation.v): Syntactic sugar
+   for common constructs of the language.
+ - [language/semantics.v](theories/language/semantics.v): Small-step
+   operational semantics of `eff_lang`.
+ - [language/neutral_contexts.v](theories/language/neutral_contexts.v):
+   Definition of _neutral contexts_, evaluation contexts without handler frames.
+ - [language/properties.v](theories/language/properties.v): General
+   facts about `eff_lang`.
+ - [language/iris_language.v](theories/language/iris_language.v): Proof
+   that `eff_lang` is a language in the Iris sense (i.e., it satisfies the
+   `Language` type class) and is thus endowed of a default notion of weakest
+   precondition.
+ - [language/eff_lang.v](theories/language/eff_lang.v): Gathering of
+   files from this subdirectory.
 
-### Protocols
 
- - [theories/ieff.v](theories/ieff.v): Definition of protocols and
-   auxiliary operators.
- - [theories/protocol_agreement.v](theories/protocol_agreement.v): Introduction and
-   study of the protocol agreement judgement.
+### Program Logic
 
-### Reasoning Rules / Logic
+ - [program_logic/protocols.v](theories/program_logic/protocols.v): Theory of
+   protocols. It includes the definition of the domain of protocols, protocol
+   operators, protocol ordering, notions of protocol monotonicity, the upward
+   closure and properties.
+ - [program_logic/weakest_precondition.v](theories/program_logic/weakest_precondition.v):
+   Definition of our customized notion of weakest precondition, `EWP`, which
+   is well-suited for reasoning about programs that might perform effects.
+ - [program_logic/basic_reasoning_rules.v](theories/program_logic/basic_reasoning_rules.v):
+   Statement and proof that `EWP` enjoys standard reasoning rules from Separation Logic,
+   such as the bind rule, the monotonicity rule, and the frame rule; and non-standard ones,
+   such as the rules for performing effects.
+ - [program_logic/state_reasoning.v](theories/program_logic/state_reasoning.v):
+   Reasoning rules for heap-manipulating programs.
+ - [program_logic/shallow_handler_reasoning.v](theories/program_logic/shallow_handler_reasoning.v):
+   Reasoning rule for installing a shallow handler.
+ - [program_logic/tactics.v](theories/program_logic/tactics.v): A set of tactics
+   that automate "symbolic execution" and applications of the bind rule.
+ - [program_logic/deep_handler_reasoning.v](theories/program_logic/deep_handler_reasoning.v):
+   Reasoning rule for installing a deep handler.
+ - [program_logic/reasoning_rules.v](theories/program_logic/reasoning_rules.v):
+   Gathering of most files from this subdirectory.
+ - [program_logic/adequacy.v](theories/program_logic/adequacy.v): Proof that
+   reasoning in terms of `EWP` is sound.
 
- - [theories/weakestpre.v](theories/weakestpre.v): Definition of the weakest
-   precondition and proof of usual reasoning rules.
- - [theories/heap.v](theories/heap.v): Proof of the reasoning rules for
-   operations manipulating the heap.
- - [theories/shallow_handler.v](theories/shallow_handler.v): Reasoning rule for shallow handlers.
- - [theories/deep_handler.v](theories/deep_handler.v): Reasoning rule for deep handlers.
- - [theories/adequacy.v](theories/adequacy.v): Adequacy theorem.
-
-### Libraries
-
- - [theories/list_lib.v](theories/list_lib.v): Interface of a library for
-   manipulating lists.
- - [theories/queue_lib.v](theories/queue_lib.v): Interface of a library for
-    manipulating queues.
 
 ### Case studies
 
- - [theories/cascade.v](theories/cascade.v): Verification of a program that
-   uses effect handlers to perform *control inversion*.
- - [theories/state.v](theories/state.v): Verification of a program that
-   implements a single *mutable cell* by combining parameter passing style
-   and handlers.
- - [theories/exceptions.v](theories/exceptions.v): Reasoning rules for
-   *exception handlers* as a special case of effect handlers.
- - [theories/scheduler.v](theories/scheduler.v): Verification of a library for
-   *asynchronous computation*.
- - [theories/shallow_as_deep.v](theories/shallow_as_deep.v): Verified encoding
-   of shallow handlers using deep handlers.
- - [theories/ml_references.v](theories/ml_references.v): Verification of an
-   intricate implementation of ML-like references using effect handlers and
-   the ability to generate fresh effect names.
- - [theories/auto_diff.v](theories/auto_diff.v): Verification of a
-   minimalist reverse-mode AD library.
+  - [case_studies/iteration.v](theories/case_studies/iteration.v): Introduction
+    of tools to specify iteration in the presence of effects. Specification
+    of higher-order iteration methods and lazy sequences.
+  - [case_studies/callcc.v](theories/case_studies/callcc.v): Implementation of
+    `callcc` and `throw` using multi-shot continuations; statement and proof
+    of reasoning rules for this encoding; and verification of programs
+    exploiting `callcc`/`throw`, including Delbianco and Nanevski's `inc3`
+    and Filinski's `shift`/`reset`.
+  - [case_studies/control_inversion.v](theories/case_studies/control_inversion.v):
+    Verification of two implementations of `invert`: a function that transforms
+    iteration methods into lazy sequences. The first implementation is based on
+    effect handlers and the second one is based on `callcc`.
+  - [case_studies/shallow_as_deep.v](theories/case_studies/shallow_as_deep.v):
+    Verification of the encoding of shallow handlers using deep handlers.
+  - [case_studies/exceptions.v](theories/case_studies/exceptions.v):
+    Verification of the encoding of exceptions using effect handlers.
+  - [case_studies/state.v](theories/case_studies/state.v): Verification of the
+    implementation of a mutable cell using effect handlers in _state-passing
+    style_.
+  - [case_studies/shift_reset.v](theories/case_studies/shift_reset.v):
+    Reasoning rules for an effect-handler--based encoding of `shift` and `reset`.
+  - [case_studies/asynchronous_computation.v](theories/case_studies/asynchronous_computation.v):
+    Verification of a library for _asynchronous computation_.
+  - [case_studies/automatic_differentiation.v](theories/case_studies/automatic_differentiation.v):
+    Verification of a minimalist _reverse-mode automatic differentiation_ library.

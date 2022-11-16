@@ -1,5 +1,11 @@
+(* notation.v *)
+
+(* This file introduces notation for [eff_lang]. It is an adaptation of
+   theory [iris_heap_lang/notation.v] from the Iris project.
+*)
+
 From iris.program_logic Require Import language.
-From hazel              Require Export lang.
+From language Require Export syntax.
 
 Set Default Proof Using "Type".
 
@@ -15,6 +21,13 @@ Coercion App : expr >-> Funclass.
 
 Coercion Val : val >-> expr.
 Coercion Var : string >-> expr.
+
+(* Coercion to allow the syntax "□? m _" where "m" is a mode.
+   This notation is defined in the file [bi/derived_connectives.v]
+   of the Iris project. *)
+Definition mode_to_bool : mode → bool :=
+  λ m, match m with OS => false | MS => true end.
+Coercion mode_to_bool : mode >-> bool.
 
 (** Define some derived forms. *)
 Notation Lam x e := (Rec BAnon x e) (only parsing).
@@ -74,7 +87,6 @@ Notation "'ref' e" := (Alloc e%E) (at level 10) : expr_scope.
 Notation "- e" := (UnOp MinusUnOp e%E) : expr_scope.
 
 Notation "e1 + e2" := (BinOp PlusOp e1%E e2%E) : expr_scope.
-Notation "e1 +ₗ e2" := (BinOp OffsetOp e1%E e2%E) : expr_scope.
 Notation "e1 - e2" := (BinOp MinusOp e1%E e2%E) : expr_scope.
 Notation "e1 * e2" := (BinOp MultOp e1%E e2%E) : expr_scope.
 Notation "e1 `quot` e2" := (BinOp QuotOp e1%E e2%E) : expr_scope.
@@ -136,13 +148,13 @@ Notation "e1 ;; e2" := (Lam BAnon e2%E e1%E)
   (at level 100, e2 at level 200,
    format "'[' '[hv' '[' e1 ']' ;;  ']' '/' e2 ']'") : expr_scope.
 
-(* Shortcircuit Boolean connectives *)
+(* Shortcircuit Boolean connectives. *)
 Notation "e1 && e2" :=
   (If e1%E e2%E (LitV (LitBool false))) (only parsing) : expr_scope.
 Notation "e1 || e2" :=
   (If e1%E (LitV (LitBool true)) e2%E) (only parsing) : expr_scope.
 
-(** Notations for option *)
+(** Notations for options. *)
 Notation NONE := (InjL (LitV LitUnit)) (only parsing).
 Notation NONEV := (InjLV (LitV LitUnit)) (only parsing).
 Notation SOME x := (InjR x) (only parsing).
@@ -155,5 +167,11 @@ Notation "'match:' e0 'with' 'SOME' x => e2 | 'NONE' => e1 'end'" :=
   (Match e0 BAnon e1 x%binder e2)
   (e0, e1, x, e2 at level 200, only parsing) : expr_scope.
 
-Notation "'do:' e" := (Do e%E)
+Notation "'do:' e" := (Do OS e%E)
   (at level 200, e at level 200, format "'[' 'do:' e ']'") : expr_scope.
+Notation "'doₘ:' e" := (Do MS e%E)
+  (at level 200, e at level 200, format "'[' 'doₘ:' e ']'") : expr_scope.
+
+Notation "'shallow-try:' e 'with' 'effect' h | 'return' r 'end'" :=
+  (TryWith e h r)
+  (e, h, r at level 200, only parsing) : expr_scope.

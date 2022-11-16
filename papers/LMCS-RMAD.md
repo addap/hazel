@@ -16,14 +16,15 @@ There are three files in the repository that are relevant to the paper:
 
    There you will find the version of OCaml to compile the program.
 
-3. The Coq formalization of the results in the paper [auto_diff.v](../theories/auto_diff.v).
+3. The Coq formalization of the results in the paper [automatic_differentiation.v](../theories/case_studies/automatic_differentiation.v).
 
 
 The other files of the project are related to the design of Hazel
 and to its application to case studies.
 These files might be interesting for those willing to dive deeper
 into the entrails of the logic, but they are not necessary for
-understanding the theory [auto_diff.v](../theories/auto_diff.v).
+understanding the theory
+[automatic_differentiation.v](../theories/case_studies/automatic_differentiation.v).
 
 
 ## Link between paper and formalization
@@ -31,8 +32,8 @@ understanding the theory [auto_diff.v](../theories/auto_diff.v).
 ### Main result
 
 The main result of the paper, Statement 5.1, is Definition
-`hh_diff_spec` in the formalization. The proof of this statement
-is the Theorem `hh_diff_correct`.
+`diff_spec` in the formalization. The proof of this statement
+is the Theorem `diff_correct`.
 
 
 ### Notation
@@ -49,7 +50,7 @@ compares to the notation introduced in the paper:
 | Definition 4.5 (Bindings; contexts)    | `let u = a op b`      | `(u, (a, op, b))`                     |
 | Definition 4.6 (Filling)               | `K[y]`                | `Let K .in y` or `filling K y`        |
 | Definition 4.7 (Context Evaluation)    | `ρ{K}`                | `ρ.{[K]}` or `extension ρ K`          |
-| Definition 5.2 (isExp)                 | `e isExp E`           | `IsExp e E`                           |
+| Definition 5.2 (isExp)                 | `e isExp E`           | `isExp e E`                           |
 | Figure 6                               | `isNumDict`           | `numSpec`                             |
 | Representation predicate               | `n isNum r`           | `implements n r`                      |
 | Definition 5.4 (isSubExp)              | `u isSubExp E`        | `represents u E`                      |

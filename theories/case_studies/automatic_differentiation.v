@@ -1,34 +1,30 @@
-From iris.algebra   Require Import gmap_view.            (* Definition of [gmap_view] RA. *)
-From iris.proofmode Require Import base tactics classes. (* Iris's tactics.               *)
+(* automatic_differentiation.v *)
 
-From hazel          Require Import weakestpre deep_handler.
-From hazel          Require Import notation tactics.
+From iris.algebra Require Import gmap_view.
+From iris.proofmode Require Import base tactics classes.
+From program_logic Require Import reasoning_rules.
 
 Set Default Proof Using "Type".
 
-(* auto_diff.v *)
 
-
+(* ========================================================================== *)
 (** * Implementation. *)
 
-(** In this section, we introduce an implementation of reverse-mode automatic
-    differentiation written in our calculus [HH]. This is the code that we are
-    going to study throughout this theory. The idea is to use effects as a way
-    to infer the sequence of arithmetic operations performed by a program
-    during its evaluation. This list is known in the literature as the Wengert
-    list.
+(* In this section, we introduce an implementation of reverse-mode automatic
+   differentiation written in our calculus [eff_lang]. This is the code that we
+   are going to study throughout this theory. The idea is to use effects as a
+   way to infer the sequence of arithmetic operations performed by a program
+   during its evaluation. This list is known in the literature as the Wengert
+   list.
 
-    This idea is not new. Many implementations of reverse-mode AD using effect
-    handlers or delimited continuations already exist.
-*)
+   This idea is not new. Many implementations of reverse-mode AD using effect
+   handlers or delimited continuations already exist. *)
 
 Section implementation.
 
-(** The typeclass [Num] provides a concrete implementation of a semiring [R]
-    (to be defined later). This means that elements of [R] are accessible in
-    [HH] trough the interface [Num].
-*)
-
+(* The typeclass [Num] provides a concrete implementation of a semiring [R]
+   (to be defined later). This means that elements of [R] are accessible in
+   [eff_lang] trough the interface [Num]. *)
 Class Num := {
   nzero  : val;
   none   : val;
@@ -38,14 +34,14 @@ Class Num := {
 
 Section RMAD.
 
-  Definition mk {N : Num} : val := λ: "n", InjR ("n", ref nzero).
+  Definition mk {N : Num} : val := (λ: "n", InjR ("n", ref nzero))%V.
 
-  Definition zero  : val := InjLV (InjLV #()).
-  Definition one   : val := InjLV (InjRV #()).
-  Definition add   : val := λ: "a" "b", do: (InjLV #(), ("a", "b")).
-  Definition mul   : val := λ: "a" "b", do: (InjRV #(), ("a", "b")).
+  Definition zero  : val := (InjLV (InjLV #()))%V.
+  Definition one   : val := (InjLV (InjRV #()))%V.
+  Definition add   : val := (λ: "a" "b", do: (InjLV #(), ("a", "b")))%V.
+  Definition mul   : val := (λ: "a" "b", do: (InjRV #(), ("a", "b")))%V.
 
-  Definition get_v {N : Num} : val := λ: "u",
+  Definition get_v {N : Num} : val := (λ: "u",
     match: "u" with
       (* Constant. *) InjL "u" =>
        match: "u" with
@@ -53,24 +49,27 @@ Section RMAD.
        | (* One.  *) InjR <> => none
        end
     | (* Variable. *) InjR "u" => Fst "u"
-    end.
+    end
+  )%V.
 
-  Definition get_d : val := λ: "u",
+  Definition get_d : val := (λ: "u",
     match: "u" with
       (* Constant. *) InjL <>  => #() #() (* Unreachable. *)
     | (* Variable. *) InjR "u" => Load (Snd "u")
-    end.
+    end
+  )%V.
 
-  Definition update {N : Num} : val := λ: "u" "i",
+  Definition update {N : Num} : val := (λ: "u" "i",
     match: "u" with
       (* Constant. *) InjL <>  => #()
     | (* Variable. *) InjR "u" =>
       let: "ud" := Snd "u" in
       "ud" <- nadd (Load "ud") "i"
-    end.
+    end
+  )%V.
 
   Definition run {N : Num} (e : expr) : expr :=
-    try: e with
+    deep-try: e with
       effect (λ: "args" "k",
         let: "op" := Fst      "args"  in
         let: "a"  := Fst (Snd "args") in
@@ -99,7 +98,7 @@ Section RMAD.
       )
     | return (λ: "y",
            update "y" none)
-    end.
+    end%E.
 
   Program Instance ADNum : Num := {
     nzero := zero;
@@ -114,7 +113,7 @@ Section RMAD.
   Definition to_Num (zero one add mul : val) : Num :=
     {| nzero := zero; none := one; nadd := add; nmul := mul |}.
 
-  Definition diff : val := λ: "e" "num",
+  Definition diff : val := (λ: "e" "num",
     let: "nzero" := Fst "num" in
     let: "none"  := Fst (Snd "num") in
     let: "nadd"  := Fst (Snd (Snd "num")) in
@@ -145,7 +144,7 @@ Section RMAD.
     λ: "a",
       let: "x" := "mk" "a" in
 
-      try: ("e" (to_struct ADNum) "x") with
+      deep-try: ("e" (to_struct ADNum) "x") with
         effect (λ: "args" "k",
           let: "op" := Fst      "args"  in
           let: "a"  := Fst (Snd "args") in
@@ -176,24 +175,25 @@ Section RMAD.
              "update" "y" "none")
       end;;
 
-      get_d "x".
+      get_d "x"
+  )%V.
 
 End RMAD.
 
 End implementation.
 
 
+(* ========================================================================== *)
 (** * Mathematics. *)
 
-(** We define the mathematical notions for this case study. These definitions
-    form the basis of a precise language for explaining AD. They appear in the
-    specification of the algorithm and in the arguments conveying its correctness.
-*)
+(* We define the mathematical notions for this case study. These definitions
+   form the basis of a precise language for explaining AD. They appear in the
+   specification of the algorithm and in the arguments conveying its
+   correctness. *)
 
-(** The typeclass [RingSig] bundles the operations of a ring and [IsRing]
-    bundles the axioms of a semiring. It will be useful in specifying the
-    interface of numerical values.
-*)
+(* The typeclass [RingSig] bundles the operations of a ring and [IsRing]
+   bundles the axioms of a semiring. It will be useful in specifying the
+   interface of numerical values. *)
 
 Class RingSig (R : Set) := {
   rzero : R;
@@ -328,9 +328,10 @@ Definition extension {R : Set} {RS : RingSig R} (ϱ : val → R) (K : context) :
 
 End definitions.
 
-(** Mathematical notation. *)
 
-(* TODO: Better ways to define notation? *)
+(* -------------------------------------------------------------------------- *)
+(** Notation. *)
+
 Notation "'Oᵣ'" := rzero (at level 50).
 Notation "'Iᵣ'" := rone  (at level 50).
 Infix "+ᵣ" := radd (at level 70).
@@ -905,16 +906,13 @@ Program Instance ExprIsRing {I : Set} : IsRing (Expr I) := {
 End ring_instances.
 
 
+(* ========================================================================== *)
 (** * Specification. *)
 
 Section specification.
 
 Context `{!irisGS eff_lang Σ}.
 
-(* The class [NumSpec N Ψ RS] can be seen as the domain of predicates
-   [implements : val → R → iProp Σ] for which the assertions [nzero_spec],
-   [none_spec], [nadd_spec], [nmul_spec] and [implements_pers] hold.
-*)
 Class NumSpec (N : Num) (Ψ : iEff Σ) {R : Set} (RS : RingSig R) := {
   implements : val → R → iProp Σ;
 
@@ -960,7 +958,7 @@ Proof.
   iIntros (He) "#Hf !>".
   iIntros (????????) "#Hx".
   iSpecialize ("Hf" with "Hx").
-  iApply (ewp_mono' with "Hf").
+  iApply (ewp_mono with "Hf").
   iIntros (y) . iIntros "Hs !>".
   by iApply implements_comp; [apply (eval_equiv _ _ _ He)|].
 Qed.
@@ -968,37 +966,22 @@ Qed.
 End specification.
 
 
+(* ========================================================================== *)
 (** * Verification. *)
 
 Section verification.
 
-(** Camera setup. *)
-
-(** We define our personalised notion of resource. This means that we have
-    defined a structure whose elements can be claimed to be owned. We have
-    thus extended the language of logical propositions. Within this newly
-    added fragment of the language, we will be able to write what it means
-    for the current context to be in a certain state or for one to known
-    that it contains a certain entry.
-*)
+(* -------------------------------------------------------------------------- *)
+(** Camera Setup. *)
 
 Section camera.
 
   Canonical Structure nodeO := leibnizO node.
 
-  (* Our personalised resource is [gmap_viewR loc nodeO] and here we define
-     a typeclass claiming for it to be among the underlying resources
-     parameterizing [iProp].
-  *)
   Class cgraphG Σ := {
     cgraph_mapG :> inG Σ (gmap_viewR val nodeO);
   }.
 
-  (* Now we prove that this claim can be satisfied by exhibiting a concrete
-     list of resources containing our personalised one. (This isn't trivial,
-     because the resource definition could depend on the list of resources
-     to which it must belong.)
-   *)
   Definition cgraphΣ := #[
     GFunctor (gmap_viewR val nodeO)
   ].
@@ -1008,9 +991,11 @@ Section camera.
 
 End camera.
 
-(** Ghost theory. *)
 
-(** The derived definitions and their properties. *)
+(* -------------------------------------------------------------------------- *)
+(** Ghost Theory. *)
+
+(* The derived definitions and their properties. *)
 
 Section ghost_theory.
   Context `{!cgraphG Σ}.
@@ -1058,7 +1043,7 @@ Section ghost_theory.
 End ghost_theory.
 
 Section represents.
-  Context `{!cgraphG Σ, !heapG Σ}
+  Context `{!cgraphG Σ, !heapGS Σ}
            {R : Set} {RS : RingSig R}
            {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
@@ -1089,8 +1074,7 @@ Section represents.
 End represents.
 
 (* The following section contains general facts that are useful in the
-   subsequent sections.
-*)
+   subsequent sections. *)
 
 Section general_facts.
 
@@ -1120,10 +1104,8 @@ Section general_facts.
   Lemma NoDup_app_13 {A : Type} (xs ys : list A) : NoDup (xs ++ ys) → NoDup ys.
   Proof. rewrite NoDup_app. by intros (_ & _ & ?). Qed.
 
-  (* Although very specific, this lemma is useful in
-     combination with the invariants.
-   *)
-  Lemma big_sepL_NoDup `{!heapG Σ} us :
+  (* This lemma is useful in combination with the invariants. *)
+  Lemma big_sepL_NoDup `{!heapGS Σ} us :
     ([∗ list] u ∈ us, ∃ v w ℓ,
        ℓ ↦ w ∗ ⌜ u = InjRV (v, #ℓ)%V ⌝) -∗
       ⌜ NoDup us ⌝.
@@ -1169,16 +1151,17 @@ Section general_facts.
 
 End general_facts.
 
-(** Forward invariant. *)
 
-(** The forward invariant is a predicate on contexts. If we imagine the
-    execution of the client as a trace indexed by the sequence of arithmetic
-    operations (that is, a context), then the invariant asserts what holds
-    for each such sequence at each step.
-*)
+(* -------------------------------------------------------------------------- *)
+(** Forward Invariant. *)
+
+(* The forward invariant is a predicate on contexts. If we imagine the
+   execution of the client as a trace indexed by the sequence of arithmetic
+   operations (that is, a context), then the invariant asserts what holds
+   for each such sequence at each step. *)
 
 Section forward_invariant.
-  Context `{!cgraphG Σ, !heapG Σ}
+  Context `{!cgraphG Σ, !heapGS Σ}
            {R : Set} {RS : RingSig R}
            {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
@@ -1467,8 +1450,7 @@ Section forward_invariant.
       rewrite diff_bind_overwrite_leaf_id_with_zero; [|done].
       rewrite diff_bind_overwrite_leaf_id_with_one; done.
     }
-    { (* TODO: Avoid the duplication of proofs here. *)
-      intros j Hj _.
+    { intros j Hj _.
       have Hfi: vars (f a₀) = ∅. { by rewrite /f overwrite_eq. }
       have Hfj: ∀ j, vars (f j) ⊆ {[j]}. {
        intros k. case (decide (k = a₀)) as[->|Hneq].
@@ -1558,7 +1540,7 @@ Section forward_invariant.
 End forward_invariant.
 
 Section forward_invariant_alloc.
-  Context `{!cgraphG Σ, !heapG Σ}
+  Context `{!cgraphG Σ, !heapGS Σ}
            {R : Set} {RS : RingSig R}
            {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
@@ -1583,16 +1565,17 @@ Section forward_invariant_alloc.
 
 End forward_invariant_alloc.
 
-(** Backward invariant. *)
 
-(** After the execution of the client, the handler traverses the complete
-    sequence of operations in reverse order. We can thus split this complete
-    sequence into a pair of contexts, its prefix and suffix, and state what
-    holds at each step of this phase in terms of those.
-*)
+(* -------------------------------------------------------------------------- *)
+(** Backward Invariant. *)
+
+(* After the execution of the client, the handler traverses the complete
+   sequence of operations in reverse order. We can thus split this complete
+   sequence into a pair of contexts, its prefix and suffix, and state what
+   holds at each step in terms of this pair of contexts. *)
 
 Section backward_invariant.
-  Context `{!cgraphG Σ, !heapG Σ}
+  Context `{!cgraphG Σ, !heapGS Σ}
            {R : Set} {RS : RingSig R} {RA : IsRing R}
            {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
@@ -1690,7 +1673,6 @@ Section backward_invariant.
     by rewrite -(Permutation_cons_append _ x)].
     iDestruct "HK₁" as "[Hx HK₁]".
     iDestruct "Hx" as (v ℓ) "[$ _]".
-    (* TODO: cleanup. *)
     assert ((a ∈ defs K₁ ++ [aₓ] ∨ a = a₀ ∨ a = a₁) ∧
             (b ∈ defs K₁ ++ [aₓ] ∨ b = a₀ ∨ b = a₁)) as [Ha' Hb'].
     { revert Ha Hb.
@@ -1799,7 +1781,7 @@ Section backward_invariant.
 End backward_invariant.
 
 Section library_implementation_of_expressions.
-  Context `{!cgraphG Σ, !heapG Σ}
+  Context `{!cgraphG Σ, !heapGS Σ}
            {R : Set} {RS : RingSig R}
            {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
@@ -1827,19 +1809,19 @@ Section library_implementation_of_expressions.
     (>> (op : Binop) (a b : val) (el er : Expr ()) >>
        ! (args op a b) {{ represents a el ∗ represents b er }};
      << (x : val) <<
-       ? (x)           {{ represents x (Node _ op el er)    }}).
+       ? (x)           {{ represents x (Node _ op el er)    }} @ OS).
 
-  Lemma AD_agreement v Φ : protocol_agreement v AD Φ ≡
-    (∃ (op : Binop) (a b : val) (el er : Expr ()),
-      ⌜ v = args op a b ⌝                          ∗
-      (represents a el ∗ represents b er)          ∗
-      (∀ x, represents x (Node _ op el er) -∗ Φ x))%I.
-  Proof.
-    rewrite /AD (protocol_agreement_tele' [tele _ _ _ _ _] [tele _]). by auto.
-  Qed.
+  Lemma upcl_AD v Φ :
+    iEff_car (upcl OS AD) v Φ ≡
+      (∃ (op : Binop) (a b : val) (el er : Expr ()),
+        ⌜ v = args op a b ⌝                          ∗
+        (represents a el ∗ represents b er)          ∗
+        (∀ x, represents x (Node _ op el er) -∗ Φ x))%I.
+  Proof. by rewrite /AD (upcl_tele' [tele _ _ _ _ _] [tele _]). Qed.
 
-  Definition perform (op : Binop) : val := λ: "a" "b",
-    do: (to_val op, ("a", "b")).
+  Definition perform (op : Binop) : val := (λ: "a" "b",
+    do: (to_val op, ("a", "b"))
+  )%V.
 
   Lemma perform_spec E (op : Binop) (a b : val) (el er : Expr ()) :
     implements_expr a el -∗
@@ -1849,12 +1831,11 @@ Section library_implementation_of_expressions.
   Proof.
     iIntros "[%el' [Ha %Hel]] [%er' [Hb %Her]]".
     unfold perform. ewp_pure_steps.
-    iApply ewp_eff.
-    rewrite AD_agreement.
+    iApply ewp_do_os.
+    rewrite upcl_AD.
     iExists op, a, b, el', er'.
     iFrame. iSplit; [done|].
-    iIntros (x) "Hx". iNext.
-    iApply ewp_value.
+    iIntros (x) "Hx".
     iExists (Node () op el' er'). iFrame.
     iPureIntro.
     by apply Expr_equiv_ext.
@@ -1905,7 +1886,7 @@ Section library_implementation_of_expressions.
 End library_implementation_of_expressions.
 
 Section proof_of_handle.
-  Context `{!cgraphG Σ, !heapG Σ}
+  Context `{!cgraphG Σ, !heapGS Σ}
            {R : Set} {RS : RingSig R} {RA : IsRing R}
            {N : Num} {Ψ : iEff Σ} {NSpec : NumSpec N Ψ RS}.
 
@@ -1952,7 +1933,6 @@ Section proof_of_handle.
     iDestruct (adj_var_cases with "Hinv Hu") as %Hcases.
     unfold get_v. ewp_pure_steps.
     destruct Hcases as [Hu|[Hu|Hu]]; try rewrite Hu.
-    (* TODO: cleanup. *)
     { iDestruct "Hinv" as "(? & ? & Hheap)".
       destruct (elem_of_list_lookup_1 _ _ Hu) as [i Hi].
       rewrite (big_sepL_delete' _ _ _ _ Hi).
@@ -1992,14 +1972,13 @@ Section proof_of_handle.
     iDestruct ("Hx" $! v ℓ Hx) as (d s) "(#Hs & % & Hℓ)".
     rename H into Hs.
     unfold get_d. ewp_pure_steps.
-    rewrite_strat outermost Hx.
+    rewrite {1}Hx.
     ewp_pure_steps.
     iApply (ewp_load with "Hℓ"). iNext.
     iIntros "Hℓ !>".
     iSplitL "Hℓ".
-    { iIntros (v' ℓ' ->).
-      inversion Hx. simplify_eq.
-      iExists d, s. by auto.
+    { iIntros (v' ℓ' Heq). simplify_eq.
+      iExists d, s. iFrame. by iSplit; [iApply "Hs"|].
     }
     { iExists s. unfold ϑ. by iSplit. }
   Qed.
@@ -2018,8 +1997,8 @@ Section proof_of_handle.
     ewp_bind_rule.
     iApply (ewp_load with "Hℓ"). iNext.
     iIntros "Hℓ !>". simpl.
-    iApply (Ectxi_ewp_bind (StoreRCtx _)). done.
-    iApply ewp_mono'; [iApply (nadd_spec with "Hd Hi")|].
+    iApply (ewp_bind' (StoreRCtx _)). done.
+    iApply ewp_mono; [iApply (nadd_spec with "Hd Hi")|].
     iIntros (w) "Hw". iModIntro.
     iApply (ewp_store with "Hℓ"). iNext.
     iIntros "Hℓ". iModIntro. by eauto.
@@ -2048,7 +2027,7 @@ Section proof_of_handle.
       rewrite (big_sepL_delete' _ _ _ _ Hi).
       iDestruct "Hheap" as       "[Hy Hheap]".
       iDestruct "Hy"    as (v ℓ) "(_ & Hℓ & ->)".
-      iApply (ewp_mono' with "[Hℓ]"); [
+      iApply (ewp_mono with "[Hℓ]"); [
       iApply (update_spec_crude with "Hℓ"); [done|
         iApply nzero_spec |
         iApply none_spec  ]|].
@@ -2076,7 +2055,7 @@ Section proof_of_handle.
         intros [=-> ->]. by destruct (NoDup_lookup _ _ _ _ HND Hi Hk).
       }
     }
-    { iApply ewp_mono'; [
+    { iApply ewp_mono; [
       by destruct Hy as [|]; iApply update_constant_spec|].
       iIntros (v) "_". iModIntro.
       iSplit; [iPureIntro;
@@ -2117,17 +2096,17 @@ Section proof_of_handle.
       intros ?? Hxa Hxb Hda Hdb.
       iIntros "#Hia #Hib". iDestruct 1 as "[[% Ha] Hb]".
       rename H into Ha.
-      iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+      iApply (ewp_bind' (AppRCtx _)); [done|].
       case Ha as [[w Ha]|[v [ℓ Ha]]].
-      { iApply ewp_mono'; [
+      { iApply ewp_mono; [
         iApply update_constant_spec|]; [done|].
         iIntros (v') "_". iModIntro. simpl.
-        iApply (Ectxi_ewp_bind (AppLCtx _)); [done|].
-        iApply ewp_pure_step; [apply pure_prim_step_rec |].
+        iApply (ewp_bind' (AppLCtx _)); [done|].
+        iApply ewp_pure_step; [apply pure_prim_step_Rec |].
         iApply ewp_value. simpl.
         iApply ewp_pure_step; [apply pure_prim_step_beta|]. simpl.
         case (decide (a = b)) as [<-|Hab].
-        { iApply ewp_mono'; [
+        { iApply ewp_mono; [
           iApply update_constant_spec|]; [done|].
           iIntros (_) "_". iModIntro.
           iSplitL; [|iIntros "_"];
@@ -2137,7 +2116,7 @@ Section proof_of_handle.
         { iDestruct ("Hb" with "[//]") as "[% Hb]".
           rename H into Hb. clear v'.
           case Hb as [[w' Hb]|[v' [ℓ' Hb]]].
-          { iApply ewp_mono'; [
+          { iApply ewp_mono; [
             iApply update_constant_spec|]; [done|].
             iIntros (_) "_". iModIntro.
             iSplitL; [|iIntros "_"];
@@ -2146,7 +2125,7 @@ Section proof_of_handle.
           }
           { iDestruct ("Hb" with "[//]") as (d s) "(#Hd & % & Hℓ')".
             rename H into Hs. iClear "Ha".
-            iApply (ewp_mono' with "[Hℓ']"); [
+            iApply (ewp_mono with "[Hℓ']"); [
             by iApply (update_spec_crude with "Hℓ' Hd Hib")|].
             iIntros (_). iClear "Hd". clear d.
             iDestruct 1 as (d) "[Hℓ' #Hd]". iModIntro.
@@ -2168,17 +2147,17 @@ Section proof_of_handle.
       }
       { iDestruct ("Ha" with "[//]") as (d s) "(#Hd & % & Hℓ)".
         rename H into Hs.
-        iApply (ewp_mono' with "[Hℓ]"); [
+        iApply (ewp_mono with "[Hℓ]"); [
         by iApply (update_spec_crude with "Hℓ Hd Hia")|].
         iIntros (w). iClear "Hd". clear d.
         iDestruct 1 as (d) "[Hℓ #Hd]". iModIntro. simpl.
-        iApply (Ectxi_ewp_bind (AppLCtx _)); [done|].
-        iApply ewp_pure_step; [apply pure_prim_step_rec |].
+        iApply (ewp_bind' (AppLCtx _)); [done|].
+        iApply ewp_pure_step; [apply pure_prim_step_Rec |].
         iApply ewp_value.
         iApply ewp_pure_step; [apply pure_prim_step_beta|]. simpl.
         clear w.
         case (decide (a = b)) as [<-|Hab].
-        { iApply (ewp_mono' with "[Hℓ]"); [
+        { iApply (ewp_mono with "[Hℓ]"); [
           by iApply (update_spec_crude with "Hℓ Hd Hib")|].
           iIntros (w). iClear "Hd". clear d.
           iDestruct 1 as (d) "[Hℓ #Hd]". iModIntro. simpl.
@@ -2196,7 +2175,7 @@ Section proof_of_handle.
         }
         { iDestruct ("Hb" with "[//]") as "[% Hb]". rename H into Hb.
           case Hb as [[w' Hb]|[v' [ℓ' Hb]]].
-          { iApply ewp_mono'; [by iApply update_constant_spec|].
+          { iApply ewp_mono; [by iApply update_constant_spec|].
             iIntros (_) "_". iModIntro.
             iSplitL "Hℓ"; [|iIntros "_"];
             try (iSplit; [iPureIntro; naive_solver|]);
@@ -2216,7 +2195,7 @@ Section proof_of_handle.
           }
           { iDestruct ("Hb" with "[//]") as (d' s') "(#Hd' & % & Hℓ')".
             rename H into Hs'.
-            iApply (ewp_mono' with "[Hℓ']"); [
+            iApply (ewp_mono with "[Hℓ']"); [
             by iApply (update_spec_crude with "Hℓ' Hd' Hib")|].
             iIntros (w). iClear "Hd'". clear d'.
             iDestruct 1 as (d') "[Hℓ' #Hd']". iModIntro.
@@ -2252,35 +2231,35 @@ Section proof_of_handle.
     set ϱ := (λ _, r).{[a₀ := Oᵣ]}.{[a₁ := Iᵣ]}.
     iIntros "Hf Hinv".
     unfold run.
-    do 4 ewp_value_or_step.
+    ewp_pure_steps.
     iApply (ewp_deep_try_with with "Hf").
 
     iLöb as "IH" forall (K₁).
-    rewrite deep_handler_unfold. iSplit.
+    rewrite deep_handler_unfold.
+    iSplit;[|iSplit];
+    last (by iIntros (??) "HFalse"; rewrite upcl_bottom).
 
     (* Return branch. *)
-    { iClear "IH". iIntros (y) "#Hy". iNext.
+    { iClear "IH". iIntros (y) "#Hy".
       iDestruct "Hy" as (s) "[Hs %]". rename H into He.
       ewp_pure_steps.
-      iApply (ewp_mono' with "[Hinv]"); [
+      iApply (ewp_mono with "[Hinv]"); [
       by iApply (trigger_backward_phase with "Hinv Hs")|].
       by eauto.
     }
 
     (* Effect branch. *)
-    { iIntros (args k) "Hprot". iNext.
-      ewp_pure_steps.
-      rewrite AD_agreement.
-      iDestruct "Hprot" as (op a b el er) "(-> & [#Ha #Hb] & Hk)".
+    { iIntros (args k). rewrite upcl_AD.
+      iIntros "[%op [%a [%b [%el [%er (-> & [#Ha #Hb] & Hk)]]]]]".
       unfold args.
       ewp_pure_steps.
-      iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-      iApply (ewp_mono' with "[Hinv]"); [
+      iApply (ewp_bind' (AppRCtx _)); [done|].
+      iApply (ewp_mono with "[Hinv]"); [
       iApply (get_v_spec with "Hinv Ha")|]. fold ϱ.
       iIntros (av) "[Hinv #Hav]". iModIntro. simpl.
       ewp_pure_steps.
-      iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-      iApply (ewp_mono' with "[Hinv]"); [
+      iApply (ewp_bind' (AppRCtx _)); [done|].
+      iApply (ewp_mono with "[Hinv]"); [
       iApply (get_v_spec with "Hinv Hb")|]. fold ϱ.
       iIntros (bv) "[Hinv #Hbv]". iModIntro. simpl.
       ewp_pure_steps.
@@ -2292,12 +2271,12 @@ Section proof_of_handle.
 
       (* Add. *)
       { unfold to_val. ewp_pure_steps.
-        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-        iApply ewp_mono'; [
+        iApply (ewp_bind' (AppRCtx _)); [done|].
+        iApply (ewp_bind' (AppRCtx _)); [done|].
+        iApply ewp_mono; [
         iApply (nadd_spec with "Hav Hbv")|].
         iIntros (xv) "#Hxv". iModIntro. simpl.
-        iApply ewp_mono'; [iApply mk_spec|].
+        iApply ewp_mono; [iApply mk_spec|].
         iIntros (x'). iDestruct 1 as (x) "[-> Hx]".
         iDestruct (forward_inv_fresh_loc with "Hx Hinv") as %Hx.
         iMod ((forward_inv_update _ _ _ _ _ _ Add)
@@ -2308,7 +2287,7 @@ Section proof_of_handle.
 
         (* Continuation call. *)
         ewp_bind_rule.
-        iApply (ewp_mono' with "[Hinv Hk]").
+        iApply (ewp_mono with "[Hinv Hk]").
         { iApply ("Hk" with "Hx'"). by iApply ("IH" with "Hinv"). }
         iClear "IH Hx' Ha Hb Hav Hbv Hxv".
 
@@ -2317,14 +2296,14 @@ Section proof_of_handle.
         ewp_pure_steps.
         iDestruct (backward_inv_update with "Hinv")
           as "(Hx & Hab & Hfinisher)"; try done.
-        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-        iApply (ewp_mono' with "[Hx]"); [
+        iApply (ewp_bind' (AppRCtx _)); [done|].
+        iApply (ewp_mono with "[Hx]"); [
         by iApply (get_d_spec with "Hx")|].
         iIntros (xd) "[_ Hxd]". fold ϱ.
         iDestruct "Hxd" as (s) "[#Hxd %]". rename H into Hs.
         iModIntro. simpl.
         ewp_pure_steps.
-        iApply (ewp_mono' with "[Hab]");[
+        iApply (ewp_mono with "[Hab]");[
         iApply (update_twice_spec K₁ K₂ y _ Add with "Hxd Hxd Hab");
         try done; set_solver|].
         iIntros (_) "Hinv !>".
@@ -2334,12 +2313,12 @@ Section proof_of_handle.
 
       (* Mul. *)
       { unfold to_val. ewp_pure_steps.
-        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-        iApply ewp_mono'; [
+        iApply (ewp_bind' (AppRCtx _)); [done|].
+        iApply (ewp_bind' (AppRCtx _)); [done|].
+        iApply ewp_mono; [
         iApply (nmul_spec with "Hav Hbv")|].
         iIntros (xv) "#Hxv". iModIntro. simpl.
-        iApply ewp_mono'; [iApply mk_spec|].
+        iApply ewp_mono; [iApply mk_spec|].
         iIntros (x'). iDestruct 1 as (x) "[-> Hx]".
         iDestruct (forward_inv_fresh_loc with "Hx Hinv") as %Hx.
         iMod ((forward_inv_update _ _ _ _ _ _ Mul)
@@ -2349,7 +2328,7 @@ Section proof_of_handle.
     
         (* Continuation call. *)
         ewp_bind_rule.
-        iApply (ewp_mono' with "[Hinv Hk]").
+        iApply (ewp_mono with "[Hinv Hk]").
         { iApply ("Hk" with "Hx'"). by iApply ("IH" with "Hinv"). }
         iClear "IH Hx' Ha Hb Hxv".
 
@@ -2358,21 +2337,21 @@ Section proof_of_handle.
         ewp_pure_steps. ewp_bind_rule.
         iDestruct (backward_inv_update with "Hinv")
           as "(Hx & Hab & Hfinisher)"; try done.
-        iApply (ewp_mono' with "[Hx]"); [
+        iApply (ewp_mono with "[Hx]"); [
         by iApply (get_d_spec with "Hx")|].
         iIntros (xd) "[_ Hxd]". fold ϱ.
         iDestruct "Hxd" as (s) "[#Hxd %]". rename H into Hs.
         iModIntro. simpl.
         ewp_pure_steps.
-        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-        iApply ewp_mono'; [iApply (nmul_spec with "Hbv Hxd")|].
+        iApply (ewp_bind' (AppRCtx _)); [done|].
+        iApply ewp_mono; [iApply (nmul_spec with "Hbv Hxd")|].
         iIntros (ad) "#Had". iModIntro. simpl.
         ewp_pure_steps.
-        iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-        iApply ewp_mono'; [iApply (nmul_spec with "Hav Hxd")|].
+        iApply (ewp_bind' (AppRCtx _)); [done|].
+        iApply ewp_mono; [iApply (nmul_spec with "Hav Hxd")|].
         iIntros (bd) "#Hbd". iModIntro. simpl.
         ewp_pure_steps.
-        iApply (ewp_mono' with "[Hab]"); [
+        iApply (ewp_mono with "[Hab]"); [
         iApply (update_twice_spec K₁ K₂ y _ Mul with "Had Hbd Hab");
         try (fold ϱ; by rewrite Hs); set_solver|].
         iIntros (_) "Hinv !>".
@@ -2385,7 +2364,7 @@ Section proof_of_handle.
 End proof_of_handle.
 
 Section proof_of_diff.
-  Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
+  Context `{R₁: !cgraphG Σ, R₂: !heapGS Σ}.
 
   Theorem diff_correct : diff_spec.
   Proof using R₁ R₂ Σ.
@@ -2394,12 +2373,12 @@ Section proof_of_diff.
     iIntros "!#" (N R RS RA Ψ HNS x r) "Hx".
     unfold to_struct.
     do 49 ewp_value_or_step.
-    iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-    iApply ewp_mono'; [iApply mk_spec|].
+    iApply (ewp_bind' (AppRCtx _)); [done|].
+    iApply ewp_mono; [iApply mk_spec|].
     iIntros (ℓₓ') "Hℓₓ !>". simpl.
     iDestruct "Hℓₓ" as (ℓₓ) "[-> Hℓₓ]". simpl.
     do 3 ewp_value_or_step.
-    iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
+    iApply (ewp_bind' (AppRCtx _)); [done|].
     iApply fupd_ewp.
 
     (* Allocation of the Forward Invariant. *)
@@ -2413,9 +2392,9 @@ Section proof_of_diff.
     iSpecialize ("He" $! aₓ (Xₑ) with "[]"). { by iExists (Xₑ). }
 
     iModIntro. simpl.
-    iApply (ewp_mono' with "[Hinv He]").
+    iApply (ewp_mono with "[Hinv He]").
     { iApply (run_spec _ _ _ _ _ _ _ with "[He] Hinv").
-      iApply (ewp_mono' with "He"). iIntros (y).
+      iApply (ewp_mono with "He"). iIntros (y).
       iDestruct 1 as (s) "[Hs %]". rename H into He.
       iModIntro. iExists s. iFrame. iPureIntro.
       symmetry. by apply He.
@@ -2426,7 +2405,7 @@ Section proof_of_diff.
     iDestruct "Hheap" as "(_ & Hx & _)".
     iDestruct "Hx" as (v ℓ) "[Hx %]". simplify_eq. fold aₓ.
     ewp_pure_steps.
-    iApply (ewp_mono' with "[Hx]");[
+    iApply (ewp_mono with "[Hx]");[
     by iApply (get_d_spec with "Hx")|].
     iIntros (d). iIntros "[_ Hd] !>". 
     iDestruct "Hd" as (s) "[Hs %]".
@@ -2441,20 +2420,19 @@ End proof_of_diff.
 End verification.
 
 
+(* ========================================================================== *)
 (** * Clients. *)
 
-(** We have proved that [diff] satisfies a given specification.
-    Now, we implement some clients of [diff] to see what kind of
-    results we can derive from that.
-*)
+(* We have proved that [diff] satisfies a given specification. Now, we
+   implement some clients of [diff] to see what kind of results we can derive
+   from that. *)
 
 Section clients.
 
   (* First, we provide a concrete implementation of integers. (Integers are
      unbounded in our calculus.) This will unlock the derivation functionality
      where arithmetical operators are interpreted as the standard addition and
-     multiplication on integers.
-   *)
+     multiplication on integers. *)
 
   Section ring_of_integers.
     Context `{!irisGS eff_lang Σ}.
@@ -2483,11 +2461,12 @@ Section clients.
   End ring_of_integers.
 
   Section x_cube.
-    Context `{R₁: !cgraphG Σ, R₂: !heapG Σ}.
+    Context `{R₁: !cgraphG Σ, R₂: !heapGS Σ}.
 
-    Definition x_cube : val := λ: "num" "x",
+    Definition x_cube : val := (λ: "num" "x",
       let: "nmul"  := Snd (Snd (Snd "num")) in
-      "nmul" "x" ("nmul" "x" "x").
+      "nmul" "x" ("nmul" "x" "x")
+    )%V.
 
     Lemma x_cube_spec :
       ⊢ isExp x_cube (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)).
@@ -2495,10 +2474,10 @@ Section clients.
       iIntros "!>" (????????) "#Hx".
       unfold x_cube, to_struct.
       ewp_pure_steps.
-      iApply (Ectxi_ewp_bind (AppRCtx _)); [done|].
-      iApply ewp_mono'; [iApply (nmul_spec with "Hx Hx")|].
+      iApply (ewp_bind' (AppRCtx _)); [done|].
+      iApply ewp_mono; [iApply (nmul_spec with "Hx Hx")|].
       iIntros (y) "#Hy". iModIntro. simpl.
-      iApply ewp_mono'; [iApply (nmul_spec with "Hx Hy")|].
+      iApply ewp_mono; [iApply (nmul_spec with "Hx Hy")|].
       by iIntros (z) "Hz".
     Qed.
 
@@ -2516,7 +2495,7 @@ Section clients.
             (∂ (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ)) ./ ∂ tt .at (λ _, Xₑ)) }}.
     Proof using R₁ R₂.
       ewp_bind_rule.
-      iApply ewp_mono'; [iApply x_cube'_spec|].
+      iApply ewp_mono; [iApply x_cube'_spec|].
       iIntros (e) "He !>". simpl.
       by iApply (diff_correct $! _
         (∂ (Xₑ ×ₑ (Xₑ ×ₑ Xₑ)) ./ ∂ tt .at (λ _, Xₑ))).
@@ -2526,10 +2505,10 @@ Section clients.
       ⊢ EWP (diff (x_cube)) (to_struct ZNum) #n {{ y, ⌜ y = #(3 * (n * n))%Z ⌝ }}.
     Proof using R₁ R₂.
       ewp_bind_rule.
-      iApply ewp_mono'; [iApply x_cube'_spec|].
+      iApply ewp_mono; [iApply x_cube'_spec|].
       iIntros (e) "He !>". simpl. unfold isExp.
       iSpecialize ("He" $! ZNum Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
-      iApply (ewp_mono' with "He").
+      iApply (ewp_mono with "He").
       iIntros (v) "-> !>". iPureIntro. simpl. f_equal.
       rewrite (_: (∀ (n : Z), 3 * n = n + n + n)%Z); [|lia].
       by rewrite !Z.mul_1_l Z.mul_1_r Z.mul_add_distr_l Z.add_assoc.
@@ -2538,11 +2517,11 @@ Section clients.
     Lemma x_cube''_int_spec (n : Z) :
       ⊢ EWP (diff (diff (x_cube))) (to_struct ZNum) #n {{ y, ⌜ y = #(6 * n)%Z ⌝ }}.
     Proof using R₁ R₂.
-      iApply (ewp_bind (ConsCtx (AppLCtx _) (ConsCtx (AppLCtx _) _))). done.
-      iApply ewp_mono'; [iApply x_cube''_spec|]. simpl.
+      iApply (ewp_bind [(AppLCtx _); (AppLCtx _)]). { done. }
+      iApply ewp_mono; [iApply x_cube''_spec|]. simpl.
       iIntros (e) "He". iModIntro.
       iSpecialize ("He" $! ZNum Z ZRing ZIsRing ⊥%ieff ZNumSpec #n%Z n with "[//]").
-      iApply (ewp_mono' with "He").
+      iApply (ewp_mono with "He").
       iIntros (v) "-> !>". iPureIntro. simpl. f_equal.
       rewrite !Z.mul_1_l Z.mul_add_distr_l //=.
       rewrite !Z.mul_0_l !Z.mul_0_r !Z.add_0_l !Z.add_0_r !Z.mul_1_r //=.
