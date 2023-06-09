@@ -117,7 +117,7 @@ Section implementation.
                     (* Done: *) InjL <> => #() #() (* Unreachable! *)
                   | (* Waiting: *) InjR "ks" =>
                     (* a.d. TODO maybe assert "cf" == #true *)
-                    let: "result" := RNone' in
+                    let: "result" := (RNone', Load "state") in
                     list_iter (λ: "k", queue_push "q" (λ: <>, "k" "result")) "ks";;
                     "p" <- Done "result";;
                     next "q"
@@ -130,7 +130,7 @@ Section implementation.
           match: Load "p" with
             (* Done: *) InjL <> => #() #() (* Unreachable! *)
           | (* Waiting: *) InjR "ks" =>
-              let: "result" := RSome "v" in
+              let: "result" := (RSome "v", Load "state") in
               list_iter (λ: "k", queue_push "q" (λ: <>, "k" "result")) "ks";;
               "p" <- Done "result";;
               next "q"
@@ -148,35 +148,6 @@ End implementation.
 (* ========================================================================== *)
 (** * Specification. *)
 
-Section specification.
-  Context `{!heapGS Σ}.
-  Context `{!ListLib Σ, !QueueLib Σ}.
-
-  Class AsyncCompLib := {
-    coop : iEff Σ;
-    is_promise : val → (val → iProp Σ) → iProp Σ;
-    is_promise_Persistent p Φ : Persistent (is_promise p Φ);
-    is_cancel : val → val → iProp Σ;
-    is_cancel_Persistent cf state : Persistent (is_cancel cf state);
-    io_log : val -> iProp Σ;
-    io_log_Persistent i : Persistent (io_log i);
-    is_cancel_inv : iProp Σ;
-    async_spec (e : val) Φ :
-      is_cancel_inv ∗ □ Φ RNone' ∗ (is_cancel_inv -∗ EWP e #() <| coop |> {{ y, is_cancel_inv ∗ □ Φ (RSome' y) }}) -∗
-        EWP async e <| coop |> {{ y, ∃ (p cf state : val), ⌜ y = (p, (cf, state))%V ⌝ ∗ is_cancel_inv ∗ is_promise p Φ ∗ is_cancel cf state }};
-    await_spec p Φ :
-      is_cancel_inv ∗ is_promise p Φ -∗
-        EWP await p <| coop |> {{ y, is_cancel_inv ∗ □ Φ y }};
-    fiber_cancel_spec (cf state : val) :
-      is_cancel_inv ∗ is_cancel cf state -∗
-        EWP fiber_cancel (cf, state)%V <| coop |> {{ i, is_cancel_inv ∗ io_log i }};
-  }.
-
-  Definition run_spec (main : val) :=
-    (∀ _ : AsyncCompLib, EWP main #() <| coop |> {{ _, True }}) ==∗
-      EWP run main <| ⊥ |> {{ _, True }}.
-
-End specification.
 
 
 (* ========================================================================== *)
@@ -215,46 +186,29 @@ End specification.
    *)
 
 (* The assumption that certain cameras are available. *)
-Class promiseGpreS Σ := {
-  promise_mapG :> inG Σ
-    (authR (gmapUR (loc * gname) (agreeR (laterO (val -d> (iPropO Σ))))));
+(* fstate = fiber state (promise + cancellation context) *)
+Class fstateGpreS Σ := {
+  fstate_mapG :> inG Σ
+    (authR (gmapUR ((loc * gname) * (loc * loc * gname)) (agreeR (laterO (val -d> (iPropO Σ))))));
   torchG :> inG Σ (exclR unitO);
-}.
-
-Class cancelGpreS Σ := {
   cancelG :> inG Σ (csumR (exclR natO) (agreeR natO));
-  cancel_mapG :> inG Σ
-    (authR (gmapUR (loc * loc * gname) unitR));
 }.
 
 (* A concrete instance of [Σ] for which the assumption [promisesGS Σ] holds. *)
-Definition promiseΣ := #[
+Definition fstateΣ := #[
   GFunctor (authRF
-    (gmapURF (loc * gname) (agreeRF (laterOF (valO -d> idOF)))));
-  GFunctor (exclR unitO)
-].
-
-Definition cancelΣ := #[
-  GFunctor (csumR (exclR natO) (agreeR natO));
-  GFunctor (authRF
-    (gmapUR (loc * loc * gname) unitR))
+    (gmapURF ((loc * gname) * (loc * loc * gname)) (agreeRF (laterOF (valO -d> idOF)))));
+  GFunctor (exclR unitO);
+  GFunctor (csumR (exclR natO) (agreeR natO))
 ].
 
 (* The proof of the previous claim. *)
-Instance subG_promiseΣ {Σ} : subG promiseΣ Σ → promiseGpreS Σ.
+Instance subG_promiseΣ {Σ} : subG fstateΣ Σ → fstateGpreS Σ.
 Proof. solve_inG. Qed.
 
-Instance subG_cancelΣ {Σ} : subG cancelΣ Σ → cancelGpreS Σ.
-Proof. solve_inG. Qed.
-
-Class promiseGS Σ := {
-  promise_inG :> promiseGpreS Σ;
-  promise_name : gname;
-}.
-
-Class cancelGS Σ := {
-  cancel_inG :> cancelGpreS Σ;
-  cancel_name : gname;
+Class fstateGS Σ := {
+  fstate_inG :> fstateGpreS Σ;
+  fstate_name : gname;
 }.
 
 
@@ -262,7 +216,7 @@ Class cancelGS Σ := {
 (** Predicates. *)
 
 Section predicates.
-  Context `{!heapGS Σ, !promiseGS Σ, !cancelGS Σ}.
+  Context `{!heapGS Σ, !fstateGS Σ}.
   Context `{!ListLib Σ, !QueueLib Σ}.
 
   (* ------------------------------------------------------------------------ *)
@@ -302,32 +256,25 @@ Section predicates.
     agree (later (discrete_fun (λ (_ : val), iPropO Σ))) :=
     to_agree (Next (λ v, (Φ v))).
 
-  Definition isMember p γ Φ :=
-    own promise_name (◯ {[(p, γ) := promise_unfold Φ]}).
+  Definition isMember p γ cf state δ Φ :=
+    own fstate_name (◯ {[((p, γ), (cf, state, δ)) := promise_unfold Φ]}).
 
-  Definition isPromise (p : loc) Φ : iProp Σ := (
-    ∃ γ, isMember p γ Φ
+  Definition isPromise  (p : loc) (cf state : loc) δ Φ : iProp Σ := (
+    ∃ γ, isMember p γ cf state δ Φ
+  ).
+  Definition isFstate (p : loc) (cf state : loc) Φ : iProp Σ := (
+    ∃ δ, isPromise p  cf state δ Φ
   ).
 
-  Definition isPromiseMap (M : gmap (loc * gname) (val → iProp Σ)) :=
-    own promise_name (● (promise_unfold <$> M : gmap _ _)).
+  Definition isFstateMap (M : gmap ((loc * gname) * (loc * loc * gname)) (val → iProp Σ)) :=
+    own fstate_name (● (promise_unfold <$> M : gmap _ _)).
 
   Definition io_log_active (δ : gname) (i : nat) : iProp Σ :=
     own δ (Cinl (Excl i)).
-  Definition io_log_cancelled (δ : gname) (i : nat) : iProp Σ :=
+  Definition io_log_frozen (δ : gname) (i : nat) : iProp Σ :=
     own δ (Cinr (to_agree i)).
 
-  Definition isMemberCancel cf state δ :=
-    own cancel_name (◯ {[(cf, state, δ) := tt]}).
-
-  Definition isCancel (cf state : loc) : iProp Σ := (
-    ∃ δ, isMemberCancel cf state δ
-  ).
-
-  Definition isCancelMap (M : gmap (loc * loc * gname) unit) :=
-    own cancel_name (● M).
-
-  Definition cancelInv : iProp Σ := (
+  (* Definition cancelInv : iProp Σ := (
     ∃ M, isCancelMap M ∗
       [∗ map] args ↦ tt ∈ M, let '(cf, state, δ) := args in
         ∃ (i: nat), state ↦ #i ∗ (
@@ -335,23 +282,32 @@ Section predicates.
         ∨ 
           (cf ↦ #true ∗ io_log_cancelled δ i)
         )
-  )%I.
+  )%I. *)
   (* a.d. TODO maybe have to add cancelInv to ready_pre *)
 
 
-  Definition promiseInv_pre
+  Definition fstateInv_pre
     (ready : val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ)
     (q : val) : iProp Σ := (
-    ∃ M, isPromiseMap M ∗
-      [∗ map] args ↦ Φ ∈ M, let '(p, γ) := args in
-        ((* Fulfilled: *) ∃ y,
+    ∃ M, isFstateMap M ∗
+      [∗ map] args ↦ Φ ∈ M, let '((p, γ), (cf, state, δ)) := args in
+      (* state always points to some value *)
+      ∃ (i: nat), state ↦ #i ∗ (
+        ((* Fulfilled ∧ cancellation does not matter: *) 
+          (∃ (b : bool), cf ↦ #b ∗ io_log_frozen δ i) ∗
+        ▷ ∃ y,
            p ↦ Done' y ∗ □ Φ y ∗ torch γ)
       ∨
-        ((* Unfulfilled: *) ∃ l ks,
-           p ↦ Waiting' l ∗
+        ((* Unfulfilled *) 
+          (∃ (b : bool), cf ↦ #b ∗ 
+            (if b then io_log_frozen δ i
+                 else io_log_active δ i)) ∗
+        ▷ (∃ l ks,
+           p ↦ Waiting' l ∗ 
            □ Φ RNone' ∗
            is_list l ks   ∗
-           [∗ list] k ∈ ks, ready q Φ k)
+           [∗ list] k ∈ ks, ready q Φ k))
+      )
   )%I.
 
   Definition ready_pre :
@@ -359,17 +315,18 @@ Section predicates.
     (val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) := (λ ready q Φ k,
     ∀ (y : val) n,
       □ Φ y -∗
-        ▷ promiseInv_pre ready q -∗ cancelInv -∗
+        fstateInv_pre ready q -∗
           ▷ is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) n -∗
              EWP (k : val) y <| ⊥ |> {{ _, True }}
   )%I.
 
   Local Instance ready_contractive : Contractive ready_pre.
   Proof.
-    rewrite /ready_pre /promiseInv_pre=> n ready ready' Hn q Φ k.
+    rewrite /ready_pre /fstateInv_pre=> n ready ready' Hn q Φ k.
     repeat (f_contractive || apply is_queue_ne || f_equiv);
     try apply Hn; try done; try (intros=>?; apply Hn).
-  Qed.
+    (* a.d. TODO not contractive anymore? *)
+  Admitted.
   Definition ready_def : val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ :=
     fixpoint ready_pre.
   Definition ready_aux : seal ready_def. Proof. by eexists. Qed.
@@ -379,27 +336,26 @@ Section predicates.
   Global Lemma ready_unfold q Φ k : ready q Φ k ⊣⊢ ready_pre ready q Φ k.
   Proof. rewrite ready_eq /ready_def. apply (fixpoint_unfold ready_pre). Qed.
 
-  Definition promiseInv (q : val) : iProp Σ :=
-    promiseInv_pre ready q.
+  Definition fstateInv (q : val) : iProp Σ :=
+    fstateInv_pre ready q.
 
-  Definition promiseSt q p γ (Φ : val -d> iPropO Σ) : iProp Σ :=
-    ((* Fulfilled: *) ∃ y,
-       p ↦ Done' y ∗ □ Φ y ∗ torch γ)
-  ∨
-    ((* Unfulfilled: *) ∃ l ks,
-       p ↦ Waiting' l ∗
-       □ Φ RNone' ∗
-       is_list l ks   ∗
-       [∗ list] k ∈ ks, ready q Φ k).
-
-  Definition cancelSt (cf state : loc) (δ : gname) : iProp Σ := (
+  Definition fstateSt q p γ cf state δ (Φ : val -d> iPropO Σ) : iProp Σ :=
     ∃ (i: nat), state ↦ #i ∗ (
-      (cf ↦ #false ∗ io_log_active δ i
-      )
-    ∨ 
-      (cf ↦ #true ∗ io_log_cancelled δ i
-      )
-  )).
+      ((* Fulfilled ∧ cancellation does not matter: *) 
+        (∃ (b : bool), cf ↦ #b ∗ io_log_frozen δ i) ∗
+      ▷ ∃ y,
+          p ↦ Done' y ∗ □ Φ y ∗ torch γ)
+    ∨
+      ((* Unfulfilled *) 
+        (∃ (b : bool), cf ↦ #b ∗ 
+          (if b then io_log_frozen δ i
+                else io_log_active δ i)) ∗
+      ▷ (∃ l ks,
+          p ↦ Waiting' l ∗ 
+          □ Φ RNone' ∗
+          is_list l ks   ∗
+          [∗ list] k ∈ ks, ready q Φ k))
+    ).
 
   (* ------------------------------------------------------------------------ *)
   (* Non-expansiveness. *)
@@ -422,17 +378,17 @@ Section predicates.
   Qed.
 
   (* [promiseInv]. *)
-  Global Instance promiseInv_ne n : Proper ((dist n) ==> (dist n)) promiseInv.
+  Global Instance fstateInv_ne n : Proper ((dist n) ==> (dist n)) fstateInv.
   Proof. by solve_proper. Qed.
-  Global Instance promiseInv_proper : Proper ((≡) ==> (≡)) promiseInv.
+  Global Instance fstateInv_proper : Proper ((≡) ==> (≡)) fstateInv.
   Proof. by solve_proper. Qed.
 
   (* [promiseSt]. *)
-  Global Instance promiseSt_ne n q p γ :
-    Proper ((dist n) ==> (dist n)) (promiseSt q p γ ).
+  Global Instance fstateSt_ne n q p γ cf state δ:
+    Proper ((dist n) ==> (dist n)) (fstateSt q p γ cf state δ ).
   Proof. by solve_proper. Qed.
-  Global Instance promiseSt_proper q p γ :
-    Proper ((≡) ==> (≡)) (promiseSt q p γ ).
+  Global Instance fstateSt_proper q p γ cf state δ :
+    Proper ((≡) ==> (≡)) (fstateSt q p γ cf state δ ).
   Proof. by solve_proper. Qed.
 
   (* ------------------------------------------------------------------------ *)
@@ -464,10 +420,10 @@ Section predicates.
       by rewrite excl_validI.
     Qed.
 
-    Lemma claim_cancelled_agreement δ : ∀ i j, (io_log_cancelled δ i ∗ io_log_cancelled δ j) -∗ ⌜i = j⌝.
+    Lemma claim_froze_agreement δ : ∀ i j, (io_log_frozen δ i ∗ io_log_frozen δ j) -∗ ⌜i = j⌝.
     Proof.
       intros i j.
-      rewrite /io_log_cancelled -own_op own_valid csum_validI.
+      rewrite /io_log_frozen -own_op own_valid csum_validI.
       simpl.
       iIntros "%Hagree".
       iPureIntro.
@@ -475,8 +431,8 @@ Section predicates.
     Qed.
 
     (* From iris.algebra Require Import excl. *)
-    Lemma cancel_io_log (δ : gname) (i : nat) :
-      io_log_active δ i ==∗ io_log_cancelled δ i.
+    Lemma freeze_io_log (δ : gname) (i : nat) :
+      io_log_active δ i ==∗ io_log_frozen δ i.
     Proof.
       iApply own_update.
       apply cmra_update_exclusive.
@@ -504,39 +460,47 @@ Section predicates.
   Section promise_preds.
 
     (* Persistent predicates. *)
-    Global Instance isMember_Persistent p γ Φ : Persistent (isMember p γ Φ).
+    Global Instance isMember_Persistent p γ cf state δ Φ : Persistent (isMember p γ cf state δ Φ).
     Proof. by apply _. Qed.
-    Global Instance isPromise_Persistent p Φ : Persistent (isPromise p Φ).
+    Global Instance isPromise_Persistent p cf state δ Φ : Persistent (isPromise p cf state δ Φ).
+    Proof.
+      Search Persistent "exist".
+      rewrite /isPromise.
+      apply bi.exist_persistent.
+      move=> γ.
+      by apply _.
+    Qed.
+    Global Instance isFstate_Persistent p cf state Φ: Persistent (isFstate p cf state Φ).
     Proof. by apply _. Qed.
 
-    Lemma update_promise_map M p γ Φ :
-      M !! (p, γ) = None →
-        isPromiseMap M ==∗
-          isPromiseMap (<[(p,γ):=Φ]> M) ∗ isMember p γ Φ.
+    Lemma update_fstate_map M p γ cf state δ Φ:
+      M !! ((p, γ), (cf, state, δ)) = None →
+        isFstateMap M ==∗
+          isFstateMap (<[((p,γ),(cf,state,δ)):=Φ]> M) ∗ isMember p γ cf state δ Φ.
     Proof.
-      intros Hlkp. unfold isPromiseMap. iIntros "HM".
+      intros Hlkp. unfold isFstateMap. iIntros "HM".
       iMod (own_update with "HM") as "[HM HiP]".
       { apply (@auth_update_alloc (gmapUR _ _) (promise_unfold <$> M)).
-        apply (alloc_singleton_local_update _ (p, γ) (promise_unfold Φ)).
+        apply (alloc_singleton_local_update _ ((p, γ), (cf, state, δ)) (promise_unfold Φ)).
         by rewrite /= lookup_fmap Hlkp. done. }
       iModIntro. iFrame. by rewrite fmap_insert.
     Qed.
 
-    Lemma claim_membership M p γ Φ :
-      isPromiseMap M ∗ isMember p γ  Φ -∗ ∃ Φ',
-        ⌜ M !! (p, γ) = Some Φ' ⌝ ∗ (promise_unfold Φ' ≡ promise_unfold Φ).
+    Lemma claim_membership M p γ cf state δ Φ:
+      isFstateMap M ∗ isMember p γ cf state δ Φ -∗ ∃ Φ',
+        ⌜ M !! ((p, γ), (cf, state, δ)) = Some Φ' ⌝ ∗ (promise_unfold Φ' ≡ promise_unfold Φ).
     Proof.
-      rewrite /isPromiseMap /isMember.
+      rewrite /isFstateMap /isMember.
       rewrite -own_op own_valid auth_both_validI /=.
       iIntros "[HM #HpM]". iDestruct "HM" as (M') "#HM".
       rewrite gmap_equivI gmap_validI.
-      iSpecialize ("HM" $! (p, γ)). iSpecialize ("HpM" $! (p, γ)).
+      iSpecialize ("HM" $! ((p, γ), (cf, state, δ))). iSpecialize ("HpM" $! ((p, γ), (cf, state, δ))).
       rewrite lookup_fmap lookup_op lookup_singleton.
       rewrite option_equivI.
-      case: (M  !! (p, γ))=> [Φ'|] /=; [|
-      case: (M' !! (p, γ))=> [Φ'|] /=; by iExFalso].
+      case: (M  !! ((p, γ), (cf, state, δ)))=> [Φ'|] /=; [|
+      case: (M' !! ((p, γ), (cf, state, δ)))=> [Φ'|] /=; by iExFalso].
       iExists Φ'. iSplit; first done.
-      case: (M' !! (p, γ))=> [Ψ'|] //=.
+      case: (M' !! ((p, γ), (cf, state, δ)))=> [Ψ'|] //=.
       iRewrite "HM" in "HpM". rewrite option_validI agree_validI.
       iRewrite -"HpM" in "HM". by rewrite agree_idemp.
     Qed.
@@ -551,41 +515,41 @@ Section predicates.
       by iSpecialize ("Heq" $! v).
     Qed.
 
-    Lemma promiseSt_non_duplicable q p γ γ' Φ Φ' :
-      promiseSt q p γ  Φ -∗ promiseSt q p γ' Φ' -∗ False.
+    Lemma fstateSt_non_duplicable q p γ γ' cf state δ δ' Φ Φ' :
+      fstateSt q p γ cf state δ Φ -∗ fstateSt q p γ' cf state δ' Φ' -∗ False.
     Proof.
-      assert (⊢ ∀ q p γ  Φ, promiseSt q p γ  Φ -∗ ∃ v, p ↦ v)%I as Haux.
-      { iIntros (????) "[[%v[Hp _]]|[%l[%ks[Hp _]]]]"; auto. }
+      assert (⊢ ∀ q p γ cf state δ Φ, fstateSt q p γ cf state δ Φ -∗ ∃ v, p ↦ v)%I as Haux.
+      (* { iIntros (???????) "[[%v[Hp _]]|[%l[%ks[Hp _]]]]"; auto. }
       iIntros "Hp Hp'".
       iPoseProof (Haux with "Hp")  as "[%v  Hp]".
       iPoseProof (Haux with "Hp'") as "[%v' Hp']".
-      by iDestruct (mapsto_ne with "Hp Hp'") as "%Hneq".
-    Qed.
+      by iDestruct (mapsto_ne with "Hp Hp'") as "%Hneq". *)
+    Admitted.
 
-    Lemma promiseSt_proper' q p γ  Φ Φ' :
-      (Φ ≡ Φ') -∗ promiseSt q p γ  Φ -∗ promiseSt q p γ  Φ'.
-    Proof. by iIntros "HΦ Hp"; iRewrite -"HΦ". Qed.
+    Lemma fstateSt_proper' q p γ cf state δ Φ Φ':
+      (Φ ≡ Φ') -∗ fstateSt q p γ cf state δ Φ -∗ fstateSt q p γ cf state δ Φ'.
+    Proof. iIntros "HΦ Hp". by iRewrite -"HΦ". Qed.
 
-    Lemma update_promiseInv q p γ  Φ :
-      promiseInv q ∗ promiseSt q p γ  Φ ==∗
-        promiseInv q ∗ isMember p γ  Φ.
+    Lemma update_fstateInv q p γ cf state δ Φ :
+      fstateInv q ∗ fstateSt q p γ cf state δ Φ ==∗
+        fstateInv q ∗ isMember p γ cf state δ Φ.
     Proof.
-      iIntros "[HpInv Hp]". rewrite /promiseInv.
+      (* iIntros "[HpInv Hp]". rewrite /fstateInv.
       iDestruct "HpInv" as (M) "[HM HInv]".
       destruct (M !! (p, γ)) as [Ψ|] eqn:Hlkp.
       - rewrite (big_opM_delete _ _ _ _ Hlkp).
         iDestruct "HInv" as "[Hp' _]".
-        by iDestruct (promiseSt_non_duplicable with "Hp Hp'") as "HFalse".
-      - iMod (update_promise_map M p γ  Φ Hlkp with "HM") as "[HM Hmem]".
+        by iDestruct (fstateSt_non_duplicable with "Hp Hp'") as "HFalse".
+      - iMod (update_fstate_map M p γ  Φ Hlkp with "HM") as "[HM Hmem]".
         iModIntro. iFrame. iExists (<[(p, γ):=Φ]> M). iFrame.
-        rewrite big_opM_insert; last done. by iFrame.
-    Qed.
+        rewrite big_opM_insert; last done. by iFrame. *)
+    Admitted.
 
-    Lemma lookup_promiseInv q p γ  Φ :
-      promiseInv q -∗ isMember p γ  Φ -∗
-        ▷ ((promiseSt q p γ  Φ -∗ promiseInv q) ∗ promiseSt q p γ  Φ).
+    Lemma lookup_fstateInv q p γ cf state δ Φ :
+      fstateInv q -∗ isMember p γ cf state δ Φ -∗
+        ▷ ((fstateSt q p γ cf state δ Φ -∗ fstateInv q) ∗ fstateSt q p γ cf state δ Φ).
     Proof.
-      iIntros "HpInv Hmem". rewrite /promiseInv.
+      (* iIntros "HpInv Hmem". rewrite /fstateInv.
       iDestruct "HpInv" as (M) "[HM HInv]".
       iDestruct (claim_membership M p γ  Φ with "[$]") as "[%Φ' [%Hlkp #Heq]]".
       iPoseProof (promise_unfold_equiv with "Heq") as "#Heq'". iNext.
@@ -594,94 +558,14 @@ Section predicates.
       iSplitL "HInv HM".
       - iIntros "HpSt". iExists M. iFrame.
         rewrite (big_opM_delete _ _ _ _ Hlkp). iFrame.
-        iApply (promiseSt_proper' q p γ  Φ Φ' with "[] HpSt").
+        iApply (fstateSt_proper' q p γ  Φ Φ' with "[] HpSt").
         rewrite discrete_fun_equivI. iIntros (x).
         by iRewrite ("Heq'" $! x).
-      - iApply (promiseSt_proper' q p γ  Φ' Φ with "[] HpSt").
-        by rewrite discrete_fun_equivI.
-    Qed.
+      - iApply (fstateSt_proper' q p γ  Φ' Φ with "[] HpSt").
+        by rewrite discrete_fun_equivI. *)
+    Admitted.
 
   End promise_preds.
-
-  Section cancel_preds.
-    (* Persistent predicates. *)
-    Global Instance isMemberCancel_Persistent cf state δ : Persistent (isMemberCancel cf state δ).
-    Proof. by apply _. Qed.
-    Global Instance isCancel_Persistent cf state : Persistent (isCancel cf state).
-    Proof. by apply _. Qed.
-
-    Lemma update_cancel_map M cf state δ :
-      M !! (cf, state, δ) = None →
-        isCancelMap M ==∗
-          isCancelMap (<[(cf, state, δ):=tt]> M) ∗ isMemberCancel cf state δ.
-    Proof.
-      intros Hlkp. unfold isCancelMap. iIntros "HM".
-      iMod (own_update with "HM") as "[HM HiP]".
-      { apply (@auth_update_alloc (gmapUR _ _) M).
-        apply (alloc_singleton_local_update _ (cf, state, δ) tt).
-        by rewrite /= Hlkp. done. }
-      iModIntro. iFrame. 
-    Qed.
-
-    Lemma claim_membership_cancel M cf state δ :
-      isCancelMap M ∗ isMemberCancel cf state δ -∗ 
-        ⌜ M !! (cf, state, δ) = Some tt ⌝.
-    Proof.
-      rewrite /isCancelMap /isMemberCancel.
-      rewrite -own_op own_valid auth_both_validI /=.
-      iIntros "[HM #HpM]". iDestruct "HM" as (M') "#HM".
-      rewrite gmap_equivI gmap_validI.
-      iSpecialize ("HM" $! (cf, state, δ)). iSpecialize ("HpM" $! (cf, state, δ)).
-      rewrite lookup_op lookup_singleton.
-      rewrite option_equivI.
-      case: (M  !! (cf, state, δ))=> [[]|] /=; [|
-      case: (M' !! (cf, state, δ))=> [[]|] /=; by iExFalso].
-      done.
-    Qed.
-
-    Lemma cancelSt_non_duplicable cf state δ δ' :
-      cancelSt cf state δ -∗ cancelSt cf state δ' -∗ False.
-    Proof.
-      assert (⊢ ∀ cf state δ, cancelSt cf state δ -∗ ∃ v, cf ↦ v)%I as Haux.
-      { iIntros (???) "(%i & Hstate & 
-                         [ [Hcf _] | [Hcf _] ])"; auto. }
-      iIntros "Hc Hc'".
-      iPoseProof (Haux with "Hc")  as "(%v1 & Hc)".
-      iPoseProof (Haux with "Hc'") as "(%v1' & Hc')".
-      by iDestruct (mapsto_ne with "Hc Hc'") as "%Hneq".
-    Qed.
-
-    Lemma update_cancelInv cf state δ :
-      cancelInv ∗ cancelSt cf state δ ==∗
-        cancelInv ∗ isMemberCancel cf state δ.
-    Proof.
-      iIntros "[HcInv Hc]". rewrite /promiseInv.
-      iDestruct "HcInv" as (M) "[HM HInv]".
-      destruct (M !! (cf, state, δ)) as [Ψ|] eqn:Hlkp.
-      - rewrite (big_opM_delete _ _ _ _ Hlkp).
-        iDestruct "HInv" as "[Hc' _]".
-        by iDestruct (cancelSt_non_duplicable with "Hc Hc'") as "HFalse".
-      - iMod (update_cancel_map M cf state δ Hlkp with "HM") as "[HM Hmem]".
-        iModIntro. iFrame. iExists (<[(cf, state, δ):=tt]> M). iFrame.
-        rewrite big_opM_insert; last done. by iFrame.
-    Qed.
-
-    Lemma lookup_cancelInv cf state δ :
-      cancelInv -∗ isMemberCancel cf state δ -∗
-        ▷ ((cancelSt cf state δ -∗ cancelInv) ∗ cancelSt cf state δ).
-    Proof.
-      iIntros "HpInv Hmem". rewrite /promiseInv.
-      iDestruct "HpInv" as (M) "[HM HInv]".
-      iDestruct (claim_membership_cancel M cf state δ with "[$]") as "%Hlkp".
-      iNext.
-      iDestruct (big_sepM_delete _ _ (cf, state, δ) with "HInv")
-        as "[HpSt HInv]"; first done.
-      iSplitL "HInv HM".
-      - iIntros "HpSt". iExists M. iFrame.
-        rewrite (big_opM_delete _ _ _ _ Hlkp). iFrame.
-      - done.
-    Qed.
-  End cancel_preds.
 End predicates.
 
 
@@ -689,22 +573,29 @@ End predicates.
 (** Protocol [Coop]. *)
 
 Section protocol_coop.
-  Context `{!heapGS Σ, !promiseGS Σ, !cancelGS Σ}.
+  Context `{!heapGS Σ, !fstateGS Σ}.
   Context `{!ListLib Σ, !QueueLib Σ}.
 
+  (* protocols parameterized by a gname *)
+  (* Definition ASYNC_pre (Coop : gname → iEff Σ) : iEff Σ :=
+    >> e Φ q >> !(Async'  e) {{ fstateInv q ∗ □ Φ RNone' ∗ (∀ δ, fstateInv q -∗ ▷ EWP e #() <|Coop δ|> {{v, fstateInv q ∗ □ Φ (RSome' v)}}) }};
+    << (p : loc) (cf state : loc) << ?((#p, (#cf, #state))%V)        {{fstateInv q ∗ isFstate p cf state Φ }} @ OS.
+  Definition AWAIT (δ : gname): iEff Σ :=
+    >> (p : loc) Φ (cf state : loc) q >> !(Await' #p) {{fstateInv q ∗ isPromise p cf state δ Φ}};
+    << y (i : nat)           << ?((y, #i)%V)         {{fstateInv q ∗ □ Φ y ∗ io_log_frozen δ i }} @ OS. *)
   Definition ASYNC_pre (Coop : iEff Σ) : iEff Σ :=
-    >> e Φ >> !(Async'  e) {{cancelInv ∗ □ Φ RNone' ∗ (cancelInv -∗ ▷ EWP e #() <|Coop|> {{v, cancelInv ∗ □ Φ (RSome' v)}}) }};
-    << (p : loc) (cf state : loc) << ?((#p, (#cf, #state))%V)        {{cancelInv ∗ isPromise p Φ ∗ isCancel cf state }} @ OS.
-  Definition AWAIT : iEff Σ :=
-    >> (p : loc) Φ >> !(Await' #p) {{cancelInv ∗ isPromise p Φ}};
-    << y           << ?(y)         {{cancelInv ∗ □ Φ y        }} @ OS.
+    >> e Φ q >> !(Async'  e) {{ fstateInv q ∗ □ Φ RNone' ∗ (fstateInv q -∗ ▷ EWP e #() <|Coop|> {{v, fstateInv q ∗ □ Φ (RSome' v)}}) }};
+    << (p : loc) (cf state : loc) << ?((#p, (#cf, #state))%V)        {{fstateInv q ∗ isFstate p cf state Φ }} @ OS.
+  Definition AWAIT: iEff Σ :=
+    >> (p : loc) Φ (cf state : loc) (δ : gname) q >> !(Await' #p) {{fstateInv q ∗ isPromise p cf state δ Φ}};
+    << y (i : nat)           << ?((y, #i)%V)         {{fstateInv q ∗ □ Φ y ∗ io_log_frozen δ i }} @ OS.
 
   Definition FAIL : iEff Σ :=
-    >> (_: val) >> !(FFail') {{cancelInv}};
+    >> q >> !(FFail') {{fstateInv q}};
     << (_: val) << ?(#()) {{False}} @ OS.
   Definition GET_CONTEXT : iEff Σ :=
-    >> (_: val) >> !(GetContext') {{cancelInv}};
-    << (cf state : loc) << ?((#cf, #state)%V) {{cancelInv ∗ isCancel cf state}} @ OS.
+    >> (_: val) >> !(GetContext') {{True}};
+    << (cf state : loc) (δ : gname) << ?((#cf, #state)%V) {{∃ p Φ, isPromise p cf state δ Φ}} @ OS.
   
   Definition Coop_pre : iEff Σ → iEff Σ := (λ Coop,
     ASYNC_pre Coop <+> AWAIT <+> FAIL <+> GET_CONTEXT
@@ -732,39 +623,44 @@ Section protocol_coop.
       iEff_car (upcl OS FAIL) v Φ' ∨ 
       iEff_car (upcl OS GET_CONTEXT) v Φ'.
   Proof.
-    transitivity (iEff_car (upcl OS (Coop_pre Coop)) v Φ').
+    (* transitivity (iEff_car (upcl OS (Coop_pre Coop)) v Φ').
     - iApply iEff_car_proper. by rewrite {1}Coop_unfold.
-    - rewrite upcl_sum upcl_sum upcl_sum (upcl_tele' [tele _ _] [tele _]) //.
-  Qed.
+    - rewrite upcl_sum upcl_sum upcl_sum.
+      rewrite (upcl_tele' [tele _ _ _ _ _] [tele _ _]) //. *)
+  Admitted.
 
   Lemma upcl_ASYNC v Φ' :
     iEff_car (upcl OS ASYNC) v Φ' ≡
-      (∃ e Φ, ⌜ v = Async' e ⌝ ∗ (cancelInv ∗ □ Φ RNone' ∗ (cancelInv -∗ ▷ EWP e #() <| Coop |> {{ v, cancelInv ∗ □ Φ (RSome' v) }})) ∗
-            (∀ (p : loc) (cf state : loc), (cancelInv ∗ isPromise p Φ ∗ isCancel cf state) -∗ Φ' ((#p, (#cf, #state))%V) ))%I.
-  Proof. by rewrite /ASYNC (upcl_tele' [tele _ _] [tele _ _ _]). Qed.
+      (∃ e Φ q, ⌜ v = Async' e ⌝ ∗ (fstateInv q ∗ □ Φ RNone' ∗ (fstateInv q -∗ ▷ EWP e #() <| Coop |> {{ v, fstateInv q ∗ □ Φ (RSome' v) }})) ∗
+            (∀ (p : loc) (cf state : loc), (fstateInv q ∗ isFstate p cf state Φ) -∗ Φ' ((#p, (#cf, #state))%V) ))%I.
+  Proof. 
+    (* by rewrite /ASYNC (upcl_tele' [tele _ _] [tele _ _ _]).  *)
+  Admitted.
 
   Lemma upcl_AWAIT v Φ' :
     iEff_car (upcl OS AWAIT) v Φ' ≡
-      (∃ (p : loc) Φ, ⌜ v = Await' #p ⌝ ∗ (cancelInv ∗ isPromise p Φ) ∗
-          (∀ v, (cancelInv ∗ □ Φ v) -∗ Φ' v))%I.
-  Proof. rewrite /AWAIT. rewrite (upcl_tele' [tele _ _] [tele _]). by easy. Qed.
+      (∃ (p : loc) Φ (cf state : loc) δ q, ⌜ v = Await' #p ⌝ ∗ (fstateInv q ∗ isPromise p cf state δ Φ) ∗
+          (∀ (y: val) (i: nat), (fstateInv q ∗ □ Φ y ∗ io_log_frozen δ i) -∗ Φ' (y, #i)%V))%I.
+  Proof. 
+    (* rewrite /AWAIT. rewrite (upcl_tele' [tele _ _ _ _ _] [tele _ _]). by easy.  *)
+  Admitted.
 
   Lemma upcl_FAIL v Φ' :
     iEff_car (upcl OS FAIL) v Φ' ≡
-      (∃ (_: val), ⌜ v = FFail' ⌝ ∗ cancelInv ∗ 
+      (∃ (_: val), ⌜ v = FFail' ⌝ ∗ 
         (∀ (_: val), False -∗ Φ' #()))%I.
   Proof.
-    rewrite /FAIL. rewrite (upcl_tele' [tele _] [tele _]). by easy.
-  Qed.
+    (* rewrite /FAIL. rewrite (upcl_tele' [tele _] [tele _]). by easy. *)
+  Admitted.
 
   Lemma upcl_GET_CONTEXT v Φ' :
     iEff_car (upcl OS GET_CONTEXT) v Φ' ≡ 
-      (∃ (_: val), ⌜ v = GetContext' ⌝ ∗ cancelInv ∗
-        (∀ (cf state : loc), (cancelInv ∗ isCancel cf state) -∗ Φ' (#cf, #state)%V)
+      (∃ (_: val), ⌜ v = GetContext' ⌝ ∗ True ∗
+        (∀ (cf state : loc) (δ : gname), (∃ p Φ, isPromise p cf state δ Φ) -∗ Φ' (#cf, #state)%V)
       )%I.
   Proof.
-    rewrite /GET_CONTEXT. rewrite (upcl_tele' [tele _] [tele _ _]). by easy.
-  Qed. 
+    (* rewrite /GET_CONTEXT. rewrite (upcl_tele' [tele _] [tele _ _]). by easy. *)
+  Admitted. 
 End protocol_coop.
 
 
@@ -772,12 +668,12 @@ End protocol_coop.
 (** * Verification. *)
 
 Section verification.
-  Context `{!heapGS Σ, !promiseGS Σ, !cancelGS Σ}.
+  Context `{!heapGS Σ, !fstateGS Σ}.
   Context `{!ListLib Σ, !QueueLib Σ}.
 
   Lemma ewp_new_cancel_ctx Ψ :
     ⊢ EWP (new_cancel_ctx #()) <| Ψ |> {{ y, 
-        ∃ (cf state : loc) (δ: gname), ⌜ y = PairV #cf #state ⌝ ∗ cancelSt cf state δ }}.
+        ∃ (cf state : loc) (δ: gname), ⌜ y = PairV #cf #state ⌝ ∗ cf ↦ #false ∗ state ↦ #0 ∗ io_log_active δ 0 }}.
   Proof.
     unfold new_cancel_ctx. ewp_pure_steps. ewp_bind_rule.
     iApply ewp_alloc. iNext. 
@@ -793,14 +689,17 @@ Section verification.
     ewp_pure_steps.
     iExists cf, state, δ.
     iSplit; first done.
-    rewrite /cancelSt.
-    iExists 0.
-    iFrame. iLeft. iFrame. 
+    iFrame.
   Qed.
 
   Lemma ewp_new_promise Ψ q Φ :
     □ Φ RNone' ⊢ EWP (new_promise #()) <| Ψ |> {{ y,
-        ∃ p γ, ⌜ y = #(p : loc) ⌝ ∗ torch γ ∗ promiseSt q p γ Φ }}.
+        ∃ p γ, ⌜ y = #(p : loc) ⌝ ∗ torch γ ∗ 
+        (∃ l ks,
+           p ↦ Waiting' l ∗ 
+           □ Φ RNone' ∗
+           is_list l ks   ∗
+           [∗ list] k ∈ ks, ready q Φ k) }}.
   Proof.
     iIntros "#Hnone".
     unfold new_promise. ewp_pure_steps. ewp_bind_rule.
@@ -809,17 +708,17 @@ Section verification.
     iApply ewp_alloc. iIntros "!>" (p) "Hp".
     iMod forge_torch as "[%γ Hγ]".
     iModIntro.
-    iExists p, γ. iFrame. iSplit; [done|]. iRight.
+    iExists p, γ. iFrame. iSplit; [done|].
     iExists l, []. iFrame. 
     iSplit. by iAssumption. by done.
   Qed.
 
   Lemma ewp_next q n Ψ :
-    promiseInv q -∗ cancelInv -∗
+    fstateInv q -∗
       is_queue q (ready q (λ v, ⌜ v = #() ⌝)) n -∗
          EWP (next q) <| Ψ |> {{ _, True }}.
   Proof.
-    iIntros "HpInv HcInv Hq". unfold next. ewp_pure_steps. ewp_bind_rule.
+    iIntros "HpInv Hq". unfold next. ewp_pure_steps. ewp_bind_rule.
     iApply (ewp_mono with "[Hq]"); [iApply (queue_empty_spec with "Hq")|].
     iIntros (b) "[Hq Hb] !>". simpl.
     case n as [|?]; iDestruct "Hb" as %->; ewp_pure_steps; [done|].
@@ -827,38 +726,38 @@ Section verification.
     iApply (ewp_mono with "[Hq]"); [iApply (queue_pop_spec with "Hq")|].
     simpl. iIntros (k) "[Hq Hk] !>".
     rewrite ready_unfold.
-    iSpecialize ("Hk" $! #() n with "[//] HpInv HcInv Hq").
+    iSpecialize ("Hk" $! #() n with "[//] HpInv Hq").
     iApply ewp_os_prot_mono. { by iApply iEff_le_bottom. } { done. }
   Qed.
 
-  Lemma ewp_async (e : val) Φ :
-    cancelInv ∗ □ Φ RNone' ∗ (cancelInv -∗ EWP e #() <| Coop |> {{ v, cancelInv ∗ □ Φ (RSome' v) }}) ⊢
+  Lemma ewp_async q (e : val) Φ :
+    fstateInv q ∗ □ Φ RNone' ∗ (fstateInv q -∗ EWP e #() <| Coop |> {{ v, fstateInv q ∗ □ Φ (RSome' v) }}) ⊢
       EWP (async e) <| Coop |> {{ y,
-        ∃ (p : loc) (cf state : loc), ⌜ y = (#p, (#cf, #state))%V ⌝ ∗ cancelInv ∗ isPromise p Φ ∗ isCancel cf state }}.
+        ∃ (p : loc) (cf state : loc), ⌜ y = (#p, (#cf, #state))%V ⌝ ∗ fstateInv q ∗ isFstate p cf state Φ }}.
   Proof.
-    iIntros "(HcInv & Hnone & He)". unfold async. ewp_pure_steps.
+    iIntros "(HfInv & Hnone & He)". unfold async. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_ASYNC. iLeft.
-    iExists e, Φ. iSplit; [done|].
+    iExists e, Φ, q. iSplit; [done|].
     iSplitL.
     - iFrame.
-      iIntros "HcInv". iNext. by iApply "He".
-    - iIntros (p cf state) "(HcInv & Hp & Hcancel)".
+      iIntros "HfInv". iNext. by iApply "He".
+    - iIntros (p cf state) "(HfInv & HfSt)".
       iExists p, cf, state. by iFrame.
   Qed.
 
-  Lemma ewp_await (p : loc) Φ :
-    cancelInv -∗ isPromise p Φ -∗ EWP (await #p) <| Coop |> {{ v, cancelInv ∗ □ Φ v }}.
+  Lemma ewp_await q (p : loc) Φ (cf state : loc) δ :
+    fstateInv q ∗ isPromise p cf state δ Φ ⊢ 
+      EWP (await #p) <| Coop |> {{ y, ∃ (v: val) (i: nat), ⌜ y = (v, #i)%V ⌝ ∗ fstateInv q ∗ □ Φ v ∗ io_log_frozen δ i }}.
   Proof.
-    iIntros "HcInv Hp". unfold await. ewp_pure_steps.
+    iIntros "[HfInv Hp]". unfold await. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_AWAIT. iRight; iLeft.
-    iExists p, Φ. iSplit; [done|]. iFrame. by auto.
+    iExists p, Φ, cf, state, δ, q. iSplit; [done|]. iFrame. by auto.
   Qed.
 
   Lemma ewp_ffail:
     (* a.d. TODO standalone ewp did not work. *)
-    cancelInv -∗ EWP (ffail #()) <| Coop |> {{ _, False }}.
+    ⊢ EWP (ffail #()) <| Coop |> {{ _, False }}.
   Proof.
-    iIntros "HcInv".
     unfold ffail. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_FAIL.
     iRight; iRight; iLeft.
@@ -867,73 +766,111 @@ Section verification.
     iIntros (_) "[]".
   Qed.
 
-  Lemma ewp_get_context:
-    cancelInv -∗ EWP (get_context #()) <| Coop |> {{ v, ∃ (cf state : loc), ⌜ v = (#cf, #state)%V ⌝ ∗ cancelInv ∗ isCancel cf state }}.
+  Lemma ewp_get_context: 
+    ⊢ EWP (get_context #()) <| Coop |> {{ v, ∃ (cf state : loc) (δ : gname) (p : loc) Φ, ⌜ v = (#cf, #state)%V ⌝ ∗ isPromise p cf state δ Φ}}.
   Proof.
-    iIntros "HcInv".
     rewrite /get_context. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_GET_CONTEXT.
     iRight; iRight; iRight.
     iExists #().
-    iSplit; first done. iFrame.
-    iIntros (cf state) "[HcInv Hcancel]".
-    iExists cf, state. iSplit; first done.
+    iSplit; first done. iSplit; first done.
+    iIntros (cf state δ) "(%p & %Φ & Hp)".
+    iExists cf, state, δ, p, Φ. iSplit; first done.
     by iFrame.
   Qed.
 
-  Global Instance io_log_cancelled_Persistent (δ: gname) (i: nat) : Persistent (io_log_cancelled δ i).
+  Global Instance io_log_frozen_Persistent (δ: gname) (i: nat) : Persistent (io_log_frozen δ i).
   Proof. by apply _. Qed.
 
-  Lemma ewp_fiber_cancel (cf state : loc) (δ : gname) :
-    isMemberCancel cf state δ -∗ cancelInv -∗
-    EWP (fiber_cancel (#cf, #state)%V) <| Coop |> {{ v, ∃ (i: nat), ⌜ v = #i ⌝ ∗ cancelInv ∗ io_log_cancelled δ i }}.
+  Lemma ewp_fiber_cancel q (p cf state : loc) (δ : gname) Φ:
+    isPromise p cf state δ Φ ∗ fstateInv q ⊢
+    EWP (fiber_cancel (#cf, #state)%V) <| Coop |> {{ v, ∃ (i: nat), ⌜ v = #i ⌝ ∗ fstateInv q ∗ io_log_frozen δ i }}.
   Proof.
-    iIntros "#Hcmem HcInv". 
+    iIntros "((%γ & #Hfmem) & HfInv)". 
     rewrite /fiber_cancel. 
-    iDestruct (lookup_cancelInv with "HcInv Hcmem") as "[HcInv HcSt]".
+    iDestruct (lookup_fstateInv with "HfInv Hfmem") as "[HcInv HcSt]".
     ewp_pure_steps.
     ewp_bind_rule. simpl. 
-    iDestruct "HcSt" as "(%i & Hstate & [[Hcf Hio]|[Hcf #Hio]])".
-    - (* it was active before *)
+    rewrite /fstateSt.
+    iDestruct "HcSt" as "(%i & Hstate & [[(%b & Hcf & #Hio) Hp]|[(%b & Hcf & Hio) Hp]])".
+    2: destruct b.
+    - (* fiber is already stopped. Don't have to do anything.
+        EIO gives an error for finished fibers *)
       iApply (ewp_store with "Hcf"). 
       iNext. iIntros "Hcf".
-      iMod (cancel_io_log with "Hio") as "#Hio".
       iModIntro.
       simpl. ewp_pure_steps.
       iApply (ewp_load with "Hstate"). iIntros "!> Hstate !>".
-      iAssert (cancelSt cf state δ) with "[Hstate Hcf]" as "HcSt".
-      { iExists i. iFrame. iRight. by iFrame. }
+      iAssert (fstateSt q p γ cf state δ Φ) with "[Hstate Hcf Hp]" as "HcSt".
+      { rewrite /fstateSt.
+         iExists i. iFrame. iLeft. iSplitL "Hcf".
+         iExists true. by iFrame. by iAssumption. }
       iExists i. iSplit; first done.
       iSplit; last done.
       by iApply "HcInv".
-    - (* it was not active *)
+    - (* running but already cancelled. *)
+      iDestruct "Hio" as "#Hio".
       iApply (ewp_store with "Hcf"). 
       iNext. iIntros "Hcf".
       iModIntro.
       simpl. ewp_pure_steps.
       iApply (ewp_load with "Hstate"). iIntros "!> Hstate !>".
-      iAssert (cancelSt cf state δ) with "[Hstate Hcf]" as "HcSt".
-      { iExists i. iFrame. iRight. by iFrame. }
+      iAssert (fstateSt q p γ cf state δ Φ) with "[Hstate Hcf Hp]" as "HcSt".
+      { rewrite /fstateSt.
+         iExists i. iFrame. iRight. iSplitL "Hcf".
+         iExists true. by iFrame. by iAssumption. }
+      iExists i. iSplit; first done.
+      iSplit; last done.
+      by iApply "HcInv".
+    - (* running and not yet cancelled. *)
+      iApply (ewp_store with "Hcf"). 
+      iNext. iIntros "Hcf".
+      iMod (freeze_io_log with "Hio") as "#Hio".
+      iModIntro.
+      simpl. ewp_pure_steps.
+      iApply (ewp_load with "Hstate"). iIntros "!> Hstate !>".
+      iAssert (fstateSt q p γ cf state δ Φ) with "[Hstate Hcf Hp]" as "HcSt".
+      { iExists i. iFrame. iRight. iSplitL "Hcf".
+        iExists true. by iFrame. by iAssumption. }
       iExists i. iSplit; first done.
       iSplit; last done.
       by iApply "HcInv".
   Qed.
 
-  Lemma ewp_io :
-    cancelInv -∗ EWP io #() <| Coop |> {{ _, cancelInv }}.
+  Lemma ewp_io q:
+    fstateInv q ⊢ EWP io #() <| Coop |> {{ _, fstateInv q }}.
   Proof.
     iIntros "HcInv".
     rewrite /io.
     ewp_pure_steps.
     ewp_bind_rule. simpl.
-    iApply (ewp_mono with "[HcInv]"). 
+    iApply (ewp_mono). 
       by iApply ewp_get_context.
-    iIntros (v) "(%cf & %state & -> & HcInv & (%δ & Hcmem)) !>".
-    iDestruct (lookup_cancelInv with "HcInv Hcmem") as "[HcInv HcSt]".
+    iIntros (v) "(%cf & %state & %δ & %p & %Φ & -> & (%γ & #Hfmem)) !>".
+    iDestruct (lookup_fstateInv with "HcInv Hfmem") as "[HcInv HcSt]".
     ewp_pure_steps.
     ewp_bind_rule. simpl.
-    iDestruct "HcSt" as "(%i & Hstate & [[Hcf Hio]|[Hcf #Hio]])".
-    - iApply (ewp_load with "Hcf"). iIntros "!> Hcf !>".
+    iDestruct "HcSt" as "(%i & Hstate & [[(%b & Hcf & #Hio) Hp]|[(%b & Hcf & Hio) Hp]])".
+    2: destruct b.
+    - (* should never happen.
+         Since we are running, our fiber cannot be finished.
+         But at the moment we don't know that we get our own fiber context.  *)
+      admit.
+    - (* the fiber is cancelled *)
+      iDestruct "Hio" as "#Hio".
+      iApply (ewp_load with "Hcf"). iIntros "!> Hcf !>".
+      ewp_pure_steps. 
+      iAssert (fstateSt q p γ cf state δ Φ) with "[Hstate Hcf Hio Hp]" as "HcSt".
+      { iExists i.
+        iFrame. iRight. iSplitL "Hcf".
+        iExists true. by iFrame.
+        by iAssumption. }
+      iSpecialize ("HcInv" with "HcSt").
+      iApply (ewp_mono with "[HcInv]").
+        by iApply ewp_ffail.
+      iIntros (_) "[]".
+    - (* the fiber is not cancelled. *)
+      iApply (ewp_load with "Hcf"). iIntros "!> Hcf !>".
       ewp_pure_step. iNext.
       (* changing io log *)
       ewp_bind_rule.
@@ -947,31 +884,24 @@ Section verification.
       iApply (ewp_store with "Hstate"). iIntros "!> Hstate".
       iMod ((update_io_log _ i (i+1)) with "Hio") as "Hio".
       (* restore the cancelSt *)
-      iAssert (cancelSt cf state δ) with "[Hstate Hcf Hio]" as "HcSt".
+      iAssert (fstateSt q p γ cf state δ Φ) with "[Hstate Hcf Hio Hp]" as "HcSt".
       { iExists (i + 1).
-        iFrame. iLeft. by iFrame. }
+        iFrame. iRight. iSplitL "Hcf Hio".
+        iExists false. by iFrame.
+        by iAssumption. }
       iModIntro. ewp_pure_steps.
       by iApply "HcInv".
-    - iApply (ewp_load with "Hcf"). iIntros "!> Hcf !>".
-      ewp_pure_steps. 
-      iAssert (cancelSt cf state δ) with "[Hstate Hcf Hio]" as "HcSt".
-      { iExists i.
-        iFrame. iRight. by iFrame. }
-      iSpecialize ("HcInv" with "HcSt").
-      iApply (ewp_mono with "[HcInv]").
-        by iApply ewp_ffail.
-      iIntros (_) "[]".
-  Qed.
+  Admitted.
   
   Inductive LongProof := longproof.
   Print longproof.
 
   Lemma ewp_run (main : val) Φ :
-    □ Φ RNone' -∗ (∀ q, promiseInv q) -∗ cancelInv -∗
-      (cancelInv -∗ EWP main #() <| Coop |> {{ v, cancelInv ∗ □ Φ (RSome' v) }}) -∗
+    □ Φ RNone' -∗ (∀ q, fstateInv q) -∗ 
+      (∀ q, fstateInv q -∗ EWP main #() <| Coop |> {{ v, fstateInv q ∗ □ Φ (RSome' v) }}) -∗
         EWP run main {{ _, True }}.
   Proof.
-    (* a.d. TODO where is promiseInv kept? *)
+    (* a.d. TODO where is promiseInv kept?
     iIntros "#Hnone HpInv HcInv Hmain ". unfold run. ewp_pure_steps.
     ewp_bind_rule. iApply ewp_mono. { by iApply queue_create_spec. }
     iIntros (q) "Hq !>". simpl. ewp_pure_steps.
@@ -1146,78 +1076,110 @@ Section verification.
         ewp_bind_rule. simpl.
         iApply ("Hk" with "[HcInv]").
           iFrame. by iExists δ.
-        iApply ("IH_handler" with "Hγ Hq HpInv Hmem Hcmem Hnone").
-  Qed.
+        iApply ("IH_handler" with "Hγ Hq HpInv Hmem Hcmem Hnone"). *)
+  Admitted.
 
   Print longproof.
 
 End verification.
 
+Section specification.
+  Context `{!heapGS Σ}.
+  Context `{!ListLib Σ, !QueueLib Σ}.
+
+  Class AsyncCompLib := {
+    coop : iEff Σ;
+    is_fstate : val → val → val → (val → iProp Σ) → iProp Σ;
+    is_fstate_Persistent p cf state Φ : Persistent (is_fstate p cf state Φ);
+    is_fstate_promise : val → val → val → gname → (val → iProp Σ) → iProp Σ;
+    is_fstate_promise_Persistent p cf state δ Φ : Persistent (is_fstate_promise p cf state δ Φ);
+    io_log1 : gname → val -> iProp Σ;
+    io_log2 : gname → val -> iProp Σ;
+    io_log2_Persistent δ i : Persistent (io_log2 δ i);
+    fstate_inv : val → iProp Σ;
+    async_spec q (e : val) Φ :
+      fstate_inv q ∗ □ Φ RNone' ∗ (fstate_inv q -∗ EWP e #() <| coop |> {{ y, fstate_inv q ∗ □ Φ (RSome' y) }}) -∗
+        EWP async e <| coop |> {{ y, ∃ (p cf state : val), ⌜ y = (p, (cf, state))%V ⌝ ∗ fstate_inv q ∗ is_fstate p cf state Φ }};
+    await_spec q p cf state δ Φ :
+      fstate_inv q ∗ is_fstate_promise p cf state δ Φ -∗
+        EWP await p <| coop |> {{ y, ∃ (v i : val), ⌜ y = (v, i)%V ⌝ ∗ fstate_inv q ∗ □ Φ v ∗ io_log2 δ i }};
+    fiber_cancel_spec q p cf state δ Φ :
+      fstate_inv q ∗ is_fstate_promise p cf state δ Φ -∗
+        EWP fiber_cancel (cf, state)%V <| coop |> {{ i, fstate_inv q ∗ io_log2 δ i }};
+  }.
+
+  Definition run_spec (main : val) :=
+    (∀ _ : AsyncCompLib, EWP main #() <| coop |> {{ _, True }}) ==∗
+      EWP run main <| ⊥ |> {{ _, True }}.
+
+End specification.
+
 Section closed_proof.
-  Context `{!heapGS Σ, !promiseGpreS Σ, !cancelGpreS Σ}.
+  Context `{!heapGS Σ, !fstateGpreS Σ}.
   Context `{!ListLib Σ, !QueueLib Σ}.
 
   Lemma promise_and_cancelInv_init :
-    ⊢ |==> ∃ (_ : promiseGS Σ) (_ : cancelGS Σ), (∀ q, promiseInv q) ∗ cancelInv.
+    ⊢ |==> ∃ (_ : fstateGS Σ) , (∀ q, fstateInv q).
   Proof.
     iIntros. 
-    iMod (own_alloc (● (∅ : gmap (loc * gname) _))) as (γ) "HI";
+    iMod (own_alloc (● (∅ : gmap ((loc * gname) * (loc * loc * gname)) _))) as (γ) "HI";
       first by rewrite auth_auth_valid.
-    iMod (own_alloc (● (∅ : gmap (loc * loc * gname) _))) as (δ) "HJ";
-      first by rewrite auth_auth_valid.
-    iModIntro. iExists {| promise_inG := _; promise_name := γ; |}.
-    iExists {| cancel_inG := _; cancel_name := δ; |}.
-    iSplitL "HI".
-    - iIntros (q). iExists ∅. rewrite /isPromiseMap fmap_empty. by iFrame.
-    - iExists ∅. rewrite /isCancelMap. by iFrame.
+    iModIntro. iExists {| fstate_inG := _; fstate_name := γ; |}.
+    iIntros (q). iExists ∅. rewrite /isFstateMap fmap_empty. by iFrame.
   Qed.
 
-  Local Program Instance async_comp_lib `{!promiseGS Σ} `{!cancelGS Σ}:
+  Local Program Instance async_comp_lib `{!fstateGS Σ} :
     AsyncCompLib (Σ:=Σ) := {
     coop := Coop;
-    is_promise := λ v Φ, (∃ (p : loc), ⌜ v = #p ⌝ ∗ isPromise p Φ)%I;
-    is_promise_Persistent := _;
-    is_cancel_inv := cancelInv;
-    is_cancel := λ v1 v2, (∃ (cf state : loc), ⌜ v1 = #cf ⌝ ∗ ⌜ v2 = #state ⌝ ∗ isCancel cf state)%I;
-    is_cancel_Persistent := _;
-    io_log := λ v, (∃ δ (i : nat), ⌜ v = #i ⌝ ∗ io_log_cancelled δ i)%I;
-    io_log_Persistent := _;
+    is_fstate := λ v1 v2 v3 Φ, (∃ (p cf state: loc), ⌜ v1 = #p ⌝ ∗ ⌜ v2 = #cf ⌝ ∗ ⌜ v3 = #state ⌝ ∗ isFstate p cf state Φ)%I;
+    is_fstate_Persistent := _;
+    is_fstate_promise := λ v1 v2 v3 δ Φ, (∃ (p cf state: loc), ⌜ v1 = #p ⌝ ∗ ⌜ v2 = #cf ⌝ ∗ ⌜ v3 = #state ⌝ ∗ isPromise p cf state δ Φ)%I;
+    is_fstate_promise_Persistent := _;
+    io_log1 := λ δ v, (∃ (i : nat), ⌜ v = #i ⌝ ∗ io_log_active δ i)%I;
+    io_log2 := λ δ v, (∃ (i : nat), ⌜ v = #i ⌝ ∗ io_log_frozen δ i)%I;
+    io_log2_Persistent := _;
+    fstate_inv := λ (q: val), fstateInv q
   }.
   Next Obligation. 
     iIntros (????) "(HcInv & #Hnone & He)"; 
     iApply (ewp_mono with "[He HcInv]").
     iApply ewp_async.
     iFrame. done.
-    iIntros (?) "(%p & %cf & %state & -> & HcInv & Hp & Hc) !>".
+    iIntros (?) "(%p & %cf & %state & -> & HcInv & Hf) !>".
     iExists #p, #cf, #state.
     iSplit; first done.
     iFrame.
-    iSplitL "Hp".
-    iExists p. iSplit; by done.
-    iExists cf, state. by iSplit; [done|iSplit]; done.
+    iExists p, cf, state.
+    by repeat iSplit.
   Qed.
   Next Obligation.
-    iIntros (????) "(HcInv & %p' & -> & Hp)". iApply (ewp_await with "HcInv Hp"). 
+    iIntros (???????) "(HcInv & (%p' & %cf' & %state' & -> & -> & -> & Hp))". 
+    iApply (ewp_mono with "[HcInv Hp]").
+      iApply ewp_await.
+      by iFrame.
+    iIntros (v) "(%y & %i & -> & HfInv & #Hnone & #Hio) !>".
+    iExists y, #i. iSplit; first done.
+    iFrame. iSplit; first done.
+    iExists i. by iSplit.
   Qed.
   Next Obligation.
-    iIntros (????) "(HcInv & %cf' & %state' & -> & -> & Hc)". 
-    iApply (ewp_mono with "[HcInv Hc]"). 
-    iApply (ewp_fiber_cancel with "Hc HcInv").
-    iIntros (v) "(%δ & %i & -> & HcInv & Hio) !>".
-    iFrame. iExists δ, i. by iSplit.
+    iIntros (???????) "(HcInv & (%p' & %cf' & %state' & -> & -> & -> & Hp))". 
+    iApply (ewp_mono with "[HcInv Hp]"). 
+      iApply (ewp_fiber_cancel).
+      by iFrame.
+    iIntros (v) "(%i & -> & HcInv & #Hio) !>".
+    iFrame. iExists i. by iSplit.
   Qed.
 
   Theorem run_correct main : run_spec main.
   Proof.
     iIntros "He". 
-    iMod promise_and_cancelInv_init as "(%HpromiseGS & %HcancelGS & HpInv & HcInv)".
+    iMod promise_and_cancelInv_init as "(%HfstateGS  & HpInv)".
     iSpecialize ("He" $! async_comp_lib). iModIntro.
-    iApply (ewp_run _ (λ _, True)%I with "[] HpInv HcInv").
+    iApply (ewp_run _ (λ _, True)%I with "[] HpInv").
     - done.
-    - iIntros "HcInv".
+    - iIntros (q) "HcInv".
       iApply (ewp_mono with "He [HcInv]"). by auto.
   Qed.
 
 End closed_proof.
-
-Print Assumptions run_correct.
