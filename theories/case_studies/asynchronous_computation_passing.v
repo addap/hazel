@@ -756,14 +756,14 @@ Section verification.
       iExists p, cf, state. by iFrame.
   Qed.
 
-  Lemma ewp_await (γ: gname) q (p : loc) Φ (cf state : loc) δ :
-    fstateInv q ∗ isMember p γ cf state δ Φ ⊢ 
-      EWP (await #p) <| Coop (γ, q) |> {{ res, ∃ (y_opt: val) (i: nat), ⌜ res = (y_opt, #i)%V ⌝ ∗ fstateInv q ∗ □ Φ res ∗ io_log_frozen δ i }}.
+  Lemma ewp_await (γ γ': gname) q (p : loc) Φ (cf state : loc) δ' :
+    fstateInv q ∗ isMember p γ' cf state δ' Φ ⊢ 
+      EWP (await #p) <| Coop (γ, q) |> {{ res, ∃ (y_opt: val) (i: nat), ⌜ res = (y_opt, #i)%V ⌝ ∗ fstateInv q ∗ □ Φ res ∗ io_log_frozen δ' i }}.
   Proof.
     iIntros "[HfInv Hmem]". unfold await. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_AWAIT. iRight; iLeft.
-    iExists p, Φ, cf, state, δ. iSplit; [done|]. iFrame.
-    iSplitL "Hmem". by iExists γ. 
+    iExists p, Φ, cf, state, δ'. iSplit; [done|]. iFrame.
+    iSplitL "Hmem". by iExists γ'. 
     by auto.
   Qed.
 
@@ -794,9 +794,9 @@ Section verification.
     by iFrame.
   Qed.
 
-  Lemma ewp_fiber_cancel γ q (p cf state : loc) (δ : gname) Φ:
-    isMember p γ cf state δ Φ ∗ fstateInv q ⊢
-    EWP (fiber_cancel (#cf, #state)%V) <| Coop (γ, q) |> {{ v, ∃ (i: nat), ⌜ v = #i ⌝ ∗ fstateInv q ∗ io_log_frozen δ i }}.
+  Lemma ewp_fiber_cancel γ γ' q (p cf state : loc) (δ' : gname) Φ:
+    isMember p γ' cf state δ' Φ ∗ fstateInv q ⊢
+    EWP (fiber_cancel (#cf, #state)%V) <| Coop (γ, q) |> {{ v, ∃ (i: nat), ⌜ v = #i ⌝ ∗ fstateInv q ∗ io_log_frozen δ' i }}.
   Proof.
     iIntros "(#Hfmem & HfInv)". 
     rewrite /fiber_cancel. 
@@ -813,7 +813,7 @@ Section verification.
       iModIntro.
       simpl. ewp_pure_steps.
       iApply (ewp_load with "Hstate"). iIntros "!> Hstate !>".
-      iAssert (fstateSt q p γ cf state δ Φ) with "[Hstate Hcf Hp Hγ Hres]" as "HcSt".
+      iAssert (fstateSt q p γ' cf state δ' Φ) with "[Hstate Hcf Hp Hγ Hres]" as "HcSt".
       { rewrite /fstateSt.
          iExists i. iFrame. iLeft.
          iExists true, res. iFrame. by iSplit. }
@@ -827,7 +827,7 @@ Section verification.
       iModIntro.
       simpl. ewp_pure_steps.
       iApply (ewp_load with "Hstate"). iIntros "!> Hstate !>".
-      iAssert (fstateSt q p γ cf state δ Φ) with "[Hstate Hcf Hp HΦ]" as "HcSt".
+      iAssert (fstateSt q p γ' cf state δ' Φ) with "[Hstate Hcf Hp HΦ]" as "HcSt".
       { rewrite /fstateSt.
         iExists i. iFrame. iRight. iSplitL "Hcf".
         iExists true. by iFrame.
@@ -844,7 +844,7 @@ Section verification.
       iModIntro.
       simpl. ewp_pure_steps.
       iApply (ewp_load with "Hstate"). iIntros "!> Hstate !>".
-      iAssert (fstateSt q p γ cf state δ Φ) with "[Hstate Hcf Hp HΦ]" as "HcSt".
+      iAssert (fstateSt q p γ' cf state δ' Φ) with "[Hstate Hcf Hp HΦ]" as "HcSt".
       { iExists i. iFrame. iRight. iSplitL "Hcf".
         iExists true. by iFrame.
         iDestruct "Hp" as "(%l & %ks & Hp & Hks & Hlst)".
@@ -856,7 +856,7 @@ Section verification.
   Qed.
 
   Lemma ewp_io γ q:
-    torch γ ∗ fstateInv q ⊢ EWP io #() <| Coop (γ, q) |> {{ _, fstateInv q }}.
+    torch γ ∗ fstateInv q ⊢ EWP io #() <| Coop (γ, q) |> {{ _, torch γ ∗ fstateInv q }}.
   Proof.
     iIntros "(Htorch & HcInv)".
     rewrite /io.
@@ -915,9 +915,69 @@ Section verification.
         iExists l, ks. by iFrame. }
       iSpecialize ("HcInv" with "HcSt").
       iModIntro. ewp_pure_steps.
-      iApply "HcInv".
+      by iFrame.
   Qed.
   
+  Lemma ewp_child γ q:
+    torch γ ∗ fstateInv q -∗
+      EWP child #() <| Coop (γ, q) |> {{_, torch γ ∗ fstateInv q}}.
+  Proof.
+    iIntros "(Htorch & HInv)".
+    rewrite /child. ewp_pure_steps.
+    ewp_bind_rule. simpl.
+    iApply (ewp_mono with "[-]"); first iApply ewp_io; iFrame.
+    iIntros (v) "(Htorch & HInv) !>".
+    ewp_pure_steps.
+    ewp_bind_rule. simpl.
+    rewrite /yield. ewp_pure_steps.
+    iApply (ewp_mono with "[HInv]").
+      iApply ewp_async. instantiate (1:=(λ _, True )%I). simpl.
+      iFrame. iSplit; first done.
+      iIntros (γ') "(Htorch & HInv)". ewp_pure_steps. iFrame. done.
+    iIntros (v') "(%p & %cf & %state & -> & HInv & _) !>".
+    ewp_pure_steps.
+    ewp_bind_rule. simpl.
+    iApply (ewp_mono with "[-]"); first iApply ewp_io; iFrame.
+    iIntros (v'') "(Htorch & HInv) !>".
+    ewp_pure_steps. by iFrame.
+  Qed.
+
+  Lemma ewp_parent γ q:
+    torch γ ∗ fstateInv q -∗ 
+      EWP parent #() <| Coop (γ, q) |> {{_, torch γ ∗ fstateInv q}}.
+  Proof.
+    iIntros "(Htorch & HInv)".
+    rewrite /parent. ewp_pure_steps.
+    
+    ewp_bind_rule. simpl.
+    iApply (ewp_mono with "[HInv]"). iApply (ewp_async with "[HInv]").
+      instantiate (1:=(λ _, True)%I). iFrame. iSplit; first done.
+      iIntros (γ') "(Htorch & HInv)". iApply (ewp_mono with "[-]").
+      iApply ewp_child. by iFrame. 
+      iIntros (v) "(Htorch & HInv) !>". by iFrame.
+    iIntros (v) "(%p & %cf & %state & -> & HInv & (%γ' & %δ' & #Hmem)) !>".
+    ewp_pure_steps.
+
+    ewp_bind_rule. simpl.
+    iApply (ewp_mono with "[HInv]"). iApply ((ewp_fiber_cancel γ γ') with "[-]").
+      by iFrame.
+    iIntros (v) "(%i1 & -> & HInv & #Hio1) !>".
+    ewp_pure_steps.
+
+    ewp_bind_rule. simpl.
+    iApply (ewp_mono with "[HInv]"). iApply (ewp_await with "[HInv]"). 
+      by iFrame.
+    iIntros (v) "(%y_opt & %i2 & -> & HInv & _ & #Hio2) !>".
+    do 8 ewp_value_or_step.
+    
+    ewp_bind_rule. simpl.
+    iDestruct (claim_froze_agreement with "[Hio1 Hio2]") as "->".
+      by iSplit; iAssumption.
+    ewp_pure_steps. done.
+    rewrite bool_decide_eq_true_2; last done.
+    ewp_pure_steps. by iFrame.
+  Qed.
+
   Inductive LongProof := longproof.
   Print longproof.
 
@@ -1181,17 +1241,6 @@ Section verification.
 
   Print longproof.
 
-  Lemma ewp_child γ q:
-    torch γ ∗ fstateInv q -∗
-      EWP child #() <| Coop (γ, q) |> {{_, torch γ ∗ fstateInv q}}.
-  Proof.
-  Admitted.
-
-  Lemma ewp_parent γ q:
-    torch γ ∗ fstateInv q -∗ 
-      EWP parent #() <| Coop (γ, q) |> {{_, torch γ ∗ fstateInv q}}.
-  Proof.
-  Admitted.
 
 End verification.
 
@@ -1222,7 +1271,7 @@ Section specification.
   }.
 
   Definition run_spec (main : val) :=
-    (∀ (_ : AsyncCompLib) (γ : gname) (q : val), fiber_torch γ ∗ fstate_inv q -∗ EWP main #() <| coop (γ, q) |> {{ _, fiber_torch γ ∗ fstate_inv q }}) ==∗
+    (∀ (_ : AsyncCompLib) (γ : gname) (q : val), fiber_torch γ ∗ fstate_inv q -∗ EWP main #() <| coop (γ, q) |> {{ _, fiber_torch γ ∗ fstate_inv q }}) -∗
       EWP run main <| ⊥ |> {{ _, True }}.
 
 End specification.
@@ -1290,8 +1339,10 @@ Section closed_proof.
   Theorem run_correct main : run_spec main.
   Proof.
     iIntros "He". 
+    iApply fupd_ewp.
     iMod promise_and_cancelInv_init as "(%HfstateGS  & HpInv)".
-    iSpecialize ("He" $! async_comp_lib). iModIntro.
+    iModIntro.
+    iSpecialize ("He" $! async_comp_lib).
     iApply (ewp_run _ (λ _, True)%I with "[] HpInv").
     - done.
     - iIntros (q γ) "(Htorch & HcInv)".
@@ -1301,4 +1352,14 @@ Section closed_proof.
       iModIntro. iFrame. done.
   Qed.
 
+  Theorem parent_correct : 
+    ⊢ EWP run parent <| ⊥ |> {{ _, True }}.
+  Proof.
+    iIntros "".
+    iApply (run_correct parent).
+    iIntros (H γ q) "(Htorch & HInv)".
+    iApply (ewp_mono with "[-]").
+      instantiate (1:=(λ _, torch γ ∗ fstateInv q)%I).
+      (* whatever it's correct *)
+  Admitted.
 End closed_proof.
