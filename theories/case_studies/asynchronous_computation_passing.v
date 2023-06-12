@@ -299,7 +299,7 @@ Section predicates.
     own δ (Cinr (to_agree i)).
 
   Definition fstateInv_pre
-    (ready : val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ)
+    (ready : val -d> (val -d> iPropO Σ) -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ)
     (q : val) : iProp Σ := (
     ∃ M, isFstateMap M ∗
       [∗ map] args ↦ Φ ∈ M, let '((p, γ), (cf, state, δ)) := args in
@@ -319,33 +319,34 @@ Section predicates.
            p ↦ Waiting' l ∗ 
            is_list l ks   ∗
           (* a.d. TODO predicate for ready is not closed! needs the delta from above. *)
-           ▷ [∗ list] k ∈ ks, ready q (λ res, Φ res ∗ ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j) k))
+           ▷ [∗ list] k ∈ ks, ready q Φ (λ res, ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j) k))
       )
   )%I.
-
+  
+  (* a.d. Added a second predicate to ready instead of putting it in Φ so that the proper instances can be derived. *)
   Definition ready_pre :
-    (val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) →
-    (val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) := (λ ready q Φ k,
+    (val -d> (val -d> iPropO Σ) -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) →
+    (val -d> (val -d> iPropO Σ) -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) := (λ ready q Φ Φ' k,
     ∀ (y : val) n,
-      □ Φ y -∗
+      □ Φ y -∗ □ Φ' y -∗
         fstateInv_pre ready q -∗
-          ▷ is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) n -∗
+          ▷ is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I (λ (v:val), True)%I) n -∗
              EWP (k : val) y <| ⊥ |> {{ _, True }}
     )%I.
 
   Local Instance ready_contractive : Contractive ready_pre.
   Proof.
-    rewrite /ready_pre /fstateInv_pre=> n ready ready' Hn q Φ k.
+    rewrite /ready_pre /fstateInv_pre=> n ready ready' Hn q Φ Φ' k.
     repeat (f_contractive || apply is_queue_ne || f_equiv);
     try apply Hn; try done; try (intros=>?; apply Hn).
   Qed.
-  Definition ready_def : val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ :=
+  Definition ready_def : val -d> (val -d> iPropO Σ) -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ :=
     fixpoint ready_pre.
   Definition ready_aux : seal ready_def. Proof. by eexists. Qed.
   Definition ready := ready_aux.(unseal).
   Definition ready_eq : ready = ready_def :=
     ready_aux.(seal_eq).
-  Global Lemma ready_unfold q Φ k : ready q Φ k ⊣⊢ ready_pre ready q Φ k.
+  Global Lemma ready_unfold q Φ Φ' k : ready q Φ Φ' k ⊣⊢ ready_pre ready q Φ Φ' k.
   Proof. rewrite ready_eq /ready_def. apply (fixpoint_unfold ready_pre). Qed.
 
   Definition fstateInv (q : val) : iProp Σ :=
@@ -366,7 +367,7 @@ Section predicates.
         (∃ l ks,
           p ↦ Waiting' l ∗ 
           is_list l ks   ∗
-          ▷ [∗ list] k ∈ ks, ready q (λ res, Φ res ∗ ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j) k))
+          ▷ [∗ list] k ∈ ks, ready q Φ (λ res, ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j) k))
     ).
 
   (* ------------------------------------------------------------------------ *)
@@ -374,9 +375,9 @@ Section predicates.
 
   (* [ready]. *)
   Global Instance ready_ne n :
-    Proper ((dist n) ==> (dist n) ==> (dist n) ==> (dist n)) ready.
+    Proper ((dist n) ==> (dist n) ==> (dist n) ==> (dist n) ==> (dist n)) ready.
   Proof.
-    induction (lt_wf n) as [n _ IH]=> q q' -> Φ Φ' HΦ k k' ->.
+    induction (lt_wf n) as [n _ IH]=> q q' -> Φ Φ' HΦ Ψ Ψ' HΨ k k' ->.
     rewrite !ready_unfold /ready_pre.
     by repeat (f_contractive || apply is_queue_ne
            || apply IH || f_equiv
@@ -384,8 +385,8 @@ Section predicates.
            || case y1 as (y11, y12) || case y2 as (y21, y22)
            || apply H0 || apply H1 ).
   Qed.
-  Global Instance ready_proper : Proper ((≡) ==> (≡) ==> (≡) ==> (≡)) ready.
-  Proof. intros ?????????. apply equiv_dist=>n.
+  Global Instance ready_proper : Proper ((≡) ==> (≡) ==> (≡) ==> (≡) ==> (≡)) ready.
+  Proof. intros ????????????. apply equiv_dist=>n.
          by apply ready_ne; apply equiv_dist.
   Qed.
 
@@ -398,12 +399,11 @@ Section predicates.
   (* [promiseSt]. *)
   Global Instance fstateSt_ne n q p γ cf state δ:
     Proper ((dist n) ==> (dist n)) (fstateSt q p γ cf state δ ).
-  (* Proof. by solve_proper. Qed. *)
-  Admitted.
+  Proof.
+  by solve_proper. Qed.
   Global Instance fstateSt_proper q p γ cf state δ :
     Proper ((≡) ==> (≡)) (fstateSt q p γ cf state δ ).
-  (* Proof. by solve_proper. Qed. *)
-  Admitted.
+  Proof. by solve_proper. Qed.
 
   (* ------------------------------------------------------------------------ *)
   (* Properties. *)
@@ -591,7 +591,7 @@ Section protocol_coop.
 
   (* a.d. TODO do we need q'' for the postcondition of e? *)
   (* a.d. TODO I think q must also be a parameter of the protocol. *)
-  Definition pEff := (gname * val) -> iEff Σ.
+  Notation pEff := ((gname * val) -> iEff Σ) (only parsing).
   Definition ASYNC_pre (Coop : pEff) (q: val): iEff Σ :=
     >> e Φ >> !(Async'  e) {{ fstateInv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ, torch γ ∗ fstateInv q -∗ EWP e #() <|Coop (γ, q) |> {{v, torch γ ∗ fstateInv q ∗ ∀ (i: nat), □ Φ (RSome' v, #i)%V}}) }};
     << (p : loc) (cf state : loc) << ?((#p, (#cf, #state))%V)        {{fstateInv q ∗ isFstate p cf state Φ }} @ OS.
@@ -630,6 +630,8 @@ Section protocol_coop.
 
   Definition ASYNC  := ASYNC_pre (Coop).
 
+  Print upcl.
+  Locate "□?m".
   Lemma upcl_Coop γ q v Φ' :
     iEff_car (upcl OS (Coop (γ, q))) v Φ' ⊣⊢
       iEff_car (upcl OS (ASYNC q)) v Φ' ∨
@@ -712,7 +714,7 @@ Section verification.
         (∃ l ks,
            p ↦ Waiting' l ∗ 
            is_list l ks   ∗
-          ▷ [∗ list] k ∈ ks, ready q (λ res, Φ res ∗ ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j ) k) }}.
+          ▷ [∗ list] k ∈ ks, ready q Φ (λ res, ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j ) k) }}.
   Proof.
     unfold new_promise. ewp_pure_steps. ewp_bind_rule.
     iApply ewp_mono. { by iApply list_nil_spec. }
@@ -727,7 +729,7 @@ Section verification.
 
   Lemma ewp_next q n Ψ :
     fstateInv q -∗
-      is_queue q (ready q (λ v, ⌜ v = #() ⌝)) n -∗
+      is_queue q (ready q (λ v, ⌜ v = #() ⌝) (λ _, True)%I) n -∗
          EWP (next q) <| Ψ |> {{ _, True }}.
   Proof.
     iIntros "HpInv Hq". unfold next. ewp_pure_steps. ewp_bind_rule.
@@ -737,8 +739,8 @@ Section verification.
     ewp_bind_rule.
     iApply (ewp_mono with "[Hq]"); [iApply (queue_pop_spec with "Hq")|].
     simpl. iIntros (k) "[Hq Hk] !>".
-    rewrite ready_unfold.
-    iSpecialize ("Hk" $! #() n with "[//] HpInv Hq").
+    rewrite ready_unfold /ready_pre.
+    iSpecialize ("Hk" $! #() n with "[//] [//] HpInv Hq").
     iApply ewp_os_prot_mono. { by iApply iEff_le_bottom. } { done. }
   Qed.
 
@@ -998,7 +1000,7 @@ Section verification.
     do 3 ewp_value_or_step.
     iSpecialize ("HpInv" $! q).
     iSpecialize ("Hmain" $! q).
-    iAssert (∃ (n : nat), is_queue q (ready q (λ v : val, ⌜v = #()⌝)) n)%I
+    iAssert (∃ (n : nat), is_queue q (ready q (λ v : val, ⌜v = #()⌝) (λ _, True)) n)%I
       with "[Hq]" as "[%n Hq]". { by iExists 0. }
     iApply fupd_ewp.
     iMod (update_fstateInv with "[HpInv HpSt HcSt]") as "[HpInv Hmem]".
@@ -1050,8 +1052,8 @@ Section verification.
       iIntros "!> Hstate !>". ewp_pure_steps.
       iApply (ewp_bind' (AppRCtx _)); first done. simpl.
       set I : list val → iProp Σ := (λ us,
-        (∃ n, is_queue q (ready q (λ v : val, ⌜v = #()⌝)) n) ∗
-        (∃ vs, ⌜ us ++ vs = ks ⌝ ∗ [∗ list] k ∈ vs, ready q (λ res, Φ res ∗ ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j) k))%I.
+        (∃ n, is_queue q (ready q (λ v : val, ⌜v = #()⌝) (λ _, True)) n) ∗
+        (∃ vs, ⌜ us ++ vs = ks ⌝ ∗ [∗ list] k ∈ vs, ready q Φ (λ res, ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j) k))%I.
       iApply (ewp_mono with "[Hks Hl Hq]").
       { iApply (list_iter_spec _ I with "[] Hl [Hq Hks]").
         2: { iSplitL "Hq". iExists n. iFrame. iExists ks. iFrame. done. }
@@ -1059,12 +1061,11 @@ Section verification.
         specialize (app_inj_1 us us vs' (k :: vs) eq_refl Heq) as [_ ->].
         iDestruct "Hvs'" as "[Hk Hvs]". iDestruct "Hq" as "[%m Hq]".
         ewp_pure_steps. iApply (ewp_mono with "[Hq Hk]").
-        { iApply (queue_push_spec with "Hq"). rewrite !ready_unfold.
-          iIntros (y' n') "-> HpInv Hq". ewp_pure_steps.
-          unfold ready_pre.
+        { iApply (queue_push_spec with "Hq"). rewrite !ready_unfold /ready_pre.
+          iIntros (y' n') "-> _ HpInv Hq". ewp_pure_steps.
           iSpecialize ("Hsome" $! i).
-          iSpecialize ("Hk" $! (RSome' y, #i)%V n' with "[Hsome] HpInv Hq").
-          iModIntro. iSplit; first by iApply "Hsome". iExists i, (RSome' y). by iSplit. 
+          iSpecialize ("Hk" $! (RSome' y, #i)%V n' with "[Hsome //] [] HpInv Hq").
+          iModIntro. iExists i, (RSome' y). iSplit; done.
           iApply "Hk".
         }
         iIntros (?) "Hq !>".
@@ -1117,8 +1118,8 @@ Section verification.
         iApply (ewp_bind' (AppRCtx _)). { done. } simpl.
         iApply (ewp_mono with "[Hq Hk]").
         { iApply (queue_push_spec with "Hq"). rewrite ready_unfold.
-          iIntros (y m) "-> HpInv Hq". ewp_pure_steps.
-          iApply ("Hk" with "[HpInv]").
+          iIntros (y m) "-> _ HpInv Hq". ewp_pure_steps.
+          iApply ("Hk" with "[HpInv]"). 
           rewrite /fstateInv.
           iFrame. iExists γ', δ'. by iAssumption.
           iNext.
@@ -1167,8 +1168,8 @@ Section verification.
           iExists l'', (k :: ks'). iFrame.
           (* a.d. here it's necessary that cancelInv is in ready without a later. *)
           iNext.
-          rewrite ready_unfold /ready_pre. iIntros (y' m) "#(Hy' & %j & %y'' & -> & #Hio') HpInv Hq".
-          iApply ("Hk" with "[HpInv Hy']").
+          rewrite ready_unfold /ready_pre. iIntros (y' m) "#Hy' #(%j & %y'' & -> & #Hio') HpInv Hq".
+          iApply ("Hk" with "[HpInv]").
           -- iExists y'', j.
              iSplit; first done. iFrame.
              iSplit; first done. iAssumption.
@@ -1195,8 +1196,8 @@ Section verification.
         iIntros "!> Hstate !>". ewp_pure_steps.
         iApply (ewp_bind' (AppRCtx _)); first done.
         set I : list val → iProp Σ := (λ us,
-          (∃ n, is_queue q (ready q (λ v : val, ⌜v = #()⌝)) n) ∗
-          (∃ vs, ⌜ us ++ vs = ks ⌝ ∗ [∗ list] k ∈ vs, ready q (λ res, Φ res ∗ ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j) k))%I.
+          (∃ n, is_queue q (ready q (λ v : val, ⌜v = #()⌝) (λ _, True)) n) ∗
+          (∃ vs, ⌜ us ++ vs = ks ⌝ ∗ [∗ list] k ∈ vs, ready q Φ (λ res, ∃ (j: nat) (y: val), ⌜ res = (y, #j)%V ⌝ ∗ io_log_frozen δ j) k))%I.
         iApply (ewp_mono with "[Hks Hl Hq]").
         { iApply (list_iter_spec _ I with "[] Hl [Hq Hks]").
           2: { iSplitL "Hq". iExists n. iFrame. iExists ks. iFrame. done. }
@@ -1205,10 +1206,10 @@ Section verification.
           iDestruct "Hvs'" as "[Hk Hvs]". iDestruct "Hq" as "[%m Hq]".
           ewp_pure_steps. iApply (ewp_mono with "[Hq Hk]").
           { iApply (queue_push_spec with "Hq"). rewrite !ready_unfold.
-            iIntros (y' n') "-> HpInv Hq". ewp_pure_steps.
+            iIntros (y' n') "-> _ HpInv Hq". ewp_pure_steps.
             unfold ready_pre.
-            iSpecialize ("Hk" $! (RNone', #i)%V n' with "[] HpInv Hq").
-            - iModIntro. iSplit; first by iApply "Hnone".
+            iSpecialize ("Hk" $! (RNone', #i)%V n' with "[Hnone //] [] HpInv Hq").
+            - iModIntro. 
               iExists i, RNone'. by iSplit.
             - iApply "Hk".
           }
@@ -1352,14 +1353,4 @@ Section closed_proof.
       iModIntro. iFrame. done.
   Qed.
 
-  Theorem parent_correct : 
-    ⊢ EWP run parent <| ⊥ |> {{ _, True }}.
-  Proof.
-    iIntros "".
-    iApply (run_correct parent).
-    iIntros (H γ q) "(Htorch & HInv)".
-    iApply (ewp_mono with "[-]").
-      instantiate (1:=(λ _, torch γ ∗ fstateInv q)%I).
-      (* whatever it's correct *)
-  Admitted.
 End closed_proof.
