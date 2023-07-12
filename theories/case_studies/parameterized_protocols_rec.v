@@ -357,40 +357,45 @@ Section protocol_getstate.
   (* SPAWN is recursive, and for the given e, we want to run it under the same protocol but with a different parameter. 
      The parameter is the ghost name associated with the currently running fiber, so that the fiber has a sense of "self".
      After e has run to completion, we return some δ with a frozen δ i to the caller. *)
-  Definition SPAWN_pre (R: gname → iEff Σ): iEff Σ :=
-    >> (e: val) >> !(Spawn' e) {{ stateInv ∗ (∀ γ', torch γ' ∗ stateInv -∗ EWP e #() <| R γ' |> {{ _, torch γ' ∗ stateInv }}) }};
-    << (i: nat) (δ: gname) << ?((#i)%V) {{ stateInv ∗ frozen δ i }} @ OS.
+  Check Σ.
+  Check @iEffO Σ : ofe.
+  Definition SPAWN_pre (R: gnameO -d> iEffO): iEff Σ :=
+    (>> (e: val) >> !(Spawn' e) {{ stateInv ∗ (∀ γ', ▷ (torch γ' ∗ stateInv -∗ EWP e #() <| R γ' |> {{ _, torch γ' ∗ stateInv }})) }};
+    << (i: nat) (δ: gname) << ?((#i)%V) {{ stateInv ∗ frozen δ i }} @ OS)%ieff.
 
-  Definition GET_STATE (γ: gname): iEff Σ :=
-    >> (_: val) >> !(GetMyState') {{torch γ}};
-    << (r : loc) (δ : gname) << ?((#r)%V) {{torch γ ∗ isMember r γ δ}} @ OS.
+  Definition GET_STATE: gnameO -d> iEffO := λ (γ: gnameO),
+    (>> (_: val) >> !(GetMyState') {{torch γ}};
+    << (r : loc) (δ : gname) << ?((#r)%V) {{torch γ ∗ isMember r γ δ}} @ OS)%ieff.
 
-  Definition R_pre: (gname → iEff Σ) → (gname → iEff Σ) := (λ R,
+  (* R_pre: iEff -> iEff*)
+  Definition R_pre: (gnameO -d> iEffO) → (gnameO -d> iEffO) := (λ R,
     λ γ, SPAWN_pre R <+> GET_STATE γ
   )%ieff.
 
-  Fail Check (gname -d> iEff Σ).
+  (* Fail Check (gname -d> iEff Σ). *)
   (* The proofs about contractiveness don't work with (gname → iEff Σ).
      (gname -d> iEff Σ) fails because iEff is a Type, not an ofe.
      We might be able to add "gname -d>" to the definition of iEff. *)
 
-  (* Local Instance R_pre_contractive : Contractive (R_pre).
+  Local Instance R_pre_contractive : Contractive (R_pre).
   Proof.
     intros γ.
-    rewrite /Coop_pre /AWAIT /ASYNC_pre=> n Coop Coop' HCoop.
+    rewrite /R_pre.
+    rewrite /GET_STATE.
+    rewrite /SPAWN_pre=> n R R' HR.
     by repeat (apply ewp_ne||apply iEffPre_base_ne||f_contractive||f_equiv).
-  Qed. *)
-  (* Definition R_def: (gname → iEff Σ) := fixpoint (R_pre).
+  Qed.
+  (* a.d. the Contractive proof works but now `gname -> iEff Σ` should be an Ofe, which it is not yet. *)
+  Definition R_def: (gname → iEff Σ) := fixpoint (R_pre).
   Definition R_aux : seal R_def. Proof. by eexists. Qed.
   Definition R := R_aux.(unseal).
-  Definition R_eq : R = R_def := R_aux.(seal_eq).*)
-  Axiom R: gname → iEff Σ.
+  Definition R_eq : R = R_def := R_aux.(seal_eq).
   Global Lemma R_unfold : ∀ γ, R γ ≡ R_pre R γ.
   Proof.
-    (* intros γ.
+    intros γ.
     rewrite R_eq /R_def.
-    by apply (fixpoint_unfold (R_pre γ)). *)
-  Admitted.
+    by apply (fixpoint_unfold R_pre).
+  Qed.
 
   Definition SPAWN  := SPAWN_pre R.
 
@@ -406,7 +411,7 @@ Section protocol_getstate.
 
   Lemma upcl_SPAWN v Φ' :
     iEff_car (upcl OS SPAWN) v Φ' ≡
-      (∃ (e: val), ⌜ v = Spawn' e ⌝ ∗ (stateInv ∗ (∀ γ', torch γ' ∗ stateInv -∗ EWP e #() <| R γ' |> {{ _, torch γ' ∗ stateInv }})) ∗
+      (∃ (e: val), ⌜ v = Spawn' e ⌝ ∗ (stateInv ∗ (∀ γ', ▷ (torch γ' ∗ stateInv -∗ EWP e #() <| R γ' |> {{ _, torch γ' ∗ stateInv }}))) ∗
         (∀ (i: nat) (δ: gname), (stateInv ∗ frozen δ i) -∗ Φ' #i)
       )%I.
   Proof.
@@ -464,7 +469,7 @@ Section verification.
   Qed.
 
   Lemma ewp_spawn (e: val) γ :
-    stateInv ∗ (∀ γ', torch γ' ∗ stateInv -∗ EWP e #() <| R γ' |> {{ _, torch γ' ∗ stateInv }}) ⊢
+    stateInv ∗ (∀ γ', ▷ (torch γ' ∗ stateInv -∗ EWP e #() <| R γ' |> {{ _, torch γ' ∗ stateInv }})) ⊢
       EWP (spawn e) <| R γ |> {{v, ∃ (i: nat) (δ: gname), ⌜ v = #i ⌝ ∗ stateInv ∗ frozen δ i }}.
   Proof.
     iIntros "(HInv & He)".
@@ -472,7 +477,7 @@ Section verification.
     iApply ewp_do_os. rewrite upcl_R upcl_SPAWN.
     iLeft.
     iExists e. iSplit; first done.
-    iFrame. 
+    iSplitL. iFrame. iIntros (γ'). iNext. iApply "He".
     iIntros (i δ) "(HInv & Hfrozen)".
     iExists i, δ. by iFrame.
   Qed.
@@ -539,7 +544,7 @@ Section verification.
     ewp_bind_rule. simpl.
     iApply (ewp_mono with "[HInv]").
     { iApply ewp_spawn. iFrame.
-      iIntros (γ') "(Htorch' & HInv)".
+      iIntros (γ') "!> (Htorch' & HInv)".
       iApply ewp_e2. iFrame. }
     iIntros (v) "(%i & %δ & -> & HInv & Hfrozen) !>".
     ewp_pure_steps. iFrame.
@@ -650,7 +655,7 @@ Section specification.
     state_frozen_Persistent δ i : Persistent (state_frozen δ i);
     state_inv : iProp Σ;
     spawn_spec γ (e : val) :
-      state_inv ∗ (∀ γ', is_torch γ' ∗ state_inv -∗ EWP e #() <| prot γ' |> {{ _, is_torch γ' ∗ state_inv }}) -∗
+      state_inv ∗ (∀ γ', ▷ (is_torch γ' ∗ state_inv -∗ EWP e #() <| prot γ' |> {{ _, is_torch γ' ∗ state_inv }})) -∗
         EWP spawn e <| prot γ |> {{ v, ∃ (i : nat) (δ : gname), ⌜ v = #i ⌝ ∗ state_inv ∗ state_frozen δ i }};
     get_my_state_spec γ :
       is_torch γ -∗

@@ -589,11 +589,18 @@ Section protocol_coop.
   Context `{!heapGS Σ, !fstateGS Σ}.
   Context `{!ListLib Σ, !QueueLib Σ}.
 
+  Locate "-d>".
+  Locate "-n>".
+  Print discrete_funO.
+  Print iEff.
+  Locate iPropO.
+  Locate iEff.
+  Print iris.base_logic.lib.iprop.iProp_solution.iPropO.
   (* a.d. TODO do we need q'' for the postcondition of e? *)
   (* a.d. TODO I think q must also be a parameter of the protocol. *)
-  Notation pEff := ((gname * val) -> iEff Σ) (only parsing).
-  Definition ASYNC_pre (Coop : pEff) (q: val): iEff Σ :=
-    >> e Φ >> !(Async'  e) {{ fstateInv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ, torch γ ∗ fstateInv q -∗ EWP e #() <|Coop (γ, q) |> {{v, torch γ ∗ fstateInv q ∗ ∀ (i: nat), □ Φ (RSome' v, #i)%V}}) }};
+  Notation pEff := ((gnameO * valO) -d> iEffO) (only parsing).
+  Definition ASYNC_pre (Coop : (gname * val) -> iEff Σ) (q: val): iEff Σ :=
+    >> e Φ >> !(Async'  e) {{ fstateInv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ, ▷ (torch γ ∗ fstateInv q -∗ EWP e #() <|Coop (γ, q) |> {{v, torch γ ∗ fstateInv q ∗ ∀ (i: nat), □ Φ (RSome' v, #i)%V}})) }};
     << (p : loc) (cf state : loc) << ?((#p, (#cf, #state))%V)        {{fstateInv q ∗ isFstate p cf state Φ }} @ OS.
   Definition AWAIT (q: val): iEff Σ :=
     >> (p : loc) Φ (cf state : loc) (δ : gname) >> !(Await' #p) {{fstateInv q ∗ (∃ γ, isMember p γ cf state δ Φ)}};
@@ -604,29 +611,32 @@ Section protocol_coop.
     << (_: val) << ?(#()) {{False}} @ OS.
   Definition GET_CONTEXT (γ: gname ): iEff Σ :=
     >> (_: val) >> !(GetContext') {{torch γ}};
-    << (cf state : loc) (δ : gname) << ?((#cf, #state)%V) {{torch γ ∗ ∃ p Φ, isMember p γ cf state δ Φ}} @ OS.
+    << (cf state : loc) (δ : gname) << ?((#cf, #state)%V) 
+        {{torch γ ∗ ∃ p Φ, isMember p γ cf state δ Φ}} @ OS.
   
   Definition Coop_pre : pEff → pEff := (λ Coop,
     λ '(γ, q), ASYNC_pre Coop q <+> AWAIT q <+> FAIL γ q <+> GET_CONTEXT γ
   )%ieff.
+  (* -> -d> *)
+  Locate Contractive.
 
-  (* Local Instance Coop_pre_contractive : Contractive (Coop_pre).
+  Local Instance Coop_pre_contractive : Contractive (Coop_pre).
   Proof.
-    intros γ.
+    intros n'.
     rewrite /Coop_pre /AWAIT /ASYNC_pre=> n Coop Coop' HCoop.
     by repeat (apply ewp_ne||apply iEffPre_base_ne||f_contractive||f_equiv).
-  Qed. *)
-  (* Definition Coop_def: (gname → iEff Σ) := fixpoint (Coop_pre).
+  Qed.
+  Definition Coop_def: ((gname * val) → iEff Σ) := fixpoint (Coop_pre).
   Definition Coop_aux : seal Coop_def. Proof. by eexists. Qed.
   Definition Coop := Coop_aux.(unseal).
-  Definition Coop_eq : Coop = Coop_def := Coop_aux.(seal_eq).*)
-  Axiom Coop: pEff.
+  Definition Coop_eq : Coop = Coop_def := Coop_aux.(seal_eq).
+  (* Axiom Coop: pEff. *)
   Global Lemma Coop_unfold : ∀ γq, Coop γq ≡ Coop_pre Coop γq.
   Proof.
-    (* intros γ.
+    intros γ.
     rewrite Coop_eq /Coop_def.
-    by apply (fixpoint_unfold (Coop_pre γ)). *)
-  Admitted.
+    by apply (fixpoint_unfold Coop_pre).
+  Qed.
 
   Definition ASYNC  := ASYNC_pre (Coop).
 
@@ -647,7 +657,7 @@ Section protocol_coop.
 
   Lemma upcl_ASYNC q v Φ' :
     iEff_car (upcl OS (ASYNC q)) v Φ' ≡
-      (∃ e Φ, ⌜ v = Async' e ⌝ ∗ (fstateInv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ', torch γ' ∗ fstateInv q -∗ EWP e #() <| Coop (γ', q) |> {{ v, torch γ' ∗ fstateInv q ∗ ∀ (i: nat), □ Φ (RSome' v, #i)%V }})) ∗
+      (∃ e Φ, ⌜ v = Async' e ⌝ ∗ (fstateInv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ', ▷ (torch γ' ∗ fstateInv q -∗ EWP e #() <| Coop (γ', q) |> {{ v, torch γ' ∗ fstateInv q ∗ ∀ (i: nat), □ Φ (RSome' v, #i)%V }}))) ∗
             (∀ (p : loc) (cf state : loc), (fstateInv q ∗ isFstate p cf state Φ) -∗ Φ' ((#p, (#cf, #state))%V) ))%I.
   Proof. 
     rewrite /ASYNC (upcl_tele' [tele _ _] [tele _ _ _]); by done.
@@ -745,7 +755,7 @@ Section verification.
   Qed.
 
   Lemma ewp_async (γ: gname) q (e : val) Φ :
-    fstateInv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ', torch γ' ∗ fstateInv q -∗ EWP e #() <| Coop (γ', q) |> {{ v, torch γ' ∗ fstateInv q ∗ ∀ (i: nat), □ Φ (RSome' v, #i)%V }}) ⊢
+    fstateInv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ', ▷ (torch γ' ∗ fstateInv q -∗ EWP e #() <| Coop (γ', q) |> {{ v, torch γ' ∗ fstateInv q ∗ ∀ (i: nat), □ Φ (RSome' v, #i)%V }})) ⊢
       EWP (async e) <| Coop (γ, q) |> {{ y,
         ∃ (p : loc) (cf state : loc), ⌜ y = (#p, (#cf, #state))%V ⌝ ∗ fstateInv q ∗ isFstate p cf state Φ }}.
   Proof.
@@ -754,6 +764,7 @@ Section verification.
     iExists e, Φ. iSplit; [done|].
     iSplitL.
     - iFrame.
+      iIntros (γ') "!>". by iApply "He".
     - iIntros (p cf state) "(HfInv & HfSt)".
       iExists p, cf, state. by iFrame.
   Qed.
@@ -935,7 +946,7 @@ Section verification.
     iApply (ewp_mono with "[HInv]").
       iApply ewp_async. instantiate (1:=(λ _, True )%I). simpl.
       iFrame. iSplit; first done.
-      iIntros (γ') "(Htorch & HInv)". ewp_pure_steps. iFrame. done.
+      iIntros (γ') "!> (Htorch & HInv)". ewp_pure_steps. iFrame. done.
     iIntros (v') "(%p & %cf & %state & -> & HInv & _) !>".
     ewp_pure_steps.
     ewp_bind_rule. simpl.
@@ -954,7 +965,7 @@ Section verification.
     ewp_bind_rule. simpl.
     iApply (ewp_mono with "[HInv]"). iApply (ewp_async with "[HInv]").
       instantiate (1:=(λ _, True)%I). iFrame. iSplit; first done.
-      iIntros (γ') "(Htorch & HInv)". iApply (ewp_mono with "[-]").
+      iIntros (γ') "!> (Htorch & HInv)". iApply (ewp_mono with "[-]").
       iApply ewp_child. by iFrame. 
       iIntros (v) "(Htorch & HInv) !>". by iFrame.
     iIntros (v) "(%p & %cf & %state & -> & HInv & (%γ' & %δ' & #Hmem)) !>".
@@ -1261,7 +1272,7 @@ Section specification.
     fstate_inv : val → iProp Σ;
     fiber_torch : gname -> iProp Σ;
     async_spec γ q (e : val) Φ :
-      fstate_inv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ', fiber_torch γ' ∗ fstate_inv q -∗ EWP e #() <| coop (γ', q) |> {{ y, fiber_torch γ' ∗ fstate_inv q ∗ (∀ (i:nat), □ Φ (RSome' y, #i)%V) }}) -∗
+      fstate_inv q ∗ (∀ (i: nat), □ Φ (RNone', #i)%V) ∗ (∀ γ', ▷ (fiber_torch γ' ∗ fstate_inv q -∗ EWP e #() <| coop (γ', q) |> {{ y, fiber_torch γ' ∗ fstate_inv q ∗ (∀ (i:nat), □ Φ (RSome' y, #i)%V) }})) -∗
         EWP async e <| coop (γ, q) |> {{ y, ∃ (p cf state : val), ⌜ y = (p, (cf, state))%V ⌝ ∗ fstate_inv q ∗ is_fstate p cf state Φ }};
     await_spec γ q p cf state δ Φ :
       fstate_inv q ∗ is_member p γ cf state δ Φ -∗
@@ -1354,3 +1365,5 @@ Section closed_proof.
   Qed.
 
 End closed_proof.
+
+Print Assumptions run_correct.
