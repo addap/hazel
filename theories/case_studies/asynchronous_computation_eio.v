@@ -23,7 +23,7 @@ From iris.proofmode Require Import base tactics classes.
 From iris.algebra Require Import excl_auth gset gmap agree csum frac excl.
 From iris.base_logic.lib Require Import iprop wsat invariants.
 From program_logic Require Import reasoning_rules.
-From case_studies Require Import list_lib queue_lib.
+From case_studies Require Import list_lib .
 
 
 (* ========================================================================== *)
@@ -41,10 +41,51 @@ Notation Waiting ks := (InjR ks) (only parsing).
 Notation Done' y := (InjLV y) (only parsing).
 Notation Waiting' ks := (InjRV ks) (only parsing).
 
+Notation ONone := (InjL #()) (only parsing).
+Notation OSome v := (InjR v) (only parsing).
+Notation ONone' := (InjLV #()) (only parsing).
+Notation OSome' v := (InjRV v) (only parsing).
+
+Section concurrent_queue.
+  Context `{!heapGS Σ}.
+
+  Parameter queue_create : val.
+  Parameter queue_push   : val.
+  Parameter queue_pop    : val.
+
+  Parameter is_queue :
+    val -d> (val -d> iPropO Σ) -d> iPropO Σ.
+
+  Parameter is_queue_ne : ∀ (q: val) (n: nat),
+    Proper ((dist n) ==> (dist n)) (is_queue q).
+
+  Global Instance is_queue_Persistent q I:
+    Persistent (is_queue q I).
+  Admitted.
+  
+  Global Instance is_queue_proper q :
+    Proper ((≡) ==> (≡)) (is_queue q).
+  Admitted.
+
+  Parameter queue_create_spec : ∀ (Ψ1 Ψ2: iEff Σ),
+    ⊢ EWP queue_create #() <| Ψ1 |> {| Ψ2 |} {{ q,
+        ∀ I, is_queue q I }}.
+
+  Parameter queue_push_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ) v,
+    is_queue q I -∗
+      I v -∗
+        EWP queue_push q v <| Ψ1 |> {| Ψ2 |} {{ _, True }}.
+
+  Parameter queue_pop_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ),
+    is_queue q I -∗
+      EWP queue_pop q <| Ψ1 |> {| Ψ2 |} {{ y,
+        ⌜ y = ONone' ⌝ ∨ 
+        ∃ (v: val), ⌜ y = OSome' v ⌝ ∗ I v }}.
+End concurrent_queue.
 
 Section implementation.
   Context `{!heapGS Σ}.
-  Context `{!ListLib Σ, !QueueLib Σ}.
+  Context `{!ListLib Σ}.
 
   Definition new_promise : val := (λ: <>,
     ref (Waiting (list_nil #()))
@@ -52,8 +93,10 @@ Section implementation.
   Definition fork : val := (λ: "f", do: (Fork "f"))%V.
   Definition suspend : val := (λ: "f", do: (Suspend "f"))%V.
   Definition next : val := (λ: "q",
-    if: queue_empty "q" then #() else queue_pop "q" #()
-  )%V.
+    match: queue_pop "q" with
+      (* Empty *) InjL <> => #()
+    | (* Nonempty *) InjR "f" => "f" #()
+    end)%V.
 
   Definition fork_wrap_f : val := (λ: "f" "p", (λ: <>, 
     let: "v" := "f" #() in
@@ -182,7 +225,7 @@ Class promiseGS Σ := {
 
 Section predicates.
   Context `{!heapGS Σ, !promiseGS Σ}.
-  Context `{!ListLib Σ, !QueueLib Σ}.
+  Context `{!ListLib Σ}.
 
   (* ------------------------------------------------------------------------ *)
   (* Definitions. *)
@@ -212,8 +255,6 @@ Section predicates.
              ▷ is_queue q (ready q (λ y. y = ())) -∗
                EWP (k y) <| ⊥ |> {{ _. True }}
   *)
-
-  Definition my_is_queue (q: val) (P: val -d> iPropO Σ) := (∃ (n: nat), is_queue q P n)%I.
 
   (* Unique token [γ]: a fiber holds possession of [torch γ] while running. *)
   Definition promise_state_whole γ := own γ (Cinl 1%Qp).
@@ -254,27 +295,28 @@ Section predicates.
           [∗ list] enq ∈ enqs, (∀ (v: val), 
             let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
             P v -∗
-            my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) -∗ 
-              EWP (App (Val enq) v)%I <| ⊥ |> {{_, my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) }} ))
+            (* a.d. can we remove the my_queue precondition by saying is_queue is persistent and "partially-applying" the specification? *)
+            is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) -∗ 
+              EWP (App (Val enq) v)%I <| ⊥ |> {{_, True }} ))
   )%I.
     
 
   Definition ready_pre :
     (val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) →
     (val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) := (λ ready q Φ k,
-    ∀ (y : val) n,
+    ∀ (y : val),
       □ Φ y -∗
         ▷ promiseInv_pre ready q -∗
-          ▷ is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) n -∗
+          ▷ is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) -∗
              EWP (k : val) y {{ _, True }}
   )%I.
 
   Local Instance ready_contractive : Contractive ready_pre.
   Proof.
     rewrite /ready_pre /promiseInv_pre=> n ready ready' Hn q Φ k.
-    repeat (f_contractive || apply is_queue_ne || f_equiv);
+    repeat (f_contractive || apply is_queue_ne  || f_equiv);
     try apply Hn; try done; try (intros=>?; apply Hn).
-  Admitted.
+  Qed.
   Definition ready_def : val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ :=
     fixpoint ready_pre.
   Definition ready_aux : seal ready_def. Proof. by eexists. Qed.
@@ -302,8 +344,8 @@ Section predicates.
       [∗ list] enq ∈ enqs, (∀ (v: val), 
         let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
         P v -∗
-        my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) -∗ 
-          EWP (App (Val enq) v)%I <| ⊥ |> {{_, my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) }} )).
+        is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) -∗ 
+          EWP (App (Val enq) v)%I <| ⊥ |> {{_, True }} )).
 
 
   (* ------------------------------------------------------------------------ *)
@@ -369,7 +411,17 @@ Section predicates.
 
     Lemma promise_state_join γ :
       ⊢ promise_state_waiting γ ∗ promise_state_waiting γ ==∗ promise_state_whole γ.
-    Admitted.
+    Proof.
+      rewrite /promise_state_whole /promise_state_waiting.
+      rewrite -own_op.
+      iApply own_update.
+      rewrite -Cinl_op.
+      apply csum_update_l.
+      rewrite frac_op.
+      rewrite cmra_update_updateP.
+      apply cmra_updateP_id. 
+      by rewrite Qp_half_half.
+    Qed.
 
     Lemma promise_state_fulfill γ :
       ⊢ promise_state_whole γ ==∗ promise_state_done γ.
@@ -504,11 +556,11 @@ End predicates.
 
 Section protocol_coop.
   Context `{!heapGS Σ, !promiseGS Σ}.
-  Context `{!ListLib Σ, !QueueLib Σ}.
+  Context `{!ListLib Σ}.
 
   Definition FORK_pre (Coop : val -> iEff Σ) (q: val) : iEff Σ :=
-    >> e >> !(Fork'  e) {{promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I ∗ ▷ (promiseInv q -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I -∗ EWP e #() <|Coop q|> {{_, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝))}} ) }};
-    << (_: val) << ?(#())        {{promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I}} @ OS.
+    >> e >> !(Fork'  e) {{promiseInv q ∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I ∗ ▷ (promiseInv q -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I -∗ EWP e #() <|Coop q|> {{_, promiseInv q}} ) }};
+    << (_: val) << ?(#())        {{promiseInv q }} @ OS.
       
   (* a.d. for the suspend call in await, we want to instantiate P with (λ v, v = #() ∧ done p)
     where done p shows that the promise is fulfilled
@@ -519,10 +571,10 @@ Section protocol_coop.
     >> (f: val) (P: val → iProp Σ) >> !(Suspend' f) {{
       (* We call f with the enqueue function and enqueue receives a value satisfying P and accesses the run queue. *)
       ( ∀ (enqueue: val) (q: val),
-        (∀ (v: val), P v -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
-                      (EWP (enqueue v) <| ⊥ |> {{_, my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}) ) -∗
-        promiseInv q -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
-          (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}) )%I
+        (∀ (v: val), P v -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
+                      (EWP (enqueue v) <| ⊥ |> {{_, True }}) ) -∗
+        promiseInv q -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
+          (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv q  }}) )%I
     }};
     << y           << ?(y)         {{P y        }} @ OS.
 
@@ -558,8 +610,8 @@ Section protocol_coop.
 
   Lemma upcl_FORK q v Φ' :
     iEff_car (upcl OS (FORK q)) v Φ' ≡
-      (∃ e, ⌜ v = Fork' e ⌝ ∗ (promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I ∗ ▷ (promiseInv q -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I -∗ EWP e #() <|Coop q|> {{_, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }})) ∗
-            (∀ (_ : val), (promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝))) -∗ Φ' #()))%I.
+      (∃ e, ⌜ v = Fork' e ⌝ ∗ (promiseInv q ∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I ∗ ▷ (promiseInv q -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝))%I -∗ EWP e #() <|Coop q|> {{_, promiseInv q }})) ∗
+            (∀ (_ : val), (promiseInv q) -∗ Φ' #()))%I.
   Proof. by rewrite /FORK (upcl_tele' [tele _] [tele _]). Qed.
 
   Lemma upcl_SUSPEND v Φ' :
@@ -568,10 +620,10 @@ Section protocol_coop.
       ∗ 
       (* the big precondition of the protocol *)
       ( ∀ (enqueue: val) (q: val),
-        (∀ (v: val), P v -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
-                      (EWP (enqueue v) <| ⊥ |> {{_, my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}) ) -∗
-        promiseInv q -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
-          (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}) ) 
+        (∀ (v: val), P v -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
+                      (EWP (enqueue v) <| ⊥ |> {{_, True }}) ) -∗
+        promiseInv q -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
+          (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv q }}) ) 
       ∗
           (∀ v, P v -∗ Φ' v))%I.
   Proof. by rewrite /SUSPEND (upcl_tele' [tele _ _] [tele _]). Qed.
@@ -584,7 +636,7 @@ End protocol_coop.
 
 Section verification.
   Context `{!heapGS Σ, !promiseGS Σ}.
-  Context `{!ListLib Σ, !QueueLib Σ}.
+  Context `{!ListLib Σ}.
 
   Lemma ewp_new_promise Ψ q Φ :
     ⊢ EWP (new_promise #()) <| Ψ |> {{ y,
@@ -601,41 +653,41 @@ Section verification.
     iExists l, []. by iFrame.
   Qed.
 
-  Lemma ewp_next q n Ψ :
+  Lemma ewp_next q Ψ :
     promiseInv q -∗
-      is_queue q (ready q (λ v, ⌜ v = #() ⌝)) n -∗
+      is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗
          EWP (next q) <| Ψ |> {{ _, True }}.
   Proof.
-    iIntros "HpInv Hq". unfold next. ewp_pure_steps. ewp_bind_rule.
-    iApply (ewp_mono with "[Hq]"); [iApply (queue_empty_spec with "Hq")|].
-    iIntros (b) "[Hq Hb] !>". simpl.
-    case n as [|?]; iDestruct "Hb" as %->; ewp_pure_steps; [done|].
-    ewp_bind_rule.
-    iApply (ewp_mono with "[Hq]"); [iApply (queue_pop_spec with "Hq")|].
-    simpl. iIntros (k) "[Hq Hk] !>".
-    rewrite ready_unfold /ready_pre.
-    iSpecialize ("Hk" $! #() n with "[//] HpInv Hq").
-    iApply ewp_os_prot_mono. { by iApply iEff_le_bottom. } { done. }
+    iIntros "HpInv #Hq". unfold next. ewp_pure_steps. ewp_bind_rule.
+    iApply ewp_mono; [iApply (queue_pop_spec with "Hq")|].
+    simpl. iIntros (y) "[->|(%k & -> & Hk)] !>".
+    - (* queue is empty *) 
+      by ewp_pure_steps.
+    - (* queue has a continuation *)
+      ewp_pure_steps.
+      rewrite ready_unfold /ready_pre.
+      iSpecialize ("Hk" $! #() with "[//] HpInv Hq").
+      iApply ewp_os_prot_mono. { by iApply iEff_le_bottom. } { done. }
   Qed.
 
   Lemma ewp_fork (e : val) q:
-    promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) ∗ 
-    (promiseInv q -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ EWP e #() <| Coop q |> {{ _, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }})
+    promiseInv q ∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) ∗ 
+    (promiseInv q -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ EWP e #() <| Coop q |> {{ _, promiseInv q }})
   ⊢
-      EWP (fork e) <| Coop q |> {{ _, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}.
+      EWP (fork e) <| Coop q |> {{ _, promiseInv q ∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}.
   Proof.
-    iIntros "(HpInv & Hq & He)". rewrite /fork. ewp_pure_steps.
+    iIntros "(HpInv & #Hq & He)". rewrite /fork. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_FORK. iLeft.
-    iExists e. iSplit; [done|]. iFrame.
-    iIntros (_) "H". by done.
+    iExists e. iSplit; [done|]. iFrame. iSplit; first done.
+    iIntros (_) "H". by iFrame.
   Qed.
 
   Lemma ewp_suspend (f : val) (P: val → iProp Σ) q :
     (∀ (enqueue: val) (q: val),
-      (∀ (v: val), P v -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
-                    (EWP (enqueue v) <| ⊥ |> {{_, my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}) ) -∗
-      promiseInv q -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
-        (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}) ) 
+      (∀ (v: val), P v -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
+                    (EWP (enqueue v) <| ⊥ |> {{_, True}}) ) -∗
+      promiseInv q -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
+        (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv q }}) ) 
     ⊢
       EWP (suspend f) <| Coop q |> {{ v, P v }}.
   Proof.
@@ -650,35 +702,31 @@ Section verification.
     isMember p γ Φ
   ⊢
     EWP (await_callback #p) <| ⊥ |> {{f, ∀ (enqueue: val) (q: val), 
-      (∀ (v: val), P v -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
-                    (EWP (enqueue v) <| ⊥ |> {{_, my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}) ) -∗
-      promiseInv q -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
-                                                          (* a.d. hack, remove n from queue since we won't need it for concurrency *)
-        (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}) }}.
+      (∀ (v: val), P v -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
+                    (EWP (enqueue v) <| ⊥ |> {{_, True }}) ) -∗
+      promiseInv q -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗ 
+        (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv q }}) }}.
   Proof.
     iIntros "Hmem". rewrite /await_callback. ewp_pure_steps.
-    iIntros (enqueue q) "Henq HpInv Hq". 
+    iIntros (enqueue q) "Henq HpInv #Hq". 
     iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
     iNext. ewp_pure_steps. ewp_bind_rule. simpl.
     iDestruct "HpSt" as "[[%y (Hp&Hy&#Hps)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
     - (* the promise was fulfilled (cannot yet happen without concurrency) *)
       iApply (ewp_load with "Hp"). 
       iIntros "!> Hp !>". ewp_pure_steps.
-      iApply (ewp_mono with "[Henq Hq]").
+      iApply (ewp_mono with "[Henq]").
       + iApply ("Henq" with "[] Hq"). iSplit; done.
-      + iIntros (v) "Hq !>". iSplitR "Hq".
-        iApply "HpInv". iLeft. iExists y. by iFrame.
-        by iFrame.
+      + iIntros (v) "_ !>". 
+        iApply "HpInv". iLeft. iExists y. by iFrame. 
     - (* the promise is not yet fulifilled so we put enqueue into the list *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". ewp_pure_steps.
       iApply (ewp_bind [(StoreRCtx _); InjRCtx]); first done.
       iApply (ewp_mono with "[Hl]"); [iApply (list_cons_spec with "Hl")|].
       iIntros (l') "Hl' !>". simpl. ewp_pure_steps. ewp_bind_rule.
-      iApply (ewp_store with "Hp"). iIntros "!> Hp !>". simpl.
-      iSplitR "Hq".
-      + iApply "HpInv". iRight. iExists l', (enqueue :: enqs). iFrame.
-      + by iFrame.
+      iApply (ewp_store with "Hp"). iIntros "!> Hp !>". 
+      iApply "HpInv". iRight. iExists l', (enqueue :: enqs). iFrame.
   Qed.
 
   (* Definition await_callback : val := (λ: "p", (λ: "enqueue", 
@@ -757,11 +805,11 @@ Section verification.
   ⊢
     EWP (fork_wrap_f f #p) <| ⊥ |> {{wrapped_f, 
         (* promiseInv and is_queue are passed here because they come from the effect handler *)
-          promiseInv q -∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗
-          EWP (wrapped_f #()) <| Coop q |> {{_, promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝))}} }}.
+          promiseInv q -∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗
+          EWP (wrapped_f #()) <| Coop q |> {{_, promiseInv q}} }}.
   Proof.
     iIntros "(Hps & #Hmem & Hf)". rewrite /fork_wrap_f. ewp_pure_steps.
-    iIntros "HpInv Hq". ewp_pure_steps.
+    iIntros "HpInv #Hq". ewp_pure_steps.
     ewp_bind_rule. simpl. iApply (ewp_mono with "Hf"). 
     iIntros (v) "#Hv !>".
     iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
@@ -777,29 +825,28 @@ Section verification.
     iApply (ewp_bind' (AppRCtx _)); first done.
     (* now we just call all the enqueue functions. *)
     set I : list val → iProp Σ := (λ us,
-      my_is_queue q (ready q (λ v1 : val, ⌜v1 = #()⌝)) ∗
-      (∃ vs, ⌜ us ++ vs = ks ⌝ ∗ [∗ list] enq ∈ vs, 
+      ∃ vs, ⌜ us ++ vs = ks ⌝ ∗ [∗ list] enq ∈ vs, 
         ∀ v0 : val, ⌜v0 = #()⌝ ∗ promise_state_done γ -∗
-                    my_is_queue q (ready q (λ v1 : val, ⌜v1 = #()⌝)) -∗
-                    EWP (App (Val enq) v0) <| ⊥ |> {{ _, my_is_queue q (ready q (λ v1 : val, ⌜v1 = #()⌝)) }}
-      ))%I.
-    iApply (ewp_mono with "[Hks Hl Hq]").
+                    is_queue q (ready q (λ v1 : val, ⌜v1 = #()⌝)) -∗
+                    EWP (App (Val enq) v0) <| ⊥ |> {{ _, True }}
+      )%I.
+    iApply (ewp_mono with "[Hks Hl]").
     { iApply ewp_os_prot_mono. iApply iEff_le_bottom.
       iApply (list_iter_spec _ I with "[] Hl [Hq Hks]").
-      2: by iSplitL "Hq"; [|iExists ks]; iFrame.
-      iIntros "!#" (us enq vs) "<- [Hq  [%vs' [%Heq Hvs']]]".
+      2: by iExists ks; iFrame.
+      iIntros "!#" (us enq vs) "<- [%vs' [%Heq Hvs']]".
       specialize (app_inj_1 us us vs' (enq :: vs) eq_refl Heq) as [_ ->].
       iDestruct "Hvs'" as "[Hk Hvs]". 
       ewp_pure_steps. iApply (ewp_mono with "[Hq Hk]").
       { iApply ("Hk" $! #()). by iSplit.
         by iFrame. }
-      iIntros (?) "Hq !>".
+      iIntros (?) "_ !>".
       rewrite /I.
       iFrame.
       iExists vs. iFrame.
       iPureIntro. by rewrite -app_assoc.
     }
-    iIntros (?) "[Hl [Hq  _]] !>". simpl.
+    iIntros (?) "[Hl _] !>". simpl.
     ewp_pure_steps. ewp_bind_rule.
     iApply (ewp_store with "Hp"). iIntros "!> Hp !>". simpl.
     iFrame. iApply "HpInv".
@@ -818,11 +865,11 @@ Section verification.
     end))%V. *)
 
   Lemma ewp_fork_promise q (f: val) Φ :
-    promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) ∗ EWP (f #()) <| Coop q |> {{v, □ Φ v}}
+    promiseInv q ∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) ∗ EWP (f #()) <| Coop q |> {{v, □ Φ v}}
   ⊢ 
     EWP (fork_promise f) <| Coop q |> {{ y, 
       ∃ (p: loc), ⌜ y = #p ⌝ ∗ isPromise p Φ ∗ 
-      promiseInv q ∗ my_is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}.
+      promiseInv q ∗ is_queue q (ready q (λ v, ⌜ v = #() ⌝)) }}.
   Proof.
     iIntros "(HpInv & Hq & Hf)". rewrite /fork_promise. ewp_pure_steps.
     ewp_bind_rule. simpl.
@@ -966,7 +1013,7 @@ End verification.
 
 Section specification.
   Context `{!heapGS Σ}.
-  Context `{!ListLib Σ, !QueueLib Σ}.
+  Context `{!ListLib Σ}.
 
   Class AsyncCompLib := {
     coop : iEff Σ;
@@ -989,7 +1036,7 @@ End specification.
 
 Section closed_proof.
   Context `{!heapGS Σ, !promiseGpreS Σ}.
-  Context `{!ListLib Σ, !QueueLib Σ}.
+  Context `{!ListLib Σ}.
 
   Lemma promiseInv_init :
     ⊢ |==> ∃ _ : promiseGS Σ, ∀ q, promiseInv q.

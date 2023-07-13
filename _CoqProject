@@ -1,8 +1,8 @@
--Q theories/lib               lib
--Q theories/language          language
--Q theories/program_logic     program_logic
+-Q theories/lib lib
+-Q theories/language language
+-Q theories/program_logic program_logic
 -Q theories/program_logic_ext program_logic_ext
--Q theories/case_studies      case_studies
+-Q theories/case_studies case_studies
 
 -arg -w -arg -convert_concl_no_check
 
@@ -37,10 +37,10 @@ theories/case_studies/shallow_as_deep.v
 theories/case_studies/exceptions.v
 theories/case_studies/state.v
 #theories/case_studies/shift_reset.v
-#theories/case_studies/asynchronous_computation.v
-#theories/case_studies/asynchronous_computation_eio.v
-theories/case_studies/asynchronous_computation_effects.v
-theories/case_studies/asynchronous_computation_withcontext.v
+theories/case_studies/asynchronous_computation.v
+theories/case_studies/asynchronous_computation_eio.v
+#theories/case_studies/asynchronous_computation_effects.v
+#theories/case_studies/asynchronous_computation_withcontext.v
 theories/case_studies/asynchronous_computation_passing.v
 #theories/case_studies/automatic_differentiation.v
 theories/case_studies/ml_references.v
