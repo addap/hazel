@@ -91,7 +91,6 @@ Section concurrent_queue.
   
   Parameter is_queue_Persistent_proof : ∀ (q: val) (I: val -> iProp Σ),
     Persistent (is_queue q I).
-  
 
   Parameter queue_create_spec : ∀ (Ψ1 Ψ2: iEff Σ),
     ⊢ EWP queue_create #() <| Ψ1 |> {| Ψ2 |} {{ q,
@@ -119,7 +118,6 @@ Section concurrent_queue.
   Proof.
     apply is_queue_proper_proof.
   Qed.
-
 
   Global Instance is_queue_Persistent q I:
     Persistent (is_queue q I).
@@ -175,7 +173,7 @@ Section implementation.
     match: Load "p" with
       (* Done: *) InjL "v"  =>
         "v"
-    | (* Waiting: *) InjR "ks" =>
+    | (* Waiting: *) InjR <> =>
         let: "callback" := await_callback "p" in 
         suspend "callback";;
         match: Load "p" with
@@ -356,30 +354,12 @@ Section predicates.
   )%I.
     
 
-  Definition ready_pre :
-    (val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) →
-    (val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ) := (λ ready q Φ k,
-    ∀ (y : val),
-      □ Φ y -∗
-        promiseInv -∗
-          ▷ is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) -∗
-             EWP (k : val) y {{ _, True }}
+  (* by now ready is just a predicate on a function value f, that f is safe to execute under the assumption
+     that promiseInv holds. When promiseInv becomes an actual invariant, then probably even this precondition
+     goes away. *)
+  Definition ready (k: val) : iProp Σ := (
+    promiseInv -∗ EWP (k #()) {{ _, True }}
   )%I.
-
-  Local Instance ready_contractive : Contractive ready_pre.
-  Proof.
-    rewrite /ready_pre /promiseInv=> n ready ready' Hn q Φ k.
-    repeat (f_contractive || apply is_queue_ne  || f_equiv);
-    try apply Hn; try done; try (intros=>?; apply Hn).
-  Qed.
-  Definition ready_def : val -d> (val -d> iPropO Σ) -d> val -d> iPropO Σ :=
-    fixpoint ready_pre.
-  Definition ready_aux : seal ready_def. Proof. by eexists. Qed.
-  Definition ready := ready_aux.(unseal).
-  Definition ready_eq : ready = ready_def :=
-    ready_aux.(seal_eq).
-  Global Lemma ready_unfold q Φ k : ready q Φ k ⊣⊢ ready_pre ready q Φ k.
-  Proof. rewrite ready_eq /ready_def. apply (fixpoint_unfold ready_pre). Qed.
 
   Definition promiseSt p γ (Φ : val -d> iPropO Σ) : iProp Σ :=
     ((* Fulfilled: *) ∃ y,
@@ -403,18 +383,18 @@ Section predicates.
 
   (* [ready]. *)
   Global Instance ready_ne n :
-    Proper ((dist n) ==> (dist n) ==> (dist n) ==> (dist n)) ready.
+    Proper ((dist n) ==> (dist n)) ready.
   Proof.
-    induction (lt_wf n) as [n _ IH]=> q q' -> Φ Φ' HΦ k k' ->.
-    rewrite !ready_unfold /ready_pre.
-    by repeat (f_contractive || apply is_queue_ne
-           || apply IH || f_equiv
+    induction (lt_wf n) as [n _ IH]=>k k' ->.
+    rewrite /ready.
+    by repeat (f_contractive
+           || f_equiv || apply IH 
            || case x1 as ()         || case x2 as ()
            || case y1 as (y11, y12) || case y2 as (y21, y22)
            || apply H0 || apply H1 ).
   Qed.
-  Global Instance ready_proper : Proper ((≡) ==> (≡) ==> (≡) ==> (≡)) ready.
-  Proof. intros ?????????. apply equiv_dist=>n.
+  Global Instance ready_proper : Proper ((≡) ==> (≡)) ready.
+  Proof. intros ???. apply equiv_dist=>n.
          by apply ready_ne; apply equiv_dist.
   Qed.
 
@@ -701,7 +681,7 @@ Section verification.
   (* a.d. If we ever want to return promiseInv from main, then next should contitionally return promiseInv (or maybe return the next k itself and then the handler calls it) *)
   Lemma ewp_next q Ψ :
     promiseInv -∗
-      is_queue q (ready q (λ v, ⌜ v = #() ⌝)) -∗
+      is_queue q ready -∗
          EWP (next q) <| Ψ |> {{ _, True }}.
   Proof.
     iIntros "HpInv #Hq". unfold next. ewp_pure_steps. ewp_bind_rule.
@@ -711,8 +691,8 @@ Section verification.
       by ewp_pure_steps.
     - (* queue has a continuation *)
       ewp_pure_steps.
-      rewrite ready_unfold /ready_pre.
-      iSpecialize ("Hk" $! #() with "[//] HpInv Hq").
+      rewrite /ready.
+      iSpecialize ("Hk" with "HpInv").
       iApply ewp_os_prot_mono. { by iApply iEff_le_bottom. } { done. }
   Qed.
 
@@ -959,7 +939,7 @@ Section verification.
     iIntros "HpInv Hmain". unfold run. ewp_pure_steps.
     ewp_bind_rule. iApply ewp_mono. { by iApply queue_create_spec. }
     iIntros (q) "Hq !>". simpl. ewp_pure_steps.
-    iSpecialize ("Hq" $! (ready q (λ v : val, ⌜v = #()⌝))%I).
+    iSpecialize ("Hq" $! ready).
     iSpecialize ("Hmain" with "HpInv").
     iLöb as "IH" forall (main q Φ).
     iApply (ewp_deep_try_with with "Hmain").
@@ -978,9 +958,8 @@ Section verification.
       + ewp_pure_steps.
         iApply (ewp_bind' (AppRCtx _)). { done. } simpl.
         iApply (ewp_mono with "[Hk]").
-        { iApply (queue_push_spec with "Hq"). rewrite ready_unfold /ready_pre.
-          (* a.d. maybe can remove is_queue from ready *)
-          iIntros (y) "-> HpInv _". ewp_pure_steps.
+        { iApply (queue_push_spec with "Hq"). rewrite /ready.
+          iIntros "HpInv". ewp_pure_steps.
           iSpecialize ("Hk" $! #() with "HpInv").
           iApply "Hk". iNext.
           by iApply ("IH_handler" with "Hq").
@@ -1002,8 +981,8 @@ Section verification.
           instantiate (1:=Henq). rewrite /Henq.
           iIntros (v) "HP".
           ewp_pure_steps.
-          iApply (queue_push_spec with "Hq"). rewrite ready_unfold /ready_pre.
-          iIntros (y) "-> HpInv _". ewp_pure_steps.
+          iApply (queue_push_spec with "Hq"). rewrite /ready.
+          iIntros "HpInv". ewp_pure_steps.
           iSpecialize ("Hk" $! v with "[$]").
           iApply "Hk". iNext.
           by iApply ("IH_handler" with "Hq").
