@@ -335,7 +335,7 @@ Section predicates.
     ∃ M, isPromiseMap M ∗
       [∗ map] args ↦ Φ ∈ M, let '(p, γ) := args in
         ((* Fulfilled: *) ∃ y,
-          p ↦ Done' y ∗ □ Φ y ∗ promise_state_done γ)
+          (p ↦ Done' y ∗ promise_state_done γ) ∗ □ Φ y)
       ∨
         ((* Unfulfilled: *) ∃ l enqs,
           p ↦ Waiting' l ∗
@@ -363,7 +363,24 @@ Section predicates.
 
   Definition promiseSt p γ (Φ : val -d> iPropO Σ) : iProp Σ :=
     ((* Fulfilled: *) ∃ y,
-       p ↦ Done' y ∗ □ Φ y ∗ promise_state_done γ)
+       (p ↦ Done' y ∗ promise_state_done γ) ∗ □ Φ y)
+  ∨
+    ((* Unfulfilled: *) ∃ l enqs,
+      p ↦ Waiting' l ∗
+      promise_state_waiting γ ∗
+      is_list l enqs   ∗
+      (* ks now does not contain a list of continuations but a list of enqueue functions. 
+         Each of these functions will change the run queue (in the future they can change an arbitrary run queue)
+         so we have is_queue as a precondition and get it back after.
+      *)
+      [∗ list] enq ∈ enqs, (∀ (v: val), 
+        let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
+        P v -∗
+          EWP (App (Val enq) v)%I <| ⊥ |> {{_, True }} )).
+
+  Definition promiseSt_later p γ (Φ : val -d> iPropO Σ) : iProp Σ :=
+    ((* Fulfilled: *) ∃ y,
+       (p ↦ Done' y ∗ promise_state_done γ) ∗ ▷ □ Φ y)
   ∨
     ((* Unfulfilled: *) ∃ l enqs,
       p ↦ Waiting' l ∗
@@ -524,7 +541,7 @@ Section predicates.
       promiseSt p γ Φ -∗ promiseSt p γ' Φ' -∗ False.
     Proof.
       assert (⊢ ∀ p γ Φ, promiseSt p γ Φ -∗ ∃ v, p ↦ v)%I as Haux.
-      { by iIntros (???) "[[%v[Hp _]]|[%l[%ks[Hp _]]]]"; auto. }
+      { by iIntros (???) "[[%v[(Hp & _) _]]|[%l[%ks[Hp _]]]]"; auto. }
       iIntros "Hp Hp'".
       iPoseProof (Haux with "Hp")  as "[%v  Hp]".
       iPoseProof (Haux with "Hp'") as "[%v' Hp']".
@@ -541,6 +558,7 @@ Section predicates.
     Proof.
       iIntros "[HpInv Hp]". rewrite /promiseInv.
       iDestruct "HpInv" as (M) "[HM HInv]".
+      (* remove the later from *)
       destruct (M !! (p, γ)) as [Ψ|] eqn:Hlkp.
       - rewrite (big_opM_delete _ _ _ _ Hlkp).
         iDestruct "HInv" as "[Hp' _]".
@@ -550,26 +568,38 @@ Section predicates.
         rewrite big_opM_insert; last done. by iFrame.
     Qed.
 
+    Lemma promiseSt_promiseSt_later p γ Φ :
+      promiseSt p γ Φ -∗ promiseSt_later p γ Φ.
+    Proof.
+      rewrite /promiseSt_later.
+      iIntros "[[%y ((Hp&#Hps)&Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
+      iLeft. iExists y. by iFrame.
+      iRight. iExists l, enqs. by iFrame.
+    Qed.
+
     Lemma lookup_promiseInv p γ Φ :
       promiseInv -∗ isMember p γ Φ -∗
-        ▷ ((promiseSt p γ Φ -∗ promiseInv) ∗ promiseSt p γ Φ).
+        (▷ (promiseSt p γ Φ -∗ promiseInv) ∗ promiseSt_later p γ Φ).
     Proof.
       iIntros "HpInv Hmem". rewrite /promiseInv.
       iDestruct "HpInv" as (M) "[HM HInv]".
       iDestruct (claim_membership M p γ Φ with "[$]") as "[%Φ' [%Hlkp #Heq]]".
-      iPoseProof (promise_unfold_equiv with "Heq") as "#Heq'". iNext.
+      iPoseProof (promise_unfold_equiv with "Heq") as "#Heq'".
       iDestruct (big_sepM_delete _ _ (p, γ) with "HInv")
         as "[HpSt HInv]"; first done.
       iSplitL "HInv HM".
-      - iIntros "HpSt". iExists M. iFrame.
+      - iNext.
+        iIntros "HpSt". iExists M. iFrame.
         rewrite (big_opM_delete _ _ _ _ Hlkp). iFrame.
         iApply (promiseSt_proper' p γ Φ Φ' with "[] HpSt").
         rewrite discrete_fun_equivI. iIntros (x).
         by iRewrite ("Heq'" $! x).
-      - iApply (promiseSt_proper' p γ Φ' Φ with "[] HpSt").
-        by rewrite discrete_fun_equivI.
+      - rewrite /promiseSt_later.
+        iDestruct "HpSt" as  "[[%y ((Hp&#Hps)&Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
+        + iLeft. iExists y. iFrame. iSplit; first done.
+          iNext. iSpecialize ("Heq'" $! y). by iRewrite -"Heq'".
+        + iRight. iExists l, enqs. by iFrame.
     Qed.
-
   End promise_preds.
 
 End predicates.
@@ -738,7 +768,7 @@ Section verification.
     iIntros (enqueue) "Henq HpInv". 
     iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
     iNext. ewp_pure_steps. ewp_bind_rule. simpl.
-    iDestruct "HpSt" as "[[%y (Hp&Hy&#Hps)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
+    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
     - (* the promise was fulfilled (cannot yet happen without concurrency) *)
       iApply (ewp_load with "Hp"). 
       iIntros "!> Hp !>". ewp_pure_steps.
@@ -774,11 +804,11 @@ Section verification.
     iIntros "(HpInv & %γ & #Hmem)". rewrite /await. 
     iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
     ewp_pure_steps. ewp_bind_rule. simpl.
-    iDestruct "HpSt" as "[[%y (Hp&#Hy&#Hps)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
+    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
     - (* the promise is already fulfilled *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". ewp_pure_steps. iSplit; last by iAssumption.
-      iApply "HpInv". iLeft. iExists y. iFrame. by iSplit.
+      iApply "HpInv". iLeft. iExists y. iFrame. by iAssumption.
     - (* the promise is not yet fulfilled, so we create a callback and perform the suspend effect.
          After the suspend returns, we know the promise is fulfilled. *)
       iApply (ewp_load with "Hp").
@@ -801,7 +831,7 @@ Section verification.
       (* now we match on the promise again but this time we know it must be fulfilled *)
       iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
       ewp_pure_steps. ewp_bind_rule. simpl.
-      iDestruct "HpSt" as "[[%y (Hp&#Hy&#Hps)]|[%l' [%enqs' (Hp&Hps&Hl&Hks)]]]";
+      iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]|[%l' [%enqs' (Hp&Hps&Hl&Hks)]]]";
         last by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". ewp_pure_steps. iSplit; last done.
@@ -841,7 +871,7 @@ Section verification.
     iIntros (v) "#Hv !>".
     iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
     ewp_pure_steps.
-    iDestruct "HpSt" as "[[%y' (_&_&Hps')]|[%l [%ks (Hp&Hps'&Hl&Hks)]]]";
+    iDestruct "HpSt" as "[[%y' ((Hp&#Hps') & Hy)]|[%l [%enqs (Hp&Hps'&Hl&Henqs)]]]";
       first by iDestruct (promise_state_disjoint with "[$]") as "HFalse".
     ewp_bind_rule. iApply (ewp_load with "Hp"). simpl.
     iIntros "!> Hp".
@@ -852,14 +882,14 @@ Section verification.
     iApply (ewp_bind' (AppRCtx _)); first done.
     (* now we just call all the enqueue functions. *)
     set I : list val → iProp Σ := (λ us,
-      ∃ vs, ⌜ us ++ vs = ks ⌝ ∗ [∗ list] enq ∈ vs, 
+      ∃ vs, ⌜ us ++ vs = enqs ⌝ ∗ [∗ list] enq ∈ vs, 
         ∀ v0 : val, ⌜v0 = #()⌝ ∗ promise_state_done γ -∗
                     EWP (App (Val enq) v0) <| ⊥ |> {{ _, True }}
       )%I.
-    iApply (ewp_mono with "[Hks Hl]").
+    iApply (ewp_mono with "[Henqs Hl]").
     { iApply ewp_os_prot_mono. iApply iEff_le_bottom.
-      iApply (list_iter_spec _ I with "[] Hl [Hks]").
-      2: by iExists ks; iFrame.
+      iApply (list_iter_spec _ I with "[] Hl [Henqs]").
+      2: by iExists enqs; iFrame.
       iIntros "!#" (us enq vs) "<- [%vs' [%Heq Hvs']]".
       specialize (app_inj_1 us us vs' (enq :: vs) eq_refl Heq) as [_ ->].
       iDestruct "Hvs'" as "[Hk Hvs]". 
