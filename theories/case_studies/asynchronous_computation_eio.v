@@ -21,7 +21,8 @@
 
 From iris.proofmode Require Import base tactics classes.
 From iris.algebra Require Import excl_auth gset gmap agree csum frac excl.
-From iris.base_logic.lib Require Import iprop wsat invariants.
+From iris.base_logic Require Import invariants.
+From iris.base_logic.lib Require Import iprop wsat.
 From program_logic Require Import reasoning_rules.
 From case_studies Require Import list_lib .
 
@@ -319,6 +320,10 @@ Section predicates.
   Definition isPromiseMap (M : gmap (loc * gname) (val → iProp Σ)) :=
     own promise_name (● (promise_unfold <$> M : gmap _ _)).
     
+  
+  (* invariant stuff *)
+  Definition promiseN : namespace := nroot .@ "promise".
+
   (* we can remove the ready & q from promiseInv because we keep all the queue handling inside the 
      effect handler. This makes it much easier since
      1. we don't need to parameterize the protocol with q
@@ -331,7 +336,7 @@ Section predicates.
     It might be possible to separate out the □ Φ v so that lookup_promiseInv can return a part that is available
     immediately, and a (▷ □ Φ v) (and b/c ▷ and □ commutes, we can take a copy and use it after closing the invariant)
      *)
-  Definition promiseInv : iProp Σ := (
+  Definition promiseInv_inner : iProp Σ := (
     ∃ M, isPromiseMap M ∗
       [∗ map] args ↦ Φ ∈ M, let '(p, γ) := args in
         ((* Fulfilled: *) ∃ y,
@@ -353,6 +358,12 @@ Section predicates.
               EWP (App (Val enq) v)%I <| ⊥ |> {{_, True }} ))
   )%I.
     
+  Definition promiseInv := inv promiseN promiseInv_inner.
+  
+  Global Instance promiseInv_Persistent : Persistent promiseInv.
+  Proof.
+    by apply _.
+  Qed.
 
   (* by now ready is just a predicate on a function value f, that f is safe to execute under the assumption
      that promiseInv holds. When promiseInv becomes an actual invariant, then probably even this precondition
@@ -552,11 +563,11 @@ Section predicates.
       (Φ ≡ Φ') -∗ promiseSt p γ Φ -∗ promiseSt p γ Φ'.
     Proof. by iIntros "HΦ Hp"; iRewrite -"HΦ". Qed.
 
-    Lemma update_promiseInv p γ Φ :
-      promiseInv ∗ promiseSt p γ Φ ==∗
-        promiseInv ∗ isMember p γ Φ.
+    Lemma update_promiseInv_inner p γ Φ :
+      promiseInv_inner ∗ promiseSt p γ Φ ==∗
+        promiseInv_inner ∗ isMember p γ Φ.
     Proof.
-      iIntros "[HpInv Hp]". rewrite /promiseInv.
+      iIntros "[HpInv Hp]". rewrite /promiseInv_inner.
       iDestruct "HpInv" as (M) "[HM HInv]".
       (* remove the later from *)
       destruct (M !! (p, γ)) as [Ψ|] eqn:Hlkp.
@@ -577,11 +588,11 @@ Section predicates.
       iRight. iExists l, enqs. by iFrame.
     Qed.
 
-    Lemma lookup_promiseInv p γ Φ :
-      promiseInv -∗ isMember p γ Φ -∗
-        (▷ (promiseSt p γ Φ -∗ promiseInv) ∗ promiseSt_later p γ Φ).
+    Lemma lookup_promiseInv_inner p γ Φ :
+      promiseInv_inner -∗ isMember p γ Φ -∗
+        (▷ (promiseSt p γ Φ -∗ promiseInv_inner) ∗ promiseSt_later p γ Φ).
     Proof.
-      iIntros "HpInv Hmem". rewrite /promiseInv.
+      iIntros "HpInv Hmem". rewrite /promiseInv_inner.
       iDestruct "HpInv" as (M) "[HM HInv]".
       iDestruct (claim_membership M p γ Φ with "[$]") as "[%Φ' [%Hlkp #Heq]]".
       iPoseProof (promise_unfold_equiv with "Heq") as "#Heq'".
@@ -613,8 +624,8 @@ Section protocol_coop.
   Context `{!ListLib Σ}.
 
   Definition FORK_pre (Coop : iEff Σ) : iEff Σ :=
-    >> e >> !(Fork'  e) {{promiseInv ∗ ▷ (promiseInv -∗  EWP e #() <|Coop |> {{_, promiseInv}} ) }};
-    << (_: val) << ?(#())        {{promiseInv }} @ OS.
+    >> e >> !(Fork'  e) {{promiseInv ∗ ▷ (promiseInv -∗  EWP e #() <|Coop |> {{_, True}} ) }};
+    << (_: val) << ?(#())        {{ True }} @ OS.
       
   (* a.d. for the suspend call in await, we want to instantiate P with (λ v, v = #() ∧ done p)
     where done p shows that the promise is fulfilled
@@ -624,14 +635,13 @@ Section protocol_coop.
   Definition SUSPEND : iEff Σ :=
     >> (f: val) (P: val → iProp Σ) >> !(Suspend' f) {{
       (* We call f with the enqueue function and enqueue receives a value satisfying P and accesses the run queue. *)
-      ( (∀ (enqueue: val),
-        (∀ (v: val), P v -∗ 
-                      (EWP (enqueue v) <| ⊥ |> {{_, True }}) ) -∗
-        promiseInv -∗ 
-          (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv  }})) ∗
+        ( (∀ (enqueue: val),
+          (∀ (v: val), P v -∗  (EWP (enqueue v) <| ⊥ |> {{_, True }}) ) -∗
+          promiseInv -∗ (▷ EWP (f enqueue) <| ⊥ |> {{_, True  }}) ) 
+      ∗
         promiseInv)%I
     }};
-    << y           << ?(y)         {{P y ∗ promiseInv }} @ OS.
+    << y           << ?(y)         {{ P y }} @ OS.
 
   Definition Coop_pre : (iEffO) → (iEffO) := (λ Coop,
     FORK_pre Coop <+> SUSPEND
@@ -664,8 +674,8 @@ Section protocol_coop.
 
   Lemma upcl_FORK  v Φ' :
     iEff_car (upcl OS (FORK )) v Φ' ≡
-      (∃ e, ⌜ v = Fork' e ⌝ ∗ (promiseInv ∗ ▷ (promiseInv -∗ EWP e #() <|Coop|> {{_, promiseInv }})) ∗
-            (∀ (_ : val), (promiseInv) -∗ Φ' #()))%I.
+      (∃ e, ⌜ v = Fork' e ⌝ ∗ (promiseInv ∗ ▷ (promiseInv -∗ EWP e #() <|Coop|> {{_, True }})) ∗
+            (∀ (_ : val), True -∗ Φ' #()))%I.
   Proof. by rewrite /FORK (upcl_tele' [tele _] [tele _]). Qed.
 
   Lemma upcl_SUSPEND  v Φ' :
@@ -673,14 +683,13 @@ Section protocol_coop.
       (∃ (f : val) (P: val → iProp Σ), ⌜ v = Suspend' f ⌝ 
       ∗ 
       (* the big precondition of the protocol *)
-      ( (∀ (enqueue: val),
-        (∀ (v: val), P v -∗ 
-                      (EWP (enqueue v) <| ⊥ |> {{_, True }}) ) -∗
-        promiseInv -∗ 
-          (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv }})) ∗
-        promiseInv) 
+        ( (∀ (enqueue: val),
+          (∀ (v: val), P v -∗ (EWP (enqueue v) <| ⊥ |> {{_, True }}) ) -∗
+          promiseInv -∗ (▷ EWP (f enqueue) <| ⊥ |> {{_, True }}) )
       ∗
-          (∀ v, (P v ∗ promiseInv) -∗ Φ' v))%I.
+          promiseInv) 
+      ∗
+          (∀ v, P v -∗ Φ' v))%I.
   Proof. by rewrite /SUSPEND (upcl_tele' [tele _ _] [tele _]). Qed.
 
 End protocol_coop.
@@ -728,9 +737,9 @@ Section verification.
 
   Lemma ewp_fork (e : val) :
     promiseInv  ∗ 
-    (promiseInv -∗ EWP e #() <| Coop |> {{ _, promiseInv }})
+    (promiseInv -∗ EWP e #() <| Coop |> {{ _, True }})
   ⊢
-      EWP (fork e) <| Coop |> {{ _, promiseInv }}.
+      EWP (fork e) <| Coop |> {{ _, True }}.
   Proof.
     iIntros "(HpInv &  He)". rewrite /fork. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_FORK. iLeft.
@@ -739,14 +748,13 @@ Section verification.
   Qed.
 
   Lemma ewp_suspend (f : val) (P: val → iProp Σ) :
-    ( (∀ (enqueue: val),
-      (∀ (v: val), P v -∗ 
-                    (EWP (enqueue v) <| ⊥ |> {{_, True}}) ) -∗
-      promiseInv -∗ 
-        (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv }})) ∗
+      ( (∀ (enqueue: val),
+        (∀ (v: val), P v -∗ (EWP (enqueue v) <| ⊥ |> {{_, True}}) ) -∗
+        promiseInv -∗ (▷ EWP (f enqueue) <| ⊥ |> {{_, True }})) 
+    ∗
       promiseInv) 
     ⊢
-      EWP (suspend f) <| Coop |> {{ v, P v ∗ promiseInv}}.
+      EWP (suspend f) <| Coop |> {{ v, P v }}.
   Proof.
     iIntros "(He & HpInv)". rewrite /suspend. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_SUSPEND. iRight.
@@ -765,9 +773,12 @@ Section verification.
         (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv }}) }}.
   Proof.
     iIntros "Hmem". rewrite /await_callback. ewp_pure_steps.
-    iIntros (enqueue) "Henq HpInv". 
+    iIntros (enqueue) "Henq HpInv". iNext.
+    ewp_pure_steps. ewp_bind_rule. simpl.
+    rewrite /promiseInv.
+    iApply fupd_ewp.
+    iInv "HpInv" as "HpInvIn".
     iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
-    iNext. ewp_pure_steps. ewp_bind_rule. simpl.
     iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
     - (* the promise was fulfilled (cannot yet happen without concurrency) *)
       iApply (ewp_load with "Hp"). 
