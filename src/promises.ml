@@ -1,51 +1,63 @@
 (* This is the cooperative concurrency library in Multicore OCaml 4.10.0. *)
+open Effect
+open Effect.Deep
 
+type exit = Exit_scheduler
 type 'a status =
   | Done of 'a
-  | Waiting of ('a, unit) continuation list
+  | Waiting of ('a, exit) continuation list
 
 type 'a promise =
   'a status ref
 
-effect Async : (unit -> 'a) -> 'a promise
-effect Await : 'a promise -> 'a
+type _ Effect.t += Async : (unit -> 'a) -> 'a promise t
+type _ Effect.t += Await : 'a promise -> 'a t
 
 let async e = perform (Async e)
 let await p = perform (Await p)
 let yield() = ignore (async(fun _ -> ()))
 
+let new_promise () = ref (Waiting [])
+
 let run (main : unit -> unit) : unit =
-  let q : (unit -> unit) Queue.t = Queue.create() in
+  let q : (unit -> exit) Queue.t = Queue.create() in
   let next() =
-    if not (Queue.is_empty q) then (Queue.take q) () else ()
+    if not (Queue.is_empty q) then (Queue.take q) () else Exit_scheduler
   in
-  let rec fulfill : type a. a promise -> (unit -> a) -> unit = fun p e ->
-    match e() with
-    | effect (Async e) k ->
-        let p = ref (Waiting []) in
-        Queue.add (fun () -> continue k p) q;
-        fulfill p e
-    | effect (Await p) k ->
-        begin match !p with
-        | Done y ->
-            continue k y
-        | Waiting ks ->
-            p := Waiting (k :: ks);
-            next()
-        end
-    | y ->
+  let rec fulfill: type a. a promise -> (unit -> a) -> exit = fun p e ->
+    match_with e () {
+      retc = (fun v ->
         match !p with
         | Waiting ks ->
-            List.iter (fun k -> Queue.add (fun () -> continue k y) q) ks;
-            p := Done y;
+            List.iter (fun k -> Queue.add (fun () -> continue k v) q) ks;
+            p := Done v;
             next()
         | Done _ ->
-            assert false
+            assert false);
+      effc = (fun (type a) (eff: a Effect.t) : ((a, exit) continuation -> exit) option ->
+        match eff with
+        | Async e -> Some (fun k ->
+            let p = new_promise () in
+            Queue.add (fun () -> continue k p) q;
+            fulfill p e)
+        | Await p -> Some (fun k -> 
+            begin match !p with
+            | Done y ->
+                continue k y
+            | Waiting ks ->
+                p := Waiting (k :: ks);
+                next()
+            end)
+        | _ -> None);
+      exnc = raise
+    }
   in
-  fulfill (ref (Waiting [])) main
+  let p = new_promise () in
+  let Exit_scheduler = fulfill p main in 
+  ()
 
 
-let main () =
+(* let main () =
   let r = ref None in
   let f() =
     let rec loop() =
@@ -64,7 +76,7 @@ let main () =
 
 let _ =
   run main;
-  Printf.printf "[run] has terminated.\n"
+  Printf.printf "[run] has terminated.\n" *)
 
 let main () =
   let p = async (fun () -> 3) in
