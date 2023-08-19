@@ -74,6 +74,77 @@ Notation OSome' v := (InjRV v) (only parsing).
   Qed. 
 End partial_apply_spec. *)
 
+Section atomics.
+  Definition sub_redexes_are_values (e : expr) :=
+    ∀ K e', e = fill K e' → to_val e' = None → K = [].
+
+  Definition head_atomic (a : atomicity) (e : expr) : Prop :=
+    ∀ σ e' σ' ,
+      head_step e σ e' σ' →
+      if a is WeaklyAtomic then irreducible e' σ' else is_Some (to_val e').
+
+  Lemma ectx_language_atomic a e :
+    head_atomic a e → sub_redexes_are_values e → Atomic a e.
+  Proof.
+    intros Hatomic_step Hatomic_fill σ e' κ σ' efs H.
+    unfold language.prim_step in H. simpl in H. unfold prim_step' in H.
+    destruct κ, efs; try by destruct H.
+    destruct H as [K e1' e2' -> -> Hstep].
+    assert (K = []) as -> by eauto 10 using val_head_stuck.
+    simpl fill. simpl fill in Hatomic_step.
+    eapply Hatomic_step. by apply Hstep.
+  Qed.
+
+  Lemma fill_val2 (k : ectx) (e: expr) :
+    is_Some (to_val (fill k e)) → is_Some (to_val e).
+  Proof.
+    intros (v & [-> ->]%fill_val).
+    simpl. done.
+  Qed.
+
+  (* Lemma ectxi_language_sub_redexes_are_values e :
+    (∀ Ki e', e = fill Ki e' → is_Some (to_val e')) →
+    sub_redexes_are_values e.
+  Proof.
+    intros Hsub K e' ->. destruct K as [|Ki K _] using @rev_ind=> //=.
+    intros []%eq_None_not_Some. eapply fill_val2, Hsub. by rewrite /= fill_app.
+  Qed. *)
+
+  Lemma fill_no_value (k: ectx) (e: expr) (v: val) :
+    to_val e = None → fill k e = v → False.
+  Proof.
+    intros Hv Hfill.
+    specialize (fill_not_val k _ Hv) as Hfill'.
+    rewrite Hfill in Hfill'.
+    simpl in Hfill'. discriminate Hfill'.
+  Qed.
+
+  Global Instance store_atomic v1 v2 : Atomic StronglyAtomic (Store (Val v1) (Val v2)).
+  Proof. 
+    apply ectx_language_atomic.
+    - inversion 1. naive_solver. 
+    - unfold sub_redexes_are_values.
+      intros [] **. naive_solver.
+      exfalso.
+      simpl in H. destruct f; simpl in H; try discriminate H.
+      inversion H. apply (fill_no_value l e' v1 H0). symmetry. apply H2.
+      inversion H. apply (fill_no_value l e' v2 H0). symmetry. apply H3.
+  Qed.
+
+  Global Instance load_atomic v : Atomic StronglyAtomic (Load (Val v)).
+  Proof.
+    apply ectx_language_atomic.
+    - inversion 1. naive_solver.
+    - unfold sub_redexes_are_values.
+      intros [] **. naive_solver.
+      exfalso.
+      simpl in H. destruct f; simpl in H; try discriminate H.
+      inversion H. apply (fill_no_value l e' v H0). symmetry. apply H2.
+  Qed.
+  
+  Check 1.
+End atomics. 
+
 Section concurrent_queue.
   Context `{!heapGS Σ}.
 
@@ -246,6 +317,11 @@ Class promiseGpreS Σ := {
     (authR (gmapUR (loc * gname) (agreeR (laterO (val -d> (iPropO Σ))))));
   torchG :> inG Σ (csumR fracR (agreeR unitO));
 }.
+  
+Class testGpreS Σ := {
+  test_mapG :> inG Σ
+    (authR (gmapUR (loc * gname) unitR));
+}.
 
 (* A concrete instance of [Σ] for which the assumption [promisesGS Σ] holds. *)
 Definition promiseΣ := #[
@@ -253,22 +329,34 @@ Definition promiseΣ := #[
     (gmapURF (loc * gname) (agreeRF (laterOF (valO -d> idOF)))));
   GFunctor (csumR fracR (agreeR unitO))
 ].
+  
+Definition testΣ := #[
+  GFunctor (authRF
+    (gmapUR (loc * gname) unitR))
+].
 
 (* The proof of the previous claim. *)
 Instance subG_promiseΣ {Σ} : subG promiseΣ Σ → promiseGpreS Σ.
+Proof. solve_inG. Qed.
+
+Instance subG_testΣ {Σ} : subG testΣ Σ → testGpreS Σ.
 Proof. solve_inG. Qed.
 
 Class promiseGS Σ := {
   promise_inG :> promiseGpreS Σ;
   promise_name : gname;
 }.
-
+  
+Class testGS Σ := {
+  test_inG :> testGpreS Σ; 
+  test_name : gname;
+}.
 
 (* -------------------------------------------------------------------------- *)
 (** Predicates. *)
 
 Section predicates.
-  Context `{!heapGS Σ, !promiseGS Σ}.
+  Context `{!heapGS Σ, !promiseGS Σ, !testGS Σ, !cancelGS Σ}.
   Context `{!ListLib Σ}.
 
   (* ------------------------------------------------------------------------ *)
@@ -319,8 +407,13 @@ Section predicates.
 
   Definition isPromiseMap (M : gmap (loc * gname) (val → iProp Σ)) :=
     own promise_name (● (promise_unfold <$> M : gmap _ _)).
+
+  Definition isTestMap (M : gmap (loc * gname) unit) :=
+    own test_name (● M).
     
-  
+  Global Instance isTestMap_timeless M : Timeless (isTestMap M).
+  Proof. by apply _. Qed.
+    
   (* invariant stuff *)
   Definition promiseN : namespace := nroot .@ "promise".
 
@@ -336,8 +429,9 @@ Section predicates.
     It might be possible to separate out the □ Φ v so that lookup_promiseInv can return a part that is available
     immediately, and a (▷ □ Φ v) (and b/c ▷ and □ commutes, we can take a copy and use it after closing the invariant)
      *)
+    
   Definition promiseInv_inner : iProp Σ := (
-    ∃ M, isPromiseMap M ∗
+    ∃ M, isPromiseMap M ∗ 
       [∗ map] args ↦ Φ ∈ M, let '(p, γ) := args in
         ((* Fulfilled: *) ∃ y,
           (p ↦ Done' y ∗ promise_state_done γ) ∗ □ Φ y)
@@ -587,7 +681,10 @@ Section predicates.
       iLeft. iExists y. by iFrame.
       iRight. iExists l, enqs. by iFrame.
     Qed.
-
+    
+    (* Global Instance isPromiseMap_timeless M : Timeless (isPromiseMap M).
+    Proof. by apply _. *)
+    
     Lemma lookup_promiseInv_inner p γ Φ :
       promiseInv_inner -∗ isMember p γ Φ -∗
         (▷ (promiseSt p γ Φ -∗ promiseInv_inner) ∗ promiseSt_later p γ Φ).
@@ -611,6 +708,19 @@ Section predicates.
           iNext. iSpecialize ("Heq'" $! y). by iRewrite -"Heq'".
         + iRight. iExists l, enqs. by iFrame.
     Qed.
+
+    Lemma allocate_promiseInv :
+      promiseInv_inner ⊢ |={⊤}=> promiseInv.
+    Proof.
+      iIntros "Hinner". rewrite /promiseInv.
+      by iMod (inv_alloc promiseN ⊤ promiseInv_inner with "[Hinner]").
+    Qed.
+    
+    (* the later around promiseInv is giving me troubles. Though it should be possible to somehow
+    reformulate it so that the later is only around the Φ *)
+    Lemma sorry_drop_later :
+      ▷ promiseInv_inner -∗ promiseInv_inner.
+    Admitted.
   End promise_preds.
 
 End predicates.
@@ -773,23 +883,39 @@ Section verification.
         (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv }}) }}.
   Proof.
     iIntros "Hmem". rewrite /await_callback. ewp_pure_steps.
-    iIntros (enqueue) "Henq HpInv". iNext.
+    iIntros (enqueue) "Henq #HpInv". iNext.
     ewp_pure_steps. ewp_bind_rule. simpl.
     rewrite /promiseInv.
-    iApply fupd_ewp.
-    iInv "HpInv" as "HpInvIn".
-    iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
+    (* a.d. here we need to open the invariant to read the promise *)
+    assert (Hatom: Atomic StronglyAtomic (Load #p)).
+      by apply _.
+    iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
+    iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
+    iModIntro.
+    (* a.d. unsound *)
+    iPoseProof (sorry_drop_later with "HpInvIn") as "HpInvIn".
+    iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
     iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
-    - (* the promise was fulfilled (cannot yet happen without concurrency) *)
+    - (* the promise was fulfilled *)
       iApply (ewp_load with "Hp"). 
-      iIntros "!> Hp !>". ewp_pure_steps.
-      iApply (ewp_mono with "[Henq]").
+      iIntros "!> Hp !>".
+      iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
+      iSplitL "Hclose".
+      iApply "Hclose".
+      iModIntro.
+      iSplitR "Henq".
+      iNext. iApply "HpInvIn". iLeft. iExists y. by iFrame.
+      ewp_pure_steps. iApply (ewp_mono with "[Henq]").
       + iApply ("Henq" with "[]"). iSplit; done.
       + iIntros (v) "_ !>". 
-        iApply "HpInv". iLeft. iExists y. by iFrame. 
+        iApply "HpInv".
     - (* the promise is not yet fulifilled so we put enqueue into the list *)
       iApply (ewp_load with "Hp").
-      iIntros "!> Hp !>". ewp_pure_steps.
+      iIntros "!> Hp !>". 
+      iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
+      
+      
+      ewp_pure_steps.
       iApply (ewp_bind [(StoreRCtx _); InjRCtx]); first done.
       iApply (ewp_mono with "[Hl]"); [iApply (list_cons_spec with "Hl")|].
       iIntros (l') "Hl' !>". simpl. ewp_pure_steps. ewp_bind_rule.
