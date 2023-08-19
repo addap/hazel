@@ -21,14 +21,17 @@ Proof.
   by apply _.
 Qed.
 
+
 Definition setone : val := (λ: "l",
   "l" <- #1)%V.
+
+Search "wp" "inv".
+Locate atomic_wp.
 
 Lemma ewp_setone (l: loc): 
   MyInv l ⊢ WP (setone #l) {{_, True}}.
 Proof.
   iIntros "HInv". rewrite /setone. wp_pures.
-  rewrite /MyInv /inner.
   iInv "HInv" as (n) "Hl".
   iApply (wp_store with "Hl"). iIntros "!> Hl !>".
   iSplit; last done.
@@ -44,22 +47,24 @@ Restart.
     This is done with the FUP-CHANGE-MASK rule in "Iris from the ground up".
     Which is apparently fupd_elim in coq *)
   iIntros "!> Hl".
+  Fail iModIntro.
   iApply (fupd_elim (⊤ ∖ ↑invN) ⊤ ⊤ True emp).
-  iIntros "e !>". done.
+    by iIntros "_ !>". 
   iApply "Hclose". iNext. iExists #1. done.
 Restart.
   (* when the head is a wp, iInv seems to use WP-INV.
     If we instead have an update modality as the head, then it uses something like INV-ACCESS.
     Which is the same failure as in Hazel.
-    So it appears to me that we "just" need to add a EWP-INV rule to Hazel. *)
-  iIntros "HInv". rewrite /setone. wp_pures.
+    So it appears to me that we "just" need to add a EWP-INV rule to Hazel.
+     *)
+  iIntros "#HInv". rewrite /setone. wp_pures.
   rewrite /MyInv /inner.
   iApply fupd_wp.
   Locate fupd_wp.
-  Search inv.
-  iInv "HInv" as (n) "Hl".
-  (* it's basically the same as above but there is an update modality infront of the WP
-  Above, there was a mask annotation on the WP and an update in the postcondition. *)
+  iInv "HInv" as (n) "Hl" "Hclose".
+  Check wp_atomic.
+  (* We have a mask-changing update, so to to be able to get to the WP we first need to change
+  the mast. And we can only do that with "HClose". And for that we need to give up l ↦ n. *)
 Restart.
   iIntros "HInv". rewrite /setone. wp_pures.
   rewrite /MyInv /inner.
@@ -68,15 +73,13 @@ Restart.
   iApply (@wp_atomic _ _ _ NotStuck ⊤ (⊤ ∖ ↑invN) (Store (LitV l) (LitV (Zpos xH))) _ H).
   (* iApply (@wp_atomic _ _ _ _ ⊤ (⊤ ∖ ↑invN) (Store (LitV l) (LitV (Zpos xH)))). *)
   Show Proof.
-  iMod (inv_acc with "HInv") as "(HInv1 & HInv2)".
+  iMod (inv_acc with "HInv") as "((%n & Hl) & Hclose)".
   done.
-  iDestruct "HInv1" as "[%n Hl]".
   iApply (wp_store with "Hl").
   iIntros "!> !> Hl".
   iApply (fupd_elim (⊤ ∖ ↑invN) ⊤ ⊤ True True).
   iIntros "e !>". done.
-  iApply "HInv2". iNext. iExists #1. done.
-  Show Proof.
+  iApply "Hclose". iNext. iExists #1. done.
 Qed.
 
 Lemma allocate_MyInv: 
@@ -85,5 +88,106 @@ Proof.
   (* iInv () *)
 (* Goal ∀ l, MyInv  *)
 Admitted.
+
+
+Parameter P2 Q2 : iProp Σ.
+Parameter P2_Timeless' : Timeless P2.
+Parameter Q2_Timeless' : Timeless Q2.
+Parameter P2_Persistent' : Persistent P2.
+Parameter Q2_Persistent' : Persistent Q2.
+
+Global Instance P2_Timeless : Timeless P2.
+Proof. by apply P2_Timeless'. Qed.
+Global Instance Q2_Timeless : Timeless Q2.
+Proof. by apply Q2_Timeless'. Qed.
+Global Instance P2_Persistent : Persistent P2.
+Proof. by apply P2_Persistent'. Qed.
+Global Instance Q2_Persistent : Persistent Q2.
+Proof. by apply Q2_Persistent'. Qed.
+
+Definition inv2N : namespace := nroot .@ "inv2".
+
+Definition inner2 (l: loc): iProp Σ := 
+  (l ↦ (InjLV #()) ∗ P2)
+  ∨ (l ↦ (InjRV #()) ∗ Q2).
+
+Definition MyInv2 (l: loc) := inv inv2N (inner2 l).
+
+Global Instance MyInv2_Timeless (l: loc): Timeless (inner2 l).
+Proof. 
+  by apply _.
+Qed.
+
+Global Instance MyInv2_Persistent (l: loc): Persistent (MyInv2 l).
+Proof.
+  by apply _.
+Qed.
+
+Definition read_l : val := (λ: "l" "e", 
+  match: ! "l" with
+  InjL <> => "e" #()
+  | InjR <> => "e" #()
+  end)%V.
+    
+Search "fupd".
+
+Lemma copy_persistent_out_of_inv (l: loc) (ee: val):
+  (P2 -∗ WP ee #() {{_, True}}) ∗
+  (Q2 -∗ WP ee #() {{_, True}}) ∗ 
+  MyInv2 l ⊢ WP (read_l #l ee) {{_, True}}.
+Proof.
+  iIntros "(Hpz & Hqz & HInv)".
+  rewrite /read_l. wp_pures.
+  (wp_bind (!_)%E).
+  rewrite /MyInv2 /inner2.
+  iInv "HInv" as "> [[Hl #Hp]|[Hl #Hq]]".
+  - wp_load. iModIntro. iSplitL "Hl".
+    + (* need to close invariant again *)
+      iNext. iLeft. by iFrame.
+    + wp_pures. by iApply "Hpz".
+  - wp_load. iModIntro. iSplitL "Hl".
+    + iNext. iRight. by iFrame.
+    + wp_pures. by iApply "Hqz".
+Restart.
+  iIntros "(Hpz & Hqz & HInv)".
+  rewrite /read_l. wp_pures.
+  (wp_bind (!_)%E).
+  rewrite /MyInv2 /inner2.
+  iInv "HInv" as "> [[Hl #Hp]|[Hl #Hq]]" "Hclose".
+  - wp_load. 
+    iApply (fupd_trans_frame (⊤ ∖ ↑inv2N) (⊤ ∖ ↑inv2N) ⊤ _ (▷ (l ↦ InjLV #() ∗ P2 ∨ l ↦ InjRV #() ∗ Q2))).
+    iSplitL "Hclose"; first by iAssumption. iModIntro.
+    iSplitL "Hl". 
+    iNext. iLeft. by iFrame.
+    wp_pures. by iApply "Hpz".
+  - wp_load.
+    iApply (fupd_trans_frame (⊤ ∖ ↑inv2N) (⊤ ∖ ↑inv2N) ⊤ _ (▷ (l ↦ InjLV #() ∗ P2 ∨ l ↦ InjRV #() ∗ Q2))).
+    iSplitL "Hclose"; first by iAssumption. iModIntro.
+    iSplitL "Hl". 
+    iNext. iRight. by iFrame.
+    wp_pures. by iApply "Hqz".
+Restart.
+  iIntros "(Hpz & Hqz & HInv)".
+  rewrite /read_l. wp_pures.
+  (wp_bind (!_)%E).
+  rewrite /MyInv2 /inner2.
+  assert (H: Atomic (stuckness_to_atomicity NotStuck) (Load #l)).
+    by apply _.
+  iApply (@wp_atomic _ _ _ NotStuck ⊤ (⊤ ∖ ↑inv2N)).
+  iMod (inv_acc with "HInv") as "(> [[Hl #Hp]|[Hl #Hq]] & Hclose)".
+  done. 
+  - iModIntro. wp_load. 
+    iApply (fupd_trans_frame (⊤ ∖ ↑inv2N) (⊤ ∖ ↑inv2N) ⊤ _ (▷ (l ↦ InjLV #() ∗ P2 ∨ l ↦ InjRV #() ∗ Q2))).
+    iSplitL "Hclose"; first by iAssumption. iModIntro.
+    iSplitL "Hl". 
+    iNext. iLeft. by iFrame.
+    wp_pures. by iApply "Hpz".
+  - iModIntro. wp_load.
+    iApply (fupd_trans_frame (⊤ ∖ ↑inv2N) (⊤ ∖ ↑inv2N) ⊤ _ (▷ (l ↦ InjLV #() ∗ P2 ∨ l ↦ InjRV #() ∗ Q2))).
+    iSplitL "Hclose"; first by iAssumption. iModIntro.
+    iSplitL "Hl". 
+    iNext. iRight. by iFrame.
+    wp_pures. by iApply "Hqz".
+Qed.
 
 End name.
