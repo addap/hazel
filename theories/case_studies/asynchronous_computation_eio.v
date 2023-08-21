@@ -535,7 +535,8 @@ Section predicates.
     ((* Unfulfilled: *) ∃ enqs,
       p ↦ Waiting' enqs ∗
       promise_state_waiting γ ∗
-      promise_cqs enqs γ).
+      (* a.d. TODO it's not clear if is_cqs is timeless *)
+      ▷ promise_cqs enqs γ).
 
   (* ------------------------------------------------------------------------ *)
   (* Non-expansiveness. *)
@@ -737,22 +738,41 @@ Section predicates.
       iLeft. iExists y. by iFrame.
       iRight. iExists enqs. by iFrame.
     Qed.
+
+    Lemma later_promiseSt_promiseSt_later p γ Φ :
+      ▷ promiseSt p γ Φ ={⊤}=∗ promiseSt_later p γ Φ.
+    Proof.
+      rewrite /promiseSt_later.
+      iIntros "[[%y ((>Hp&#>Hps)&Hy)]|[%enqs (>Hp&>Hps&#Hks)]]".
+      iLeft. iExists y. by iFrame.
+      iRight. iExists enqs. by iFrame.
+    Qed.
     
     (* Global Instance isPromiseMap_timeless M : Timeless (isPromiseMap M).
     Proof. by apply _. *)
     
     Lemma lookup_promiseInv_inner p γ Φ :
-      ▷ promiseInv_inner -∗ isMember p γ Φ -∗
+      ▷ promiseInv_inner -∗ isMember p γ Φ ={⊤}=∗
         (▷ (promiseSt p γ Φ -∗ promiseInv_inner) ∗ promiseSt_later p γ Φ).
     Proof.
-      (* iIntros "HpInv Hmem". rewrite /promiseInv_inner.
+    (* I think this should actually work.
+      I just introduce promiseInv_inner, then assert that I can get a 
+      ▷ promiseSt and use later_mono to prove it like normal.
+      The left part can pre proven similarly, and from ▷ promiseSt I should be able to derive promiseSt_later 
+      
+      No that actually does not work. The closing would have to be under two laters, and then I get the problems that Paolo mentioned.
+      *)
+      iIntros "HpInv #Hmem". 
+      iAssert (▷ ((promiseSt p γ Φ -∗ promiseInv_inner) ∗ promiseSt p γ Φ))%I with "[HpInv]" as "(HpClose & HpSt)".
+      2: iFrame; by iApply later_promiseSt_promiseSt_later. 
+      iModIntro.
       iDestruct "HpInv" as (M) "[HM HInv]".
       iDestruct (claim_membership M p γ Φ with "[$]") as "[%Φ' [%Hlkp #Heq]]".
       iPoseProof (promise_unfold_equiv with "Heq") as "#Heq'".
       iDestruct (big_sepM_delete _ _ (p, γ) with "HInv")
         as "[HpSt HInv]"; first done.
       iSplitL "HInv HM".
-      - iNext.
+      - 
         iIntros "HpSt". iExists M. iFrame.
         rewrite (big_opM_delete _ _ _ _ Hlkp). iFrame.
         iApply (promiseSt_proper' p γ Φ Φ' with "[] HpSt").
@@ -763,7 +783,7 @@ Section predicates.
         + iLeft. iExists y. iFrame. iSplit; first done.
           iNext. iSpecialize ("Heq'" $! y). by iRewrite -"Heq'".
         + iRight. iExists l, enqs. by iFrame.
-    Qed. *)
+    Qed.
     Admitted.
 
     Lemma allocate_promiseInv :
