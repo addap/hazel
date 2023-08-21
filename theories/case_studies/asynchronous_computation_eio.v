@@ -142,7 +142,16 @@ Section atomics.
       inversion H. apply (fill_no_value l e' v H0). symmetry. apply H2.
   Qed.
   
-  Check 1.
+  Global Instance alloc_atomic v : Atomic StronglyAtomic (Alloc (Val v)).
+  Proof.
+    apply ectx_language_atomic.
+    - inversion 1. naive_solver.
+    - unfold sub_redexes_are_values.
+      intros [] **. naive_solver.
+      exfalso.
+      simpl in H. destruct f; simpl in H; try discriminate H.
+      inversion H. apply (fill_no_value l e' v H0). symmetry. apply H2.
+  Qed.
 End atomics. 
 
 Section concurrent_queue.
@@ -198,12 +207,75 @@ Section concurrent_queue.
   Qed.
 End concurrent_queue.
 
-Section implementation.
-  Context `{!heapGS Σ}.
-  Context `{!ListLib Σ}.
+(* An axiomatization of CQS *)
+Section cqs.
+  Context `{!heapGS Σ, !ListLib Σ}.
 
+  Parameter cqs_create     : val.
+  Parameter cqs_suspend    : val.
+  Parameter cqs_resume_all : val.
+  Parameter cqs_cancel     : val.
+
+  (* put the suspend proposition into the queue *)
+  Parameter is_cqs :
+    val -d> (val -d> iPropO Σ) -d> iPropO Σ.
+
+  Parameter is_cqs_request : 
+    val -d> val -d> iPropO Σ.
+    
+  Parameter is_cqs_ne_proof : ∀ (q: val) (n: nat),
+    Proper ((dist n) ==> (dist n)) (is_cqs q).
+  
+  Parameter is_cqs_proper_proof : ∀ (q: val),
+    Proper ((≡) ==> (≡)) (is_cqs q).
+  
+  Parameter is_cqs_Persistent_proof : ∀ (q: val) (I: val -> iProp Σ),
+    Persistent (is_cqs q I).
+
+  Parameter cqs_create_spec : ∀ (Ψ1 Ψ2: iEff Σ),
+    ⊢ EWP cqs_create #() <| Ψ1 |> {| Ψ2 |} {{ q,
+        ∀ I, is_cqs q I }}.
+  
+  Parameter cqs_suspend_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ) v,
+    is_cqs q I -∗ I v -∗
+      EWP cqs_suspend q v <| Ψ1 |> {| Ψ2 |} {{ r, is_cqs_request r v }}.
+          
+  (* a.d. cancel does not really give you back v, but it should give you back (I v) for the v that you originally suspended. 
+     TODO how do I do that? *)
+  Parameter cqs_cancel_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ) v r,
+    is_cqs q I -∗ is_cqs_request r v -∗ 
+      EWP cqs_cancel q r <| Ψ1 |> {| Ψ2 |} {{ _, I v }}.
+
+  Parameter cqs_resume_all_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ),
+    is_cqs q I -∗
+      EWP cqs_resume_all q <| Ψ1 |> {| Ψ2 |} {{ l, ∃ ks, (is_list l ks ∗ [∗ list] k ∈ ks, I k)%I }}.
+
+  Global Instance is_cqs_ne q n:
+    Proper ((dist n) ==> (dist n)) (is_cqs q).
+  Proof.
+    apply is_cqs_ne_proof.
+  Qed.
+
+  Global Instance is_cqs_proper q :
+    Proper ((≡) ==> (≡)) (is_cqs q).
+  Proof.
+    apply is_cqs_proper_proof.
+  Qed.
+
+  Global Instance is_cqs_Persistent q I:
+    Persistent (is_cqs q I).
+  Proof.
+    apply is_cqs_Persistent_proof.
+  Qed.
+End cqs.
+
+Section implementation.
+  Context `{!heapGS Σ, !ListLib Σ}.
+
+  (* a.d. TODO, promises should contain a CQS instead of a list.
+  Then we copy take the persistent isCQS out of the invariant, pass it to the callback in await and use it there. *)
   Definition new_promise : val := (λ: <>,
-    ref (Waiting (list_nil #()))
+    ref (Waiting (cqs_create #()))
   )%V.
   Definition fork : val := (λ: "f", do: (Fork "f"))%V.
   Definition suspend : val := (λ: "f", do: (Suspend "f"))%V.
@@ -218,9 +290,12 @@ Section implementation.
     match: Load "p" with
       (* Done: *) InjL <> =>
         #() #() (* Unreachable! *)
-    | (* Waiting: *) InjR "ks" =>
-        list_iter (λ: "enqueue", "enqueue" #()) "ks";;
-        "p" <- Done "v"
+    | (* Waiting: *) InjR "enqs" =>
+        let: "resumed" := cqs_resume_all "enqs" in
+        (* a.d. TODO interestingly we need to first set p so that we can change the promise_state.
+        Iirc in Eio it was the other way around. Check if that is sound. *)
+        "p" <- Done "v";;
+        list_iter (λ: "enqueue", "enqueue" #()) "resumed"
     end))%V.
 
   (* fork a new fiber "f" and return a promise to get the result. *)
@@ -230,14 +305,16 @@ Section implementation.
     fork "wrapped_f";;
     "p")%V.
    
-  Definition await_callback : val := (λ: "p", (λ: "enqueue", 
-    (* We do it the same as Eio and check p again in here and then either call enqueue or put it in the waiting list.
-      await should probably pass in Hmem p when it constructs the callback and the handler should pass in promiseInv when it calls the callback.
-      Then we can take the promise out of promiseInv here. *)
+  Definition await_callback : val := (λ: "p" "ks", (λ: "enqueue", 
+    (* We do the same as Eio and suspend in CQS and then check the state of the promise again. 
+       Since we gave enqueue to the queue in suspend, if p is Done, we first need to cancel the reques to get the permission to
+       call enqueue back. *)
+    let: "req" := cqs_suspend "ks" "enqueue" in
     match: Load "p" with
-        (* Done: *) InjL <>  => "enqueue" #()
-    | (* Waiting: *) InjR "ks" =>
-        "p" <- InjR (list_cons "enqueue" "ks")
+        (* Done: *) InjL <>  => 
+        cqs_cancel "ks" "req";;
+        "enqueue" #()
+    | (* Waiting: *) InjR "ks" => #()
     end
   ))%V.
 
@@ -245,8 +322,8 @@ Section implementation.
     match: Load "p" with
       (* Done: *) InjL "v"  =>
         "v"
-    | (* Waiting: *) InjR <> =>
-        let: "callback" := await_callback "p" in 
+    | (* Waiting: *) InjR "ks" =>
+        let: "callback" := await_callback "p" "ks" in 
         suspend "callback";;
         match: Load "p" with
           (* Now Done: *) InjL "v" =>
@@ -274,7 +351,7 @@ Section implementation.
               "f" "enqueue";;
               next "q"
           end)
-      | return (λ: <>, next "q")
+      | return (λ: "v", next "q";; "v")
       end
     in
     "fulfill" "main"
@@ -310,7 +387,7 @@ End implementation.
    indeed unreachable: if a fiber cannot find its own promise fulfilled by
    another fiber, then its token has been duplicated, which situation is
    contradictory. *)
-
+   
 (* The assumption that certain cameras are available. *)
 Class promiseGpreS Σ := {
   promise_mapG :> inG Σ
@@ -318,11 +395,6 @@ Class promiseGpreS Σ := {
   torchG :> inG Σ (csumR fracR (agreeR unitO));
 }.
   
-Class testGpreS Σ := {
-  test_mapG :> inG Σ
-    (authR (gmapUR (loc * gname) unitR));
-}.
-
 (* A concrete instance of [Σ] for which the assumption [promisesGS Σ] holds. *)
 Definition promiseΣ := #[
   GFunctor (authRF
@@ -330,16 +402,8 @@ Definition promiseΣ := #[
   GFunctor (csumR fracR (agreeR unitO))
 ].
   
-Definition testΣ := #[
-  GFunctor (authRF
-    (gmapUR (loc * gname) unitR))
-].
-
 (* The proof of the previous claim. *)
 Instance subG_promiseΣ {Σ} : subG promiseΣ Σ → promiseGpreS Σ.
-Proof. solve_inG. Qed.
-
-Instance subG_testΣ {Σ} : subG testΣ Σ → testGpreS Σ.
 Proof. solve_inG. Qed.
 
 Class promiseGS Σ := {
@@ -347,17 +411,11 @@ Class promiseGS Σ := {
   promise_name : gname;
 }.
   
-Class testGS Σ := {
-  test_inG :> testGpreS Σ; 
-  test_name : gname;
-}.
-
 (* -------------------------------------------------------------------------- *)
 (** Predicates. *)
 
 Section predicates.
-  Context `{!heapGS Σ, !promiseGS Σ, !testGS Σ, !cancelGS Σ}.
-  Context `{!ListLib Σ}.
+  Context `{!heapGS Σ, !promiseGS Σ}.
 
   (* ------------------------------------------------------------------------ *)
   (* Definitions. *)
@@ -391,6 +449,7 @@ Section predicates.
   (* Unique token [γ]: a fiber holds possession of [torch γ] while running. *)
   Definition promise_state_whole γ := own γ (Cinl 1%Qp).
   Definition promise_state_waiting γ := own γ (Cinl (1/2)%Qp).
+  Definition promise_state_waiting4 γ := own γ (Cinl (1/4)%Qp).
   Definition promise_state_done γ := own γ (Cinr (to_agree ())).
 
   (* Inject a predicate [Φ] into the camera [Ag(Next(val -d> iProp))]. *)
@@ -408,12 +467,6 @@ Section predicates.
   Definition isPromiseMap (M : gmap (loc * gname) (val → iProp Σ)) :=
     own promise_name (● (promise_unfold <$> M : gmap _ _)).
 
-  Definition isTestMap (M : gmap (loc * gname) unit) :=
-    own test_name (● M).
-    
-  Global Instance isTestMap_timeless M : Timeless (isTestMap M).
-  Proof. by apply _. Qed.
-    
   (* invariant stuff *)
   Definition promiseN : namespace := nroot .@ "promise".
 
@@ -429,6 +482,14 @@ Section predicates.
     It might be possible to separate out the □ Φ v so that lookup_promiseInv can return a part that is available
     immediately, and a (▷ □ Φ v) (and b/c ▷ and □ commutes, we can take a copy and use it after closing the invariant)
      *)
+     
+  Definition promise_cqs (enqs: val) (γ : gname) : iProp Σ :=
+    (is_cqs enqs (λ enq, ∀ (v: val), 
+            let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
+            P v -∗
+            (* a.d. can we remove the my_queue precondition by saying is_queue is persistent and "partially-applying" the specification? *)
+            (* is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) -∗  *)
+              EWP (App (Val enq) v)%I <| ⊥ |> {{_, True }} ))%I.
     
   Definition promiseInv_inner : iProp Σ := (
     ∃ M, isPromiseMap M ∗ 
@@ -436,28 +497,20 @@ Section predicates.
         ((* Fulfilled: *) ∃ y,
           (p ↦ Done' y ∗ promise_state_done γ) ∗ □ Φ y)
       ∨
-        ((* Unfulfilled: *) ∃ l enqs,
-          p ↦ Waiting' l ∗
+        ((* Unfulfilled: *) ∃ enqs,
+          p ↦ Waiting' enqs ∗
           promise_state_waiting γ ∗
-          is_list l enqs   ∗
           (* ks now does not contain a list of continuations but a list of enqueue functions. 
              Each of these functions will change the run queue (in the future they can change an arbitrary run queue)
              so we have is_queue as a precondition
           *)
-          [∗ list] enq ∈ enqs, (∀ (v: val), 
-            let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
-            P v -∗
-            (* a.d. can we remove the my_queue precondition by saying is_queue is persistent and "partially-applying" the specification? *)
-            (* is_queue q (ready q (λ v, ⌜ v = #() ⌝)%I) -∗  *)
-              EWP (App (Val enq) v)%I <| ⊥ |> {{_, True }} ))
+          promise_cqs enqs γ)
   )%I.
     
   Definition promiseInv := inv promiseN promiseInv_inner.
   
   Global Instance promiseInv_Persistent : Persistent promiseInv.
-  Proof.
-    by apply _.
-  Qed.
+  Proof. by apply _. Qed.
 
   (* by now ready is just a predicate on a function value f, that f is safe to execute under the assumption
      that promiseInv holds. When promiseInv becomes an actual invariant, then probably even this precondition
@@ -470,35 +523,19 @@ Section predicates.
     ((* Fulfilled: *) ∃ y,
        (p ↦ Done' y ∗ promise_state_done γ) ∗ □ Φ y)
   ∨
-    ((* Unfulfilled: *) ∃ l enqs,
-      p ↦ Waiting' l ∗
+    ((* Unfulfilled: *) ∃ enqs,
+      p ↦ Waiting' enqs ∗
       promise_state_waiting γ ∗
-      is_list l enqs   ∗
-      (* ks now does not contain a list of continuations but a list of enqueue functions. 
-         Each of these functions will change the run queue (in the future they can change an arbitrary run queue)
-         so we have is_queue as a precondition and get it back after.
-      *)
-      [∗ list] enq ∈ enqs, (∀ (v: val), 
-        let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
-        P v -∗
-          EWP (App (Val enq) v)%I <| ⊥ |> {{_, True }} )).
+      promise_cqs enqs γ).
 
   Definition promiseSt_later p γ (Φ : val -d> iPropO Σ) : iProp Σ :=
     ((* Fulfilled: *) ∃ y,
        (p ↦ Done' y ∗ promise_state_done γ) ∗ ▷ □ Φ y)
   ∨
-    ((* Unfulfilled: *) ∃ l enqs,
-      p ↦ Waiting' l ∗
+    ((* Unfulfilled: *) ∃ enqs,
+      p ↦ Waiting' enqs ∗
       promise_state_waiting γ ∗
-      is_list l enqs   ∗
-      (* ks now does not contain a list of continuations but a list of enqueue functions. 
-         Each of these functions will change the run queue (in the future they can change an arbitrary run queue)
-         so we have is_queue as a precondition and get it back after.
-      *)
-      [∗ list] enq ∈ enqs, (∀ (v: val), 
-        let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
-        P v -∗
-          EWP (App (Val enq) v)%I <| ⊥ |> {{_, True }} )).
+      promise_cqs enqs γ).
 
   (* ------------------------------------------------------------------------ *)
   (* Non-expansiveness. *)
@@ -555,6 +592,20 @@ Section predicates.
       apply Qp_half_half.
     Qed. 
 
+    Lemma promise_state_split2 γ :
+      ⊢ promise_state_waiting γ ==∗ promise_state_waiting4 γ ∗ promise_state_waiting4 γ.
+    Proof.
+      rewrite /promise_state_waiting /promise_state_waiting4.
+      rewrite -own_op.
+      iApply own_update.
+      rewrite -Cinl_op.
+      apply csum_update_l.
+      rewrite frac_op.
+      rewrite cmra_update_updateP.
+      apply cmra_updateP_id. 
+      apply Qp_quarter_quarter.
+    Qed. 
+
     Lemma promise_state_join γ :
       ⊢ promise_state_waiting γ ∗ promise_state_waiting γ ==∗ promise_state_whole γ.
     Proof.
@@ -583,6 +634,10 @@ Section predicates.
       by rewrite /promise_state_waiting /promise_state_done -own_op own_valid csum_validI.
     Qed.
 
+    Lemma promise_state_disjoint2 γ : (promise_state_waiting4 γ ∗ promise_state_done γ) -∗ False.
+    Proof. 
+      by rewrite /promise_state_waiting4 /promise_state_done -own_op own_valid csum_validI.
+    Qed.
   End promise_state.
 
   (* Logical rules governing the predicate [ready]. *)
@@ -646,7 +701,7 @@ Section predicates.
       promiseSt p γ Φ -∗ promiseSt p γ' Φ' -∗ False.
     Proof.
       assert (⊢ ∀ p γ Φ, promiseSt p γ Φ -∗ ∃ v, p ↦ v)%I as Haux.
-      { by iIntros (???) "[[%v[(Hp & _) _]]|[%l[%ks[Hp _]]]]"; auto. }
+      { by iIntros (???) "[[%v[(Hp & _) _]]|[%ks[Hp _]]]"; auto. }
       iIntros "Hp Hp'".
       iPoseProof (Haux with "Hp")  as "[%v  Hp]".
       iPoseProof (Haux with "Hp'") as "[%v' Hp']".
@@ -658,6 +713,7 @@ Section predicates.
     Proof. by iIntros "HΦ Hp"; iRewrite -"HΦ". Qed.
 
     Lemma update_promiseInv_inner p γ Φ :
+    (* a.d. probably need a later here *)
       promiseInv_inner ∗ promiseSt p γ Φ ==∗
         promiseInv_inner ∗ isMember p γ Φ.
     Proof.
@@ -677,19 +733,19 @@ Section predicates.
       promiseSt p γ Φ -∗ promiseSt_later p γ Φ.
     Proof.
       rewrite /promiseSt_later.
-      iIntros "[[%y ((Hp&#Hps)&Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
+      iIntros "[[%y ((Hp&#Hps)&Hy)]|[%enqs (Hp&Hps&Hks)]]".
       iLeft. iExists y. by iFrame.
-      iRight. iExists l, enqs. by iFrame.
+      iRight. iExists enqs. by iFrame.
     Qed.
     
     (* Global Instance isPromiseMap_timeless M : Timeless (isPromiseMap M).
     Proof. by apply _. *)
     
     Lemma lookup_promiseInv_inner p γ Φ :
-      promiseInv_inner -∗ isMember p γ Φ -∗
+      ▷ promiseInv_inner -∗ isMember p γ Φ -∗
         (▷ (promiseSt p γ Φ -∗ promiseInv_inner) ∗ promiseSt_later p γ Φ).
     Proof.
-      iIntros "HpInv Hmem". rewrite /promiseInv_inner.
+      (* iIntros "HpInv Hmem". rewrite /promiseInv_inner.
       iDestruct "HpInv" as (M) "[HM HInv]".
       iDestruct (claim_membership M p γ Φ with "[$]") as "[%Φ' [%Hlkp #Heq]]".
       iPoseProof (promise_unfold_equiv with "Heq") as "#Heq'".
@@ -707,7 +763,8 @@ Section predicates.
         + iLeft. iExists y. iFrame. iSplit; first done.
           iNext. iSpecialize ("Heq'" $! y). by iRewrite -"Heq'".
         + iRight. iExists l, enqs. by iFrame.
-    Qed.
+    Qed. *)
+    Admitted.
 
     Lemma allocate_promiseInv :
       promiseInv_inner ⊢ |={⊤}=> promiseInv.
@@ -715,12 +772,6 @@ Section predicates.
       iIntros "Hinner". rewrite /promiseInv.
       by iMod (inv_alloc promiseN ⊤ promiseInv_inner with "[Hinner]").
     Qed.
-    
-    (* the later around promiseInv is giving me troubles. Though it should be possible to somehow
-    reformulate it so that the later is only around the Φ *)
-    Lemma sorry_drop_later :
-      ▷ promiseInv_inner -∗ promiseInv_inner.
-    Admitted.
   End promise_preds.
 
 End predicates.
@@ -731,7 +782,6 @@ End predicates.
 
 Section protocol_coop.
   Context `{!heapGS Σ, !promiseGS Σ}.
-  Context `{!ListLib Σ}.
 
   Definition FORK_pre (Coop : iEff Σ) : iEff Σ :=
     >> e >> !(Fork'  e) {{promiseInv ∗ ▷ (promiseInv -∗  EWP e #() <|Coop |> {{_, True}} ) }};
@@ -809,25 +859,37 @@ End protocol_coop.
 (** * Verification. *)
 
 Section verification.
-  Context `{!heapGS Σ, !promiseGS Σ}.
-  Context `{!ListLib Σ}.
+  Context `{!heapGS Σ, !promiseGS Σ, !ListLib Σ}.
 
   Lemma ewp_new_promise Ψ Φ :
-    ⊢ EWP (new_promise #()) <| Ψ |> {{ y,
-        ∃ p γ, ⌜ y = #(p : loc) ⌝ ∗ promise_state_waiting γ ∗ promiseSt p γ Φ }}.
+    promiseInv ⊢ EWP (new_promise #()) <| Ψ |> {{ y,
+        ∃ p γ, ⌜ y = #(p : loc) ⌝ ∗ promise_state_waiting γ ∗ isMember p γ Φ }}.
   Proof.
-    unfold new_promise. ewp_pure_steps. ewp_bind_rule.
-    iApply ewp_mono. { by iApply list_nil_spec. }
-    iIntros (l) "Hlist !>". simpl. ewp_pure_steps.
+    iIntros "HpInv".
+    unfold new_promise. ewp_pure_steps. ewp_bind_rule. simpl.
+    iApply ewp_mono. { by iApply cqs_create_spec. }
+    iIntros (enqs) "#Hcqs !>". ewp_pure_steps.
+    (* open the invariant -> evaluate the alloc -> change and close the invariant *)
+    rewrite /promiseInv.
+    assert (Hatom: Atomic StronglyAtomic (Alloc (InjRV enqs))).
+      by apply _.
+    iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
+    iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
+    iModIntro.
     iApply ewp_alloc. iIntros "!>" (p) "Hp".
+
     iMod promise_state_create as "[%γ Hps]".
     iMod (promise_state_split with "Hps") as "[Hps1 Hps2]".
+    iAssert (promiseSt p γ Φ) with "[Hp Hps1]" as "HpSt".
+    { iRight. iExists enqs. by iFrame. }
+    iMod (update_promiseInv_inner with "[HpInvIn HpSt]") as "(HpInvIn & #Hmem)"; first by iFrame.
     iModIntro.
-    iExists p, γ. iFrame. iSplit; [done|]. iRight.
-    iExists l, []. by iFrame.
+    iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
+    iSplitL "Hclose". iApply "Hclose".
+    iModIntro. iFrame.
+    iExists p, γ. iFrame. by iSplit.
   Qed.
   
-  (* a.d. If we ever want to return promiseInv from main, then next should contitionally return promiseInv (or maybe return the next k itself and then the handler calls it) *)
   Lemma ewp_next q Ψ :
     promiseInv -∗
       is_queue q ready -∗
@@ -872,125 +934,129 @@ Section verification.
     iIntros (v) "Hv". by iFrame.
   Qed.
 
-  Lemma ewp_await_callback (p: loc) γ Φ:
+  Lemma ewp_await_callback (p: loc) (enqs: val) γ Φ:
   let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ)%I in
-    isMember p γ Φ
+    isMember p γ Φ ∗ promise_cqs enqs γ
   ⊢
-    EWP (await_callback #p) <| ⊥ |> {{f, ∀ (enqueue: val), 
-      (∀ (v: val), P v -∗ 
-                    (EWP (enqueue v) <| ⊥ |> {{_, True }}) ) -∗
+    EWP (await_callback #p enqs) <| ⊥ |> {{f, 
+      ∀ (enqueue: val), (∀ (v: val), P v -∗ EWP (enqueue v) <| ⊥ |> {{_, True }}) -∗
       promiseInv -∗ 
-        (▷ EWP (f enqueue) <| ⊥ |> {{_, promiseInv }}) }}.
+        (▷ EWP (f enqueue) <| ⊥ |> {{_, True }}) }}.
   Proof.
-    iIntros "Hmem". rewrite /await_callback. ewp_pure_steps.
+    iIntros "(#Hmem & #Hcqs)". rewrite /await_callback. ewp_pure_steps.
     iIntros (enqueue) "Henq #HpInv". iNext.
+    ewp_pure_steps. 
+    (* now we suspend enq*)
+    iApply (ewp_bind [(AppRCtx _)]); first done. simpl.
+    iApply (ewp_mono with "[Henq]").
+      by iApply (cqs_suspend_spec with "Hcqs Henq").
+    (* a.d. TODO where did that update modality come from? *)
+    iIntros (r) "Hreq !>".
     ewp_pure_steps. ewp_bind_rule. simpl.
-    rewrite /promiseInv.
     (* a.d. here we need to open the invariant to read the promise *)
+    rewrite /promiseInv.
     assert (Hatom: Atomic StronglyAtomic (Load #p)).
       by apply _.
     iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
     iModIntro.
-    (* a.d. unsound *)
-    iPoseProof (sorry_drop_later with "HpInvIn") as "HpInvIn".
+    (* a.d. using the maybe unsound rule of getting the inner promise state *)
     iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
-    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
+    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]| (%enqs' & Hp & Hps & Henqs) ]".
     - (* the promise was fulfilled *)
       iApply (ewp_load with "Hp"). 
       iIntros "!> Hp !>".
       iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
-      iSplitL "Hclose".
-      iApply "Hclose".
+      iSplitL "Hclose". iApply "Hclose".
       iModIntro.
-      iSplitR "Henq".
-      iNext. iApply "HpInvIn". iLeft. iExists y. by iFrame.
-      ewp_pure_steps. iApply (ewp_mono with "[Henq]").
-      + iApply ("Henq" with "[]"). iSplit; done.
-      + iIntros (v) "_ !>". 
-        iApply "HpInv".
-    - (* the promise is not yet fulifilled so we put enqueue into the list *)
+      iSplitR "Hreq".
+      + iNext. iApply "HpInvIn".
+        iLeft. iExists y. by iFrame.
+      + ewp_pure_steps.
+        iApply (ewp_bind [(AppRCtx _)]); first by done. simpl.
+        iApply (ewp_mono with "[Hreq]").
+        iApply (cqs_cancel_spec with "Hcqs Hreq").
+        iIntros (dummy) "Henq !>".
+        ewp_pure_steps.
+        iApply "Henq". by iSplit.
+    - (* the promise is not yet fulifilled, our job is done and we don't do anything *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". 
       iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
-      
-      
-      ewp_pure_steps.
-      iApply (ewp_bind [(StoreRCtx _); InjRCtx]); first done.
-      iApply (ewp_mono with "[Hl]"); [iApply (list_cons_spec with "Hl")|].
-      iIntros (l') "Hl' !>". simpl. ewp_pure_steps. ewp_bind_rule.
-      iApply (ewp_store with "Hp"). iIntros "!> Hp !>". 
-      iApply "HpInv". iRight. iExists l', (enqueue :: enqs). iFrame.
+      iSplitL "Hclose". iApply "Hclose".
+      iModIntro.
+      iSplitL.
+      + iNext. iApply "HpInvIn".
+        iRight. iExists enqs'. by iFrame. 
+      + ewp_pure_steps. by done.
   Qed.
-
-  (* Definition await_callback : val := (λ: "p", (λ: "enqueue", 
-    (* We do it the same as Eio and check p again in here and then either call enqueue or put it in the waiting list.
-      await should probably pass in Hmem p when it constructs the callback and the handler should pass in promiseInv when it calls the callback.
-      Then we can take the promise out of promiseInv here. *)
-    match: Load "p" with
-      (* Done: *) InjL <>  => "enqueue" #()
-    | (* Waiting: *) InjR "ks" =>
-        "p" <- InjR (list_cons "enqueue" "ks")
-    end
-  ))%V. *)
 
   Lemma ewp_await (p: loc) Φ :
     promiseInv ∗ isPromise p Φ ⊢ 
-      EWP (await #p) <| Coop |> {{v, promiseInv ∗ □ Φ v}}.
+      EWP (await #p) <| Coop |> {{v, □ Φ v}}.
   Proof.
-    iIntros "(HpInv & %γ & #Hmem)". rewrite /await. 
-    iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
+    iIntros "(#HpInv & %γ & #Hmem)". rewrite /await. 
     ewp_pure_steps. ewp_bind_rule. simpl.
-    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
+    (* a.d. here we need to open the invariant to read the promise *)
+    rewrite /promiseInv.
+    assert (Hatom: Atomic StronglyAtomic (Load #p)).
+      by apply _.
+    iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
+    iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
+    iModIntro.
+    (* a.d. using the maybe unsound rule of getting the inner promise state *)
+    iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & #Hy)]| (%enqs & Hp & Hps & #Henqs) ]".
     - (* the promise is already fulfilled *)
       iApply (ewp_load with "Hp").
-      iIntros "!> Hp !>". ewp_pure_steps. iSplit; last by iAssumption.
-      iApply "HpInv". iLeft. iExists y. iFrame. by iAssumption.
+      iIntros "!> Hp !>". 
+      iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
+      iSplitL "Hclose". iApply "Hclose".
+      iModIntro.
+      iSplitL.
+      iNext. iApply "HpInvIn". iLeft. iExists y. iSplit; last done. by iSplit.
+      ewp_pure_steps. by iAssumption.
     - (* the promise is not yet fulfilled, so we create a callback and perform the suspend effect.
          After the suspend returns, we know the promise is fulfilled. *)
       iApply (ewp_load with "Hp").
-      iIntros "!> Hp !>". ewp_pure_steps. 
-      ewp_bind_rule. simpl.
-      iApply (ewp_mono). 
+      iIntros "!> Hp !>".
+      iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
+      iSplitL "Hclose". iApply "Hclose".
+      iModIntro.
+      iSplitL.
+      iNext. iApply "HpInvIn". iRight. iExists enqs. by iFrame.
+      ewp_pure_steps. 
+      iApply (ewp_bind ([AppRCtx _])); first by done. simpl.
+      iApply ewp_mono. 
       iApply ewp_os_prot_mono. iApply iEff_le_bottom.
-      iApply ewp_await_callback. iApply "Hmem".
+      iApply ewp_await_callback. iSplit; by iAssumption.
       iIntros (callback) "Hf !>".
       ewp_pure_steps.
-      iAssert (promiseInv) with "[HpInv Hps Hl Hks Hp]" as "HpInv".
-      { iApply "HpInv". iRight. iExists l, enqs. iFrame. }
       ewp_bind_rule. simpl.
-      iApply (ewp_mono with "[Hf HpInv]").
+      iApply (ewp_mono with "[Hf]").
       { iApply (ewp_suspend callback (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ)%I). 
         by iFrame. }
-      (* after we have performed the effect we get promise_state_done.
-        a.d. TODO the promiseInv would have to be given to the effect and we also get it back here. *)
-      iIntros (v) "((-> & Hps') & HpInv) !>".
-      (* now we match on the promise again but this time we know it must be fulfilled *)
-      iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
+      (* after we have performed the effect we get promise_state_done. *)
+      iIntros (v) "(-> & Hps) !>".
       ewp_pure_steps. ewp_bind_rule. simpl.
-      iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]|[%l' [%enqs' (Hp&Hps&Hl&Hks)]]]";
+      (* now we match on the promise again but this time we know it must be fulfilled *)
+      iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
+      iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
+      iModIntro.
+      (* a.d. using the maybe unsound rule of getting the inner promise state *)
+      iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+      iDestruct "HpSt" as "[[%y ((Hp&#Hps') & #Hy)]| (%enqs' & Hp & Hps' & #Henqs') ]";
         last by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
       iApply (ewp_load with "Hp").
-      iIntros "!> Hp !>". ewp_pure_steps. iSplit; last done.
-      iApply "HpInv". iLeft. iExists y. by iFrame.
+      iIntros "!> Hp !>". 
+      iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
+      iSplitL "Hclose". iApply "Hclose".
+      iModIntro.
+      iSplitL.
+      iNext. iApply "HpInvIn". iLeft. iExists y. iSplit; last done. by iSplit.
+      ewp_pure_steps. done.
   Qed.
 
-  (* Definition await : val := (λ: "p",
-    match: Load "p" with
-      (* Done: *) InjL "v"  =>
-        "v"
-    | (* Waiting: *) InjR "ks" =>
-        let: "callback" := await_callback "p" "ks" in 
-        suspend "callback";;
-        match: Load "p" with
-          (* Now Done: *) InjL "v" =>
-            "v"
-        | (* Waiting: *) InjR <> =>
-            #() #() (* unreachable *)
-        end
-    end
-  )%V. *)
-  
   (* the wrapped function is passed via the FORK effect to the handler.
      the handler should then pass is_queue to wrapped_f so that it is able to change the run_queue.
      is_queue should be passed between client and handler the same as promiseInv, for every performed effect. *)
@@ -1000,33 +1066,70 @@ Section verification.
     EWP (fork_wrap_f f #p) <| ⊥ |> {{wrapped_f, 
         (* promiseInv and is_queue are passed here because they come from the effect handler *)
           promiseInv -∗
-          EWP (wrapped_f #()) <| Coop |> {{_, promiseInv}} }}.
+          EWP (wrapped_f #()) <| Coop |> {{_, True}} }}.
   Proof.
-    iIntros "(Hps & #Hmem & Hf)". rewrite /fork_wrap_f. ewp_pure_steps.
-    iIntros "HpInv". ewp_pure_steps.
+    iIntros "(Hps_start & #Hmem & Hf)". 
+    (* split the waiting state b/c we need a fragment to write to p at the end. *)
+    (* iApply fupd_ewp.
+    iMod (promise_state_split2 with "Hps") as "(Hps1 & Hps2)".
+    iModIntro. *)
+    rewrite /fork_wrap_f. ewp_pure_steps.
+    iIntros "#HpInv". ewp_pure_steps.
     ewp_bind_rule. simpl. iApply (ewp_mono with "Hf"). 
     iIntros (v) "#Hv !>".
-    iDestruct (lookup_promiseInv with "HpInv Hmem") as "[HpInv HpSt]".
-    ewp_pure_steps.
-    iDestruct "HpSt" as "[[%y' ((Hp&#Hps') & Hy)]|[%l [%enqs (Hp&Hps'&Hl&Henqs)]]]";
-      first by iDestruct (promise_state_disjoint with "[$]") as "HFalse".
-    ewp_bind_rule. iApply (ewp_load with "Hp"). simpl.
-    iIntros "!> Hp".
-    (* now we change the logical promise state *)
+    ewp_pure_steps. ewp_bind_rule. simpl.
+    (* a.d. here we need to open the invariant *)
+    rewrite /promiseInv.
+    assert (Hatom: Atomic StronglyAtomic (Load #p)).
+      by apply _.
+    iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
+    iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
+    iModIntro.
+    (* a.d. using the maybe unsound rule of getting the inner promise state *)
+    iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & #Hy)]| (%enqs & Hp & Hps & #Henqs) ]";
+      first by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
+    iApply (ewp_load with "Hp").
+    iIntros "!> Hp !>". 
+    iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
+    iSplitL "Hclose". iApply "Hclose".
+    iModIntro.
+    iSplitR "Hps_start".
+    iNext. iApply "HpInvIn". iRight. iExists enqs. by iFrame.
+    ewp_pure_steps. ewp_bind_rule. simpl.
+    iApply ewp_mono. 
+    iApply (cqs_resume_all_spec with "Henqs").
+    (* now we have a list of resumed enq's and call them all *)
+    iIntros (resumed) "(%ks & Hl & Hks) !>".
+    ewp_pure_steps. ewp_bind_rule. simpl.
+    iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
+    iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
+    (* iModIntro. *)
+    (* a.d. using the maybe unsound rule of getting the inner promise state *)
+    iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & #Hy)]| (%enqs' & Hp & Hps & #Henqs') ]";
+      first by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
+    (* now we change the logical promise state, but for that we need to open it again. *)
     iMod (promise_state_join with "[$]") as "Hps".
     iMod (promise_state_fulfill with "Hps") as "#Hps".
-    iModIntro. ewp_pure_steps.
-    iApply (ewp_bind' (AppRCtx _)); first done.
+    iModIntro. 
+    iApply (ewp_store with "Hp"). iIntros "!> Hp !>".
+    iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
+    iSplitL "Hclose". iApply "Hclose".
+    iModIntro.
+    iSplitR "Hl Hks".
+    iNext. iApply "HpInvIn". iLeft. iExists v. iFrame. by iSplit.
+    ewp_pure_steps.
     (* now we just call all the enqueue functions. *)
     set I : list val → iProp Σ := (λ us,
-      ∃ vs, ⌜ us ++ vs = enqs ⌝ ∗ [∗ list] enq ∈ vs, 
+      ∃ vs, ⌜ us ++ vs = ks ⌝ ∗ [∗ list] enq ∈ vs, 
         ∀ v0 : val, ⌜v0 = #()⌝ ∗ promise_state_done γ -∗
                     EWP (App (Val enq) v0) <| ⊥ |> {{ _, True }}
       )%I.
-    iApply (ewp_mono with "[Henqs Hl]").
+    iApply (ewp_mono with "[Hks Hl]").
     { iApply ewp_os_prot_mono. iApply iEff_le_bottom.
-      iApply (list_iter_spec _ I with "[] Hl [Henqs]").
-      2: by iExists enqs; iFrame.
+      iApply (list_iter_spec _ I with "[] Hl [Hks]").
+      2: by iExists ks; iFrame.
       iIntros "!#" (us enq vs) "<- [%vs' [%Heq Hvs']]".
       specialize (app_inj_1 us us vs' (enq :: vs) eq_refl Heq) as [_ ->].
       iDestruct "Hvs'" as "[Hk Hvs]". 
@@ -1038,13 +1141,8 @@ Section verification.
       iExists vs. iFrame.
       iPureIntro. by rewrite -app_assoc.
     }
-    iIntros (?) "[Hl _] !>". simpl.
-    ewp_pure_steps. ewp_bind_rule.
-    iApply (ewp_store with "Hp"). iIntros "!> Hp !>". simpl.
-    iFrame. iApply "HpInv".
-    iLeft. iExists v. iFrame. by iSplit.
+    iIntros (?) "[Hl _] !>". done.
   Qed.
-
 
   (* Definition fork_wrap_f : val := (λ: "f" "p", (λ: <>, 
     let: "v" := "f" #() in
@@ -1052,7 +1150,7 @@ Section verification.
       (* Done: *) InjL <> =>
         #() #() (* Unreachable! *)
     | (* Waiting: *) InjR "ks" =>
-        list_iter (λ: "callback", "callback" #()) "ks";;
+        cqs_resume_all "ks";;
         "p" <- Done "v"
     end))%V. *)
 
@@ -1060,15 +1158,12 @@ Section verification.
     promiseInv ∗ EWP (f #()) <| Coop  |> {{v, □ Φ v}}
   ⊢ 
     EWP (fork_promise f) <| Coop  |> {{ y, 
-      ∃ (p: loc), ⌜ y = #p ⌝ ∗ isPromise p Φ ∗ 
-      promiseInv  }}.
+      ∃ (p: loc), ⌜ y = #p ⌝ ∗ isPromise p Φ }}.
   Proof.
-    iIntros "(HpInv & Hf)". rewrite /fork_promise. ewp_pure_steps.
+    iIntros "(#HpInv & Hf)". rewrite /fork_promise. ewp_pure_steps.
     ewp_bind_rule. simpl.
-    iApply ewp_mono. iApply (ewp_new_promise _ Φ).
-    iIntros (v) "(%p & %γ & -> & Hps & HSt)".
-    iMod (update_promiseInv with "[$]") as "[HpInv #Hmem]".
-    iModIntro.
+    iApply ewp_mono. iApply (ewp_new_promise _ Φ with "HpInv").
+    iIntros (v) "(%p & %γ & -> & Hps & #Hmem) !>".
     ewp_pure_steps.
     iApply (ewp_bind' (AppRCtx _)); first done. simpl.
     iApply (ewp_mono with "[Hf Hps]").
@@ -1079,7 +1174,7 @@ Section verification.
     ewp_bind_rule. simpl.
     iApply (ewp_mono with "[HpInv Hwrapped_f]").
     iApply ewp_fork. by iFrame.
-    iIntros (?) "HpInv !>".
+    iIntros (?) "_ !>".
     ewp_pure_steps. iExists p.
     iFrame. iSplit; first done.
     by iExists γ.
@@ -1100,8 +1195,8 @@ Section verification.
       
   Lemma ewp_run (main : val) Φ :
     promiseInv -∗
-      (promiseInv -∗ EWP main #() <| Coop |> {{ v, □ Φ v ∗ promiseInv }}) -∗
-        EWP run main {{ _, True }}.
+      (promiseInv -∗ EWP main #() <| Coop |> {{ v, □ Φ v }}) -∗
+        EWP run main {{ v, □ Φ v }}.
   Proof.
     iIntros "HpInv Hmain". unfold run. ewp_pure_steps.
     ewp_bind_rule. iApply ewp_mono. { by iApply queue_create_spec. }
