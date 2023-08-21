@@ -351,7 +351,7 @@ Section implementation.
               "f" "enqueue";;
               next "q"
           end)
-      | return (λ: "v", next "q";; "v")
+      | return (λ: <>, next "q")
       end
     in
     "fulfill" "main"
@@ -1196,9 +1196,9 @@ Section verification.
   Lemma ewp_run (main : val) Φ :
     promiseInv -∗
       (promiseInv -∗ EWP main #() <| Coop |> {{ v, □ Φ v }}) -∗
-        EWP run main {{ v, □ Φ v }}.
+        EWP run main {{ _, True }}.
   Proof.
-    iIntros "HpInv Hmain". unfold run. ewp_pure_steps.
+    iIntros "#HpInv Hmain". unfold run. ewp_pure_steps.
     ewp_bind_rule. iApply ewp_mono. { by iApply queue_create_spec. }
     iIntros (q) "Hq !>". simpl. ewp_pure_steps.
     iSpecialize ("Hq" $! ready).
@@ -1210,19 +1210,19 @@ Section verification.
     rewrite deep_handler_unfold.
     iSplit; [|iSplit]; last (by iIntros (??) "HFalse"; rewrite upcl_bottom).
     (* Return branch. *)
-    - iIntros (y) "(_ & HpInv)".
+    - iIntros (?) "_".
       ewp_pure_steps. iApply (ewp_next with "HpInv Hq").
     (* Effect branch. *)
     - iIntros (request k). rewrite upcl_Coop upcl_FORK upcl_SUSPEND.
-      iIntros "[(%e & -> & (HpInv & He) & Hk)
-               |(%f & %P & -> & (Hf & HpInv) & Hk)]".
+      iIntros "[(%e & -> & (_ & He) & Hk)
+               |(%f & %P & -> & (Hf & _) & Hk)]".
       (* Fork. *)
       + ewp_pure_steps.
-        iApply (ewp_bind' (AppRCtx _)). { done. } simpl.
+        iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
         iApply (ewp_mono with "[Hk]").
         { iApply (queue_push_spec with "Hq"). rewrite /ready.
-          iIntros "HpInv". ewp_pure_steps.
-          iSpecialize ("Hk" $! #() with "HpInv").
+          iIntros "#HpInv'". ewp_pure_steps.
+          iSpecialize ("Hk" $! #() with "[//]").
           iApply "Hk". iNext.
           by iApply ("IH_handler" with "Hq").
         }
@@ -1231,7 +1231,7 @@ Section verification.
         iApply ("IH" with "[He] Hq").
         instantiate (1:=(λ _, True)%I).
         iApply (ewp_mono with "He"). 
-        iIntros (?) "HpInv !>". by iFrame. 
+        iIntros (?) "_ !>". by iFrame. 
       (* Suspend. *)
       + do 9 ewp_value_or_step.
         (* here we bind the creation of enqueue. Now we should prove a spec for it. *)
@@ -1244,7 +1244,7 @@ Section verification.
           iIntros (v) "HP".
           ewp_pure_steps.
           iApply (queue_push_spec with "Hq"). rewrite /ready.
-          iIntros "HpInv". ewp_pure_steps.
+          iIntros "#HpInv'". ewp_pure_steps.
           iSpecialize ("Hk" $! v with "[$]").
           iApply "Hk". iNext.
           by iApply ("IH_handler" with "Hq").
@@ -1254,13 +1254,16 @@ Section verification.
         ewp_pure_steps.
         ewp_bind_rule. simpl.
         iApply (ewp_mono with "Hf").
-        iIntros (?) "HpInv !>". ewp_pure_steps.
+        iIntros (?) "_ !>". ewp_pure_steps.
         iApply (ewp_next with "HpInv Hq").
   Qed.
 
 End verification.
 
 Print Assumptions ewp_run.
+Print Assumptions ewp_fork_promise.
+Print Assumptions ewp_await.
+
 (* ========================================================================== *)
 (** * Specification. *)
 
