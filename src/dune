@@ -1,27 +1,20 @@
 (env
  (dev
-  (flags (:standard -w -50 -w -32 -w -27))))
+  (flags
+   (:standard -w -50 -w -32 -w -27))))
 
 (executables
-  (names ad)
-  (modules ad))
+ (names promises)
+ (modules promises))
 
 (executables
-  (names multivar_ad)
-  (modules dim vector multivar_ad))
+ (names promises_eio)
+ (modules promises_eio))
 
 (executables
-  (names promises)
-  (modules promises))
+ (names promises_cancel_effects)
+ (modules promises_cancel_effects))
 
 (executables
-  (names invert)
-  (modules invert))
-
-(executables
-  (names ref)
-  (modules ref))
-
-(executables
-  (names test)
-  (modules test))
+ (names promises_cancel_getcontext)
+ (modules promises_cancel_getcontext))
