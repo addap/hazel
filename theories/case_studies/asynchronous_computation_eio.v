@@ -75,14 +75,6 @@ Section atomics.
     simpl. done.
   Qed.
 
-  (* Lemma ectxi_language_sub_redexes_are_values e :
-    (∀ Ki e', e = fill Ki e' → is_Some (to_val e')) →
-    sub_redexes_are_values e.
-  Proof.
-    intros Hsub K e' ->. destruct K as [|Ki K _] using @rev_ind=> //=.
-    intros []%eq_None_not_Some. eapply fill_val2, Hsub. by rewrite /= fill_app.
-  Qed. *)
-
   Lemma fill_no_value (k: ectx) (e: expr) (v: val) :
     to_val e = None → fill k e = v → False.
   Proof.
@@ -92,39 +84,20 @@ Section atomics.
     simpl in Hfill'. discriminate Hfill'.
   Qed.
 
+  Local Ltac solve_atomic := 
+    apply ectx_language_atomic;
+    [ inversion 1; naive_solver
+    | intros [|f?] ? H ?; [|
+      exfalso; destruct f; inversion H; by eapply fill_no_value ]].
+
   Global Instance store_atomic v1 v2 : Atomic StronglyAtomic (Store (Val v1) (Val v2)).
-  Proof. 
-    apply ectx_language_atomic.
-    - inversion 1. naive_solver. 
-    - unfold sub_redexes_are_values.
-      intros [] **. naive_solver.
-      exfalso.
-      simpl in H. destruct f; simpl in H; try discriminate H.
-      inversion H. apply (fill_no_value l e' v1 H0). symmetry. apply H2.
-      inversion H. apply (fill_no_value l e' v2 H0). symmetry. apply H3.
-  Qed.
+  Proof. by solve_atomic. Qed.
 
   Global Instance load_atomic v : Atomic StronglyAtomic (Load (Val v)).
-  Proof.
-    apply ectx_language_atomic.
-    - inversion 1. naive_solver.
-    - unfold sub_redexes_are_values.
-      intros [] **. naive_solver.
-      exfalso.
-      simpl in H. destruct f; simpl in H; try discriminate H.
-      inversion H. apply (fill_no_value l e' v H0). symmetry. apply H2.
-  Qed.
+  Proof. by solve_atomic. Qed.
   
   Global Instance alloc_atomic v : Atomic StronglyAtomic (Alloc (Val v)).
-  Proof.
-    apply ectx_language_atomic.
-    - inversion 1. naive_solver.
-    - unfold sub_redexes_are_values.
-      intros [] **. naive_solver.
-      exfalso.
-      simpl in H. destruct f; simpl in H; try discriminate H.
-      inversion H. apply (fill_no_value l e' v H0). symmetry. apply H2.
-  Qed.
+  Proof. by solve_atomic. Qed.
 End atomics. 
 
 Section concurrent_queue.
