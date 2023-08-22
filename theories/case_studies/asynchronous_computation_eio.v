@@ -710,12 +710,6 @@ Section predicates.
       iApply (lookup_promiseInv_inner' with "HpInv Hmem").
     Qed.
 
-    Lemma allocate_promiseInv :
-      promiseInv_inner ⊢ |={⊤}=> promiseInv.
-    Proof.
-      iIntros "Hinner". rewrite /promiseInv.
-      by iMod (inv_alloc promiseN ⊤ promiseInv_inner with "[Hinner]").
-    Qed.
   End promise_preds.
 
 End predicates.
@@ -1170,10 +1164,6 @@ Section verification.
 
 End verification.
 
-Print Assumptions ewp_run.
-Print Assumptions ewp_fork_promise.
-Print Assumptions ewp_await.
-
 (* ========================================================================== *)
 (** * Specification. *)
 
@@ -1182,36 +1172,45 @@ Section specification.
   Context `{!ListLib Σ}.
 
   Class AsyncCompLib := {
-    coop : val -> iEff Σ;
+    coop : iEff Σ;
     is_promise : val → (val -> iProp Σ) → iProp Σ;
     is_promise_Persistent p Φ : Persistent (is_promise p Φ);
-    fork_spec (e : val) Φ :
-      EWP e #() <| coop |> {{ y, □ Φ y }} -∗
-        EWP async e <| coop |> {{ p, is_promise p Φ }};
-    _spec p Φ :
-      is_promise p Φ -∗
+    promise_inv : iProp Σ;
+    fork_spec (f : val) Φ :
+      promise_inv ∗ EWP f #() <| coop |> {{ y, □ Φ y }} -∗
+        EWP fork_promise f <| coop |> {{ p, is_promise p Φ }};
+    await_spec p Φ :
+      promise_inv ∗ is_promise p Φ -∗
         EWP await p <| coop |> {{ y, □ Φ y }};
   }.
 
   Definition run_spec (main : val) :=
-    (∀ _ : AsyncCompLib, EWP main #() <| coop |> {{ _, True }}) ==∗
+    (∀ _ : AsyncCompLib, promise_inv -∗ EWP main #() <| coop |> {{ _, True }}) ={⊤}=∗
       EWP run main <| ⊥ |> {{ _, True }}.
 
 End specification.
 
-
-
 Section closed_proof.
-  Context `{!heapGS Σ, !promiseGpreS Σ}.
+  Context `{!heapGS Σ, !promiseGpreS Σ, !savedPredG Σ val}.
   Context `{!ListLib Σ}.
 
-  Lemma promiseInv_init :
-    ⊢ |==> ∃ _ : promiseGS Σ, ∀ q, promiseInv.
+  Lemma promiseInv_inner_init :
+    ⊢ |==> ∃ _ : promiseGS Σ, promiseInv_inner.
   Proof.
-    iIntros. iMod (own_alloc (● (∅ : gmap (loc * gname) _))) as (γ) "HI";
+    iIntros. iMod (own_alloc (● (∅ : gmap (loc * gname * gname) _))) as (γ) "HI";
       first by rewrite auth_auth_valid.
-    iModIntro. iExists {| promise_inG := _; promise_name := γ; |}.
-    iIntros (q). iExists ∅. rewrite /isPromiseMap fmap_empty. by iFrame.
+    iExists {| promise_inG := _; promise_name := γ; |}.
+    iModIntro.
+    iExists ∅. rewrite /isPromiseMap. by iFrame.
+  Qed.
+    
+  Lemma promiseInv_init :
+    ⊢ |={⊤}=> ∃ _ : promiseGS Σ, promiseInv.
+  Proof.
+    iIntros.
+    iMod (promiseInv_inner_init) as "(%pg & Hinner)".
+    iMod (inv_alloc promiseN ⊤ promiseInv_inner with "[Hinner]").
+    by done. by iExists pg.
   Qed.
 
   Local Program Instance async_comp_lib `{!promiseGS Σ} :
@@ -1219,16 +1218,21 @@ Section closed_proof.
     coop := Coop;
     is_promise := λ v Φ, (∃ (p : loc), ⌜ v = #p ⌝ ∗ isPromise p Φ)%I;
     is_promise_Persistent := _;
+    promise_inv := promiseInv;
   }.
-  Next Obligation. by iIntros (???) "?"; iApply ewp_async. Qed.
-  Next Obligation. by iIntros (???) "[% [-> ?]]"; iApply ewp_await. Qed.
+  Next Obligation. by iIntros (???) "[??]"; iApply ewp_fork_promise; iFrame. Qed.
+  Next Obligation. by iIntros (???) "(? & % & -> & ?)"; iApply ewp_await; iFrame. Qed.
 
   Theorem run_correct main : run_spec main.
   Proof.
-    iIntros "He". iMod promiseInv_init as "[%HpromiseGS HpInv]".
+    rewrite /run_spec.
+    iIntros "He".
+    iMod promiseInv_init as "[%HpromiseGS #HpInv]".
     iSpecialize ("He" $! async_comp_lib). iModIntro.
     iApply (ewp_run _ (λ _, True)%I with "HpInv").
-    iApply (ewp_mono with "He"). by auto.
+    iIntros "#HpInv'".
+    iApply (ewp_mono with "[He]"). 
+    by iApply "He".
+    iIntros (_) "_ !> !>". by done.
   Qed.
-
 End closed_proof.
