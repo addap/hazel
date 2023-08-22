@@ -22,7 +22,7 @@
 From iris.proofmode Require Import base tactics classes.
 From iris.algebra Require Import excl_auth gset gmap agree csum frac excl.
 From iris.base_logic Require Import invariants.
-From iris.base_logic.lib Require Import iprop wsat.
+From iris.base_logic.lib Require Import iprop wsat saved_prop.
 From program_logic Require Import reasoning_rules.
 From case_studies Require Import list_lib .
 
@@ -391,14 +391,14 @@ End implementation.
 (* The assumption that certain cameras are available. *)
 Class promiseGpreS Σ := {
   promise_mapG :> inG Σ
-    (authR (gmapUR (loc * gname) (agreeR (laterO (val -d> (iPropO Σ))))));
+    (authR (gmapUR (loc * gname * gname) unitR));
   torchG :> inG Σ (csumR fracR (agreeR unitO));
 }.
   
 (* A concrete instance of [Σ] for which the assumption [promisesGS Σ] holds. *)
 Definition promiseΣ := #[
   GFunctor (authRF
-    (gmapURF (loc * gname) (agreeRF (laterOF (valO -d> idOF)))));
+    (gmapURF (loc * gname * gname) unitR));
   GFunctor (csumR fracR (agreeR unitO))
 ].
   
@@ -415,7 +415,7 @@ Class promiseGS Σ := {
 (** Predicates. *)
 
 Section predicates.
-  Context `{!heapGS Σ, !promiseGS Σ}.
+  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val}.
 
   (* ------------------------------------------------------------------------ *)
   (* Definitions. *)
@@ -453,19 +453,24 @@ Section predicates.
   Definition promise_state_done γ := own γ (Cinr (to_agree ())).
 
   (* Inject a predicate [Φ] into the camera [Ag(Next(val -d> iProp))]. *)
-  Definition promise_unfold (Φ : val → iProp Σ) :
+  (* Definition promise_unfold (Φ : val → iProp Σ) :
     agree (later (discrete_fun (λ (_ : val), iPropO Σ))) :=
-    to_agree (Next (λ v, (Φ v))).
+    to_agree (Next (λ v, (Φ v))). *)
 
-  Definition isMember p γ Φ :=
-    own promise_name (◯ {[(p, γ) := promise_unfold Φ]}).
-
-  Definition isPromise (p : loc) Φ := (
-    ∃ γ, isMember p γ Φ
+  Definition isMember p γ ε (Φ: val -d> iPropO Σ) := (
+    own promise_name (◯ {[(p, γ, ε) := tt]}) ∗
+    saved_pred_own ε Φ
   )%I.
 
-  Definition isPromiseMap (M : gmap (loc * gname) (val → iProp Σ)) :=
-    own promise_name (● (promise_unfold <$> M : gmap _ _)).
+  Definition isPromise (p : loc) Φ := (
+    ∃ γ ε, isMember p γ ε Φ
+  )%I.
+
+  Definition isPromiseMap (M : gmap (loc * gname * gname) unit) :=
+    own promise_name (● M).
+
+  Definition isPromiseMap_timeless M : Timeless (isPromiseMap M).
+  Proof. by apply _. Qed. 
 
   (* invariant stuff *)
   Definition promiseN : namespace := nroot .@ "promise".
@@ -493,9 +498,10 @@ Section predicates.
     
   Definition promiseInv_inner : iProp Σ := (
     ∃ M, isPromiseMap M ∗ 
-      [∗ map] args ↦ Φ ∈ M, let '(p, γ) := args in
+      [∗ map] args ↦ tt ∈ M, let '(p, γ, ε) := args in
         ((* Fulfilled: *) ∃ y,
-          (p ↦ Done' y ∗ promise_state_done γ) ∗ □ Φ y)
+          p ↦ Done' y ∗ promise_state_done γ ∗ 
+          ∃ (Φ: val -d> iPropO Σ), saved_pred_own ε Φ ∗ □ Φ y)
       ∨
         ((* Unfulfilled: *) ∃ enqs,
           p ↦ Waiting' enqs ∗
@@ -519,18 +525,20 @@ Section predicates.
     promiseInv -∗ EWP (k #()) {{ _, True }}
   )%I.
 
-  Definition promiseSt p γ (Φ : val -d> iPropO Σ) : iProp Σ :=
+  Definition promiseSt p γ ε: iProp Σ :=
     ((* Fulfilled: *) ∃ y,
-       (p ↦ Done' y ∗ promise_state_done γ) ∗ □ Φ y)
+       p ↦ Done' y ∗ promise_state_done γ ∗
+       ∃ (Φ: val -d> iPropO Σ), saved_pred_own ε Φ ∗ □ Φ y)
   ∨
     ((* Unfulfilled: *) ∃ enqs,
       p ↦ Waiting' enqs ∗
       promise_state_waiting γ ∗
       promise_cqs enqs γ).
 
-  Definition promiseSt_later p γ (Φ : val -d> iPropO Σ) : iProp Σ :=
+  Definition promiseSt_later p γ ε : iProp Σ :=
     ((* Fulfilled: *) ∃ y,
-       (p ↦ Done' y ∗ promise_state_done γ) ∗ ▷ □ Φ y)
+       p ↦ Done' y ∗ promise_state_done γ ∗
+       ∃ (Φ: val -d> iPropO Σ), ▷ (saved_pred_own ε Φ ∗ □ Φ y))
   ∨
     ((* Unfulfilled: *) ∃ enqs,
       p ↦ Waiting' enqs ∗
@@ -559,12 +567,12 @@ Section predicates.
   Qed.
 
   (* [promiseSt]. *)
-  Global Instance promiseSt_ne n  p γ :
+  (* Global Instance promiseSt_ne n  p γ :
     Proper ((dist n) ==> (dist n)) (promiseSt  p γ).
   Proof. by solve_proper. Qed.
   Global Instance promiseSt_proper  p γ :
     Proper ((≡) ==> (≡)) (promiseSt  p γ).
-  Proof. by solve_proper. Qed.
+  Proof. by solve_proper. Qed. *)
 
 
   (* ------------------------------------------------------------------------ *)
@@ -593,7 +601,7 @@ Section predicates.
       apply Qp_half_half.
     Qed. 
 
-    Lemma promise_state_split2 γ :
+    (* Lemma promise_state_split2 γ :
       ⊢ promise_state_waiting γ ==∗ promise_state_waiting4 γ ∗ promise_state_waiting4 γ.
     Proof.
       rewrite /promise_state_waiting /promise_state_waiting4.
@@ -605,7 +613,7 @@ Section predicates.
       rewrite cmra_update_updateP.
       apply cmra_updateP_id. 
       apply Qp_quarter_quarter.
-    Qed. 
+    Qed.  *)
 
     Lemma promise_state_join γ :
       ⊢ promise_state_waiting γ ∗ promise_state_waiting γ ==∗ promise_state_whole γ.
@@ -635,10 +643,10 @@ Section predicates.
       by rewrite /promise_state_waiting /promise_state_done -own_op own_valid csum_validI.
     Qed.
 
-    Lemma promise_state_disjoint2 γ : (promise_state_waiting4 γ ∗ promise_state_done γ) -∗ False.
+    (* Lemma promise_state_disjoint2 γ : (promise_state_waiting4 γ ∗ promise_state_done γ) -∗ False.
     Proof. 
       by rewrite /promise_state_waiting4 /promise_state_done -own_op own_valid csum_validI.
-    Qed.
+    Qed. *)
   End promise_state.
 
   (* Logical rules governing the predicate [ready]. *)
@@ -651,44 +659,44 @@ Section predicates.
   Section promise_preds.
 
     (* Persistent predicates. *)
-    Global Instance isMember_Persistent p γ Φ : Persistent (isMember p γ Φ).
+    Global Instance isMember_Persistent p γ ε Φ: Persistent (isMember p γ ε Φ).
     Proof. by apply _. Qed.
     Global Instance isPromise_Persistent p Φ : Persistent (isPromise p Φ).
     Proof. by apply _. Qed.
 
-    Lemma update_promise_map M p γ Φ :
-      M !! (p, γ) = None →
+    Lemma update_promise_map M p γ ε Φ : 
+      M !! (p, γ, ε) = None →
+        saved_pred_own ε Φ -∗
         isPromiseMap M ==∗
-          isPromiseMap (<[(p,γ):=Φ]> M) ∗ isMember p γ Φ.
+          isPromiseMap (<[(p,γ,ε):=tt]> M) ∗ isMember p γ ε Φ.
     Proof.
-      intros Hlkp. unfold isPromiseMap. iIntros "HM".
+      intros Hlkp. iIntros "Hε HM".
       iMod (own_update with "HM") as "[HM HiP]".
-      { apply (@auth_update_alloc (gmapUR _ _) (promise_unfold <$> M)).
-        apply (alloc_singleton_local_update _ (p, γ) (promise_unfold Φ)).
-        by rewrite /= lookup_fmap Hlkp. done. }
-      iModIntro. iFrame. by rewrite fmap_insert.
+      { apply (@auth_update_alloc (gmapUR _ _) M).
+        apply (alloc_singleton_local_update _ (p, γ, ε) tt).
+        by rewrite /= Hlkp. done. }
+      by iFrame. 
     Qed.
 
-    Lemma claim_membership M p γ Φ :
-      isPromiseMap M ∗ isMember p γ Φ -∗ ∃ Φ',
-        ⌜ M !! (p, γ) = Some Φ' ⌝ ∗ (promise_unfold Φ' ≡ promise_unfold Φ).
+    Lemma claim_membership M p γ ε Φ :
+      isPromiseMap M ∗ isMember p γ ε Φ -∗
+        ⌜ M !! (p, γ, ε) = Some tt ⌝.
     Proof.
       rewrite /isPromiseMap /isMember.
+      Search "sep" "assoc".
+      rewrite bi.sep_assoc.
       rewrite -own_op own_valid auth_both_validI /=.
-      iIntros "[HM #HpM]". iDestruct "HM" as (M') "#HM".
+      iIntros "((HM & #HpM) & _)". iDestruct "HM" as (M') "#HM".
       rewrite gmap_equivI gmap_validI.
-      iSpecialize ("HM" $! (p, γ)). iSpecialize ("HpM" $! (p, γ)).
-      rewrite lookup_fmap lookup_op lookup_singleton.
+      iSpecialize ("HM" $! (p, γ, ε)). iSpecialize ("HpM" $! (p, γ, ε)).
+      rewrite lookup_op lookup_singleton.
       rewrite option_equivI.
-      case: (M  !! (p, γ))=> [Φ'|] /=; [|
-      case: (M' !! (p, γ))=> [Φ'|] /=; by iExFalso].
-      iExists Φ'. iSplit; first done.
-      case: (M' !! (p, γ))=> [Ψ'|] //=.
-      iRewrite "HM" in "HpM". rewrite option_validI agree_validI.
-      iRewrite -"HpM" in "HM". by rewrite agree_idemp.
+      case: (M  !! (p, γ, ε))=> [[]|] /=; [|
+      case: (M' !! (p, γ, ε))=> [[]|] /=; by iExFalso].
+      done.
     Qed.
 
-    Lemma promise_unfold_equiv (Φ' Φ : val → iProp Σ) :
+    (* Lemma promise_unfold_equiv (Φ' Φ : val → iProp Σ) :
       promise_unfold Φ' ≡ promise_unfold Φ -∗
         ▷ (∀ v, Φ' v ≡ Φ v : iProp Σ).
     Proof.
@@ -696,95 +704,96 @@ Section predicates.
       rewrite agree_equivI. iIntros "Heq". iNext. iIntros (v).
       iDestruct (discrete_fun_equivI with "Heq") as "Heq".
       by iSpecialize ("Heq" $! v).
-    Qed.
+    Qed. *)
 
-    Lemma promiseSt_non_duplicable p γ γ' Φ Φ' :
-      promiseSt p γ Φ -∗ promiseSt p γ' Φ' -∗ False.
+    Lemma promiseSt_non_duplicable p γ γ' ε ε' :
+      promiseSt p γ ε -∗ promiseSt p γ' ε' -∗ False.
     Proof.
       assert (⊢ ∀ p γ Φ, promiseSt p γ Φ -∗ ∃ v, p ↦ v)%I as Haux.
-      { by iIntros (???) "[[%v[(Hp & _) _]]|[%ks[Hp _]]]"; auto. }
+      { by iIntros (???) "[[%v[Hp _]]|[%ks[Hp _]]]"; auto. }
       iIntros "Hp Hp'".
       iPoseProof (Haux with "Hp")  as "[%v  Hp]".
       iPoseProof (Haux with "Hp'") as "[%v' Hp']".
       by iDestruct (mapsto_ne with "Hp Hp'") as "%Hneq".
     Qed.
 
-    Lemma promiseSt_proper' p γ Φ Φ' :
+    (* Lemma promiseSt_proper' p γ Φ Φ' :
       (Φ ≡ Φ') -∗ promiseSt p γ Φ -∗ promiseSt p γ Φ'.
-    Proof. by iIntros "HΦ Hp"; iRewrite -"HΦ". Qed.
+    Proof. by iIntros "HΦ Hp"; iRewrite -"HΦ". Qed. *)
 
-    Lemma update_promiseInv_inner p γ Φ :
+    Lemma update_promiseInv_inner p γ ε Φ :
     (* a.d. probably need a later here *)
-      promiseInv_inner ∗ promiseSt p γ Φ ==∗
-        promiseInv_inner ∗ isMember p γ Φ.
+      promiseInv_inner ∗ saved_pred_own ε Φ ∗ promiseSt p γ ε ==∗
+        promiseInv_inner ∗ isMember p γ ε Φ.
     Proof.
-      iIntros "[HpInv Hp]". rewrite /promiseInv_inner.
+      iIntros "(HpInv & Hε & Hp)". rewrite /promiseInv_inner.
       iDestruct "HpInv" as (M) "[HM HInv]".
       (* remove the later from *)
-      destruct (M !! (p, γ)) as [Ψ|] eqn:Hlkp.
+      destruct (M !! (p, γ, ε)) as [Ψ|] eqn:Hlkp.
       - rewrite (big_opM_delete _ _ _ _ Hlkp).
         iDestruct "HInv" as "[Hp' _]".
         by iDestruct (promiseSt_non_duplicable with "Hp Hp'") as "HFalse".
-      - iMod (update_promise_map M p γ Φ Hlkp with "HM") as "[HM Hmem]".
-        iModIntro. iFrame. iExists (<[(p, γ):=Φ]> M). iFrame.
+      - iMod (update_promise_map M p γ ε Φ Hlkp with "Hε HM") as "[HM Hmem]".
+        iModIntro. iFrame. iExists (<[(p, γ, ε):=tt]> M). iFrame.
         rewrite big_opM_insert; last done. by iFrame.
     Qed.
 
-    Lemma promiseSt_promiseSt_later p γ Φ :
+    (* Lemma promiseSt_promiseSt_later p γ Φ :
       promiseSt p γ Φ -∗ promiseSt_later p γ Φ.
     Proof.
       rewrite /promiseSt_later.
       iIntros "[[%y ((Hp&#Hps)&Hy)]|[%enqs (Hp&Hps&Hks)]]".
       iLeft. iExists y. by iFrame.
       iRight. iExists enqs. by iFrame.
-    Qed.
+    Qed. *)
 
-    Lemma later_promiseSt_promiseSt_later p γ Φ :
-      ▷ promiseSt p γ Φ ={⊤}=∗ promiseSt_later p γ Φ.
+    Lemma later_promiseSt_promiseSt_later p γ ε Ε :
+      ▷ promiseSt p γ ε ={Ε}=∗ promiseSt_later p γ ε.
     Proof.
       rewrite /promiseSt_later.
-      iIntros "[[%y ((>Hp&#>Hps)&Hy)]|[%enqs (>Hp&>Hps&#Hks)]]".
-      iLeft. iExists y. by iFrame.
-      iRight. iExists enqs. by iFrame.
+      iIntros "[[%y (>Hp&#>Hps&%Φ&Hεy)]|[%enqs (>Hp&>Hps&#Hks)]]".
+      - iModIntro.
+        iLeft. iExists y. iFrame. iSplit; first iAssumption.
+        iExists Φ. by iFrame. 
+      - iModIntro. 
+        iRight. iExists enqs. by iFrame.
     Qed.
     
     (* Global Instance isPromiseMap_timeless M : Timeless (isPromiseMap M).
     Proof. by apply _. *)
     
-    Lemma lookup_promiseInv_inner p γ Φ :
-      ▷ promiseInv_inner -∗ isMember p γ Φ ={⊤}=∗
-        (▷ (promiseSt p γ Φ -∗ promiseInv_inner) ∗ promiseSt_later p γ Φ).
+    
+    Lemma lookup_promiseInv_inner' p γ ε Φ :
+      promiseInv_inner -∗ isMember p γ ε Φ -∗
+        ((promiseSt p γ ε -∗ promiseInv_inner) ∗ promiseSt p γ ε).
     Proof.
-    (* I think this should actually work.
-      I just introduce promiseInv_inner, then assert that I can get a 
-      ▷ promiseSt and use later_mono to prove it like normal.
-      The left part can pre proven similarly, and from ▷ promiseSt I should be able to derive promiseSt_later 
-      
-      No that actually does not work. The closing would have to be under two laters, and then I get the problems that Paolo mentioned.
-      *)
-      iIntros "HpInv #Hmem". 
-      iAssert (▷ ((promiseSt p γ Φ -∗ promiseInv_inner) ∗ promiseSt p γ Φ))%I with "[HpInv]" as "(HpClose & HpSt)".
-      2: iFrame; by iApply later_promiseSt_promiseSt_later. 
-      iModIntro.
+      iIntros "HpInv Hmem". rewrite /promiseInv_inner.
       iDestruct "HpInv" as (M) "[HM HInv]".
-      iDestruct (claim_membership M p γ Φ with "[$]") as "[%Φ' [%Hlkp #Heq]]".
-      iPoseProof (promise_unfold_equiv with "Heq") as "#Heq'".
-      iDestruct (big_sepM_delete _ _ (p, γ) with "HInv")
+      iDestruct (claim_membership M p γ ε Φ with "[$]") as "%Hlkp".
+      (* iPoseProof (promise_unfold_equiv with "Heq") as "#Heq'". *)
+      iDestruct (big_sepM_delete _ _ (p, γ, ε) with "HInv")
         as "[HpSt HInv]"; first done.
       iSplitL "HInv HM".
-      - 
-        iIntros "HpSt". iExists M. iFrame.
+      - iIntros "HpSt". iExists M. iFrame.
         rewrite (big_opM_delete _ _ _ _ Hlkp). iFrame.
-        iApply (promiseSt_proper' p γ Φ Φ' with "[] HpSt").
+        (* iApply (promiseSt_proper' q p γ Φ Φ' with "[] HpSt").
         rewrite discrete_fun_equivI. iIntros (x).
-        by iRewrite ("Heq'" $! x).
-      - rewrite /promiseSt_later.
-        iDestruct "HpSt" as  "[[%y ((Hp&#Hps)&Hy)]|[%l [%enqs (Hp&Hps&Hl&Hks)]]]".
-        + iLeft. iExists y. iFrame. iSplit; first done.
-          iNext. iSpecialize ("Heq'" $! y). by iRewrite -"Heq'".
-        + iRight. iExists l, enqs. by iFrame.
+        by iRewrite ("Heq'" $! x). *)
+      (* - iApply (promiseSt_proper' q p γ Φ' Φ with "[] HpSt").
+        by rewrite discrete_fun_equivI. *)
+      - done.
     Qed.
-    Admitted.
+    
+    Lemma lookup_promiseInv_inner p γ ε Φ Ε :
+      ▷ promiseInv_inner -∗ isMember p γ ε Φ ={Ε}=∗
+        (▷ (promiseSt p γ ε -∗ promiseInv_inner) ∗ promiseSt_later p γ ε).
+    Proof.
+      iIntros "HpInv #Hmem". 
+      iAssert (▷ ((promiseSt p γ ε -∗ promiseInv_inner) ∗ promiseSt p γ ε))%I with "[HpInv]" as "(HpClose & HpSt)".
+      2: iFrame; by iApply later_promiseSt_promiseSt_later.
+      iModIntro. 
+      iApply (lookup_promiseInv_inner' with "HpInv Hmem").
+    Qed.
 
     Lemma allocate_promiseInv :
       promiseInv_inner ⊢ |={⊤}=> promiseInv.
@@ -801,7 +810,7 @@ End predicates.
 (** Protocol [Coop]. *)
 
 Section protocol_coop.
-  Context `{!heapGS Σ, !promiseGS Σ}.
+  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val}.
 
   Definition FORK_pre (Coop : iEff Σ) : iEff Σ :=
     >> e >> !(Fork'  e) {{promiseInv ∗ ▷ (promiseInv -∗  EWP e #() <|Coop |> {{_, True}} ) }};
@@ -879,11 +888,11 @@ End protocol_coop.
 (** * Verification. *)
 
 Section verification.
-  Context `{!heapGS Σ, !promiseGS Σ, !ListLib Σ}.
+  Context `{!heapGS Σ, !promiseGS Σ, !ListLib Σ, !savedPredG Σ val}.
 
   Lemma ewp_new_promise Ψ Φ :
     promiseInv ⊢ EWP (new_promise #()) <| Ψ |> {{ y,
-        ∃ p γ, ⌜ y = #(p : loc) ⌝ ∗ promise_state_waiting γ ∗ isMember p γ Φ }}.
+        ∃ p γ ε, ⌜ y = #(p : loc) ⌝ ∗ promise_state_waiting γ ∗ isMember p γ ε Φ }}.
   Proof.
     iIntros "HpInv".
     unfold new_promise. ewp_pure_steps. ewp_bind_rule. simpl.
@@ -900,14 +909,15 @@ Section verification.
 
     iMod promise_state_create as "[%γ Hps]".
     iMod (promise_state_split with "Hps") as "[Hps1 Hps2]".
-    iAssert (promiseSt p γ Φ) with "[Hp Hps1]" as "HpSt".
+    iMod (saved_pred_alloc Φ) as "[%ε #Hε]".
+    iAssert (promiseSt p γ ε) with "[Hp Hps1]" as "HpSt".
     { iRight. iExists enqs. by iFrame. }
-    iMod (update_promiseInv_inner with "[HpInvIn HpSt]") as "(HpInvIn & #Hmem)"; first by iFrame.
+    iMod (update_promiseInv_inner with "[HpInvIn Hε HpSt]") as "(HpInvIn & #Hmem)"; first by iFrame.
     iModIntro.
     iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
     iSplitL "Hclose". iApply "Hclose".
     iModIntro. iFrame.
-    iExists p, γ. iFrame. by iSplit.
+    iExists p, γ, ε. iFrame. by iSplit.
   Qed.
   
   Lemma ewp_next q Ψ :
@@ -954,9 +964,9 @@ Section verification.
     iIntros (v) "Hv". by iFrame.
   Qed.
 
-  Lemma ewp_await_callback (p: loc) (enqs: val) γ Φ:
+  Lemma ewp_await_callback (p: loc) (enqs: val) γ ε Φ':
   let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ)%I in
-    isMember p γ Φ ∗ promise_cqs enqs γ
+    isMember p γ ε Φ' ∗ promise_cqs enqs γ
   ⊢
     EWP (await_callback #p enqs) <| ⊥ |> {{f, 
       ∀ (enqueue: val), (∀ (v: val), P v -∗ EWP (enqueue v) <| ⊥ |> {{_, True }}) -∗
@@ -979,10 +989,11 @@ Section verification.
       by apply _.
     iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
-    iModIntro.
+    (* iModIntro. *)
     (* a.d. using the maybe unsound rule of getting the inner promise state *)
-    iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
-    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & Hy)]| (%enqs' & Hp & Hps & Henqs) ]".
+    iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+    iModIntro.
+    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ&Hε&Hy)]| (%enqs' & Hp & Hps & Henqs) ]".
     - (* the promise was fulfilled *)
       iApply (ewp_load with "Hp"). 
       iIntros "!> Hp !>".
@@ -991,7 +1002,8 @@ Section verification.
       iModIntro.
       iSplitR "Hreq".
       + iNext. iApply "HpInvIn".
-        iLeft. iExists y. by iFrame.
+        iLeft. iExists y. iFrame. iSplit; first done.
+        iExists Φ. by iFrame. 
       + ewp_pure_steps.
         iApply (ewp_bind [(AppRCtx _)]); first by done. simpl.
         iApply (ewp_mono with "[Hreq]").
@@ -1010,12 +1022,21 @@ Section verification.
         iRight. iExists enqs'. by iFrame. 
       + ewp_pure_steps. by done.
   Qed.
-
-  Lemma ewp_await (p: loc) Φ :
-    promiseInv ∗ isPromise p Φ ⊢ 
-      EWP (await #p) <| Coop |> {{v, □ Φ v}}.
+  
+  (* a.d. TODO split up isMember into isMember and isPromiseResult *)
+  Lemma isMember_split p γ ε Φ : 
+    isMember p γ ε Φ -∗ saved_pred_own ε Φ.
   Proof.
-    iIntros "(#HpInv & %γ & #Hmem)". rewrite /await. 
+    by iIntros "(_ & #Hε)".
+  Qed.
+
+  Lemma ewp_await (p: loc) Φ' :
+    promiseInv ∗ isPromise p Φ' ⊢ 
+      EWP (await #p) <| Coop |> {{v, □ Φ' v}}.
+  Proof.
+    iIntros "(#HpInv & %γ & %ε & #Hmem)". 
+    iPoseProof (isMember_split with "Hmem") as "Hε'".
+    rewrite /await. 
     ewp_pure_steps. ewp_bind_rule. simpl.
     (* a.d. here we need to open the invariant to read the promise *)
     rewrite /promiseInv.
@@ -1023,19 +1044,24 @@ Section verification.
       by apply _.
     iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
-    iModIntro.
+    (* iModIntro. *)
     (* a.d. using the maybe unsound rule of getting the inner promise state *)
-    iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
-    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & #Hy)]| (%enqs & Hp & Hps & #Henqs) ]".
+    iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+    iModIntro.
+    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ&#Hε&#Hy)]| (%enqs & Hp & Hps & #Henqs) ]".
     - (* the promise is already fulfilled *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". 
+      iPoseProof (saved_pred_agree ε Φ Φ' y with "Hε Hε'") as "Heqv".
       iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
       iSplitL "Hclose". iApply "Hclose".
       iModIntro.
-      iSplitL.
-      iNext. iApply "HpInvIn". iLeft. iExists y. iSplit; last done. by iSplit.
-      ewp_pure_steps. by iAssumption.
+      iSplitR "Heqv".
+      iNext. iApply "HpInvIn". iLeft. iExists y. iFrame. iSplit; first by done.
+      iExists Φ. by iSplit.
+      ewp_pure_steps. 
+      iModIntro.
+      iRewrite -"Heqv". by iAssumption.
     - (* the promise is not yet fulfilled, so we create a callback and perform the suspend effect.
          After the suspend returns, we know the promise is fulfilled. *)
       iApply (ewp_load with "Hp").
@@ -1062,26 +1088,30 @@ Section verification.
       (* now we match on the promise again but this time we know it must be fulfilled *)
       iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
       iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
-      iModIntro.
+      (* iModIntro. *)
       (* a.d. using the maybe unsound rule of getting the inner promise state *)
-      iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
-      iDestruct "HpSt" as "[[%y ((Hp&#Hps') & #Hy)]| (%enqs' & Hp & Hps' & #Henqs') ]";
+      iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+      iDestruct "HpSt" as "[[%y (Hp&#Hps'&%Φ&#Hε&#Hy)]| (%enqs' & Hp & Hps' & #Henqs') ]";
         last by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
+      iModIntro.
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". 
+      iPoseProof (saved_pred_agree ε Φ Φ' y with "Hε Hε'") as "Heqv".
       iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
       iSplitL "Hclose". iApply "Hclose".
       iModIntro.
       iSplitL.
-      iNext. iApply "HpInvIn". iLeft. iExists y. iSplit; last done. by iSplit.
-      ewp_pure_steps. done.
+      iNext. iApply "HpInvIn". iLeft. iExists y. iFrame. 
+      iExists Φ. by iSplit.
+      ewp_pure_steps.
+      iRewrite -"Heqv". done.
   Qed.
 
   (* the wrapped function is passed via the FORK effect to the handler.
      the handler should then pass is_queue to wrapped_f so that it is able to change the run_queue.
      is_queue should be passed between client and handler the same as promiseInv, for every performed effect. *)
-  Lemma ewp_fork_wrap (f: val) (p: loc) γ Φ :
-    promise_state_waiting γ ∗ isMember p γ Φ ∗ EWP (f #()) <| Coop |> {{v, □ Φ v}} 
+  Lemma ewp_fork_wrap (f: val) (p: loc) γ ε Φ :
+    promise_state_waiting γ ∗ isMember p γ ε Φ ∗ EWP (f #()) <| Coop |> {{v, □ Φ v}} 
   ⊢
     EWP (fork_wrap_f f #p) <| ⊥ |> {{wrapped_f, 
         (* promiseInv and is_queue are passed here because they come from the effect handler *)
@@ -1089,10 +1119,7 @@ Section verification.
           EWP (wrapped_f #()) <| Coop |> {{_, True}} }}.
   Proof.
     iIntros "(Hps_start & #Hmem & Hf)". 
-    (* split the waiting state b/c we need a fragment to write to p at the end. *)
-    (* iApply fupd_ewp.
-    iMod (promise_state_split2 with "Hps") as "(Hps1 & Hps2)".
-    iModIntro. *)
+    iPoseProof (isMember_split with "Hmem") as "Hε".
     rewrite /fork_wrap_f. ewp_pure_steps.
     iIntros "#HpInv". ewp_pure_steps.
     ewp_bind_rule. simpl. iApply (ewp_mono with "Hf"). 
@@ -1104,10 +1131,10 @@ Section verification.
       by apply _.
     iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
-    iModIntro.
     (* a.d. using the maybe unsound rule of getting the inner promise state *)
-    iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
-    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & #Hy)]| (%enqs & Hp & Hps & #Henqs) ]";
+    iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+    iModIntro.
+    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%enqs & Hp & Hps & #Henqs) ]";
       first by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
     iApply (ewp_load with "Hp").
     iIntros "!> Hp !>". 
@@ -1126,8 +1153,8 @@ Section verification.
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
     (* iModIntro. *)
     (* a.d. using the maybe unsound rule of getting the inner promise state *)
-    iDestruct (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
-    iDestruct "HpSt" as "[[%y ((Hp&#Hps) & #Hy)]| (%enqs' & Hp & Hps & #Henqs') ]";
+    iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
+    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%enqs' & Hp & Hps & #Henqs') ]";
       first by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
     (* now we change the logical promise state, but for that we need to open it again. *)
     iMod (promise_state_join with "[$]") as "Hps".
@@ -1138,7 +1165,8 @@ Section verification.
     iSplitL "Hclose". iApply "Hclose".
     iModIntro.
     iSplitR "Hl Hks".
-    iNext. iApply "HpInvIn". iLeft. iExists v. iFrame. by iSplit.
+    iNext. iApply "HpInvIn". iLeft. iExists v. iFrame. iSplit; first done.
+    iExists Φ. by iSplit.
     ewp_pure_steps.
     (* now we just call all the enqueue functions. *)
     set I : list val → iProp Σ := (λ us,
@@ -1183,7 +1211,7 @@ Section verification.
     iIntros "(#HpInv & Hf)". rewrite /fork_promise. ewp_pure_steps.
     ewp_bind_rule. simpl.
     iApply ewp_mono. iApply (ewp_new_promise _ Φ with "HpInv").
-    iIntros (v) "(%p & %γ & -> & Hps & #Hmem) !>".
+    iIntros (v) "(%p & %γ & %ε & -> & Hps & #Hmem) !>".
     ewp_pure_steps.
     iApply (ewp_bind' (AppRCtx _)); first done. simpl.
     iApply (ewp_mono with "[Hf Hps]").
@@ -1197,7 +1225,7 @@ Section verification.
     iIntros (?) "_ !>".
     ewp_pure_steps. iExists p.
     iFrame. iSplit; first done.
-    by iExists γ.
+    by iExists γ, ε.
   Qed.
     
     (* this guy needs
