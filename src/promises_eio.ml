@@ -43,8 +43,8 @@ module Implementation(Cqs : CQS) = struct
       match !p with
       | Done _ -> raise (Failure "unreachable")
       | Waiting cqs -> 
-        let wakers = Cqs.resume_all cqs in
         p := Done v;
+        let wakers = Cqs.resume_all cqs in
         List.iter (fun waker -> waker ()) wakers
     );
     p
@@ -80,7 +80,7 @@ module Implementation(Cqs : CQS) = struct
           match eff with
           | Fork f -> Some (fun k ->
               Queue.add (fun () -> continue k ()) q;
-              fulfill e)
+              fulfill f)
           (* Check if promise is done and enqueue in waiting list if necessary. *)
           | Suspend suspender -> Some (fun k -> 
               let waker = fun v -> Queue.add (fun () -> continue k v) q in

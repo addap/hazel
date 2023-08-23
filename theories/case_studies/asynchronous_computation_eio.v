@@ -1,6 +1,7 @@
 (* asynchronous_computation.v *)
 
-(* The ability offered by effect handlers (or any other interface for
+(* a.d. TODO rewrite
+   The ability offered by effect handlers (or any other interface for
    programming with continuations) to suspend a computation and reify it as a
    first-class value can be used to implement _asynchronous computation_: the
    concurrent completion of multiple _tasks_ under the condition that progress
@@ -188,6 +189,7 @@ Section cqs.
       EWP cqs_suspend q v <| Ψ1 |> {| Ψ2 |} {{ r, is_cqs_request r v }}.
           
   (* a.d. TODO actual cancel returns a bool because cell could be resumed before cancellation succeeds. *)
+  (* a.d. TODO remove protocols *)
   Parameter cqs_cancel_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ) v r,
     is_cqs q I -∗ is_cqs_request r v -∗ 
       EWP cqs_cancel q r <| Ψ1 |> {| Ψ2 |} {{ _, I v }}.
@@ -235,9 +237,9 @@ Section implementation.
       (* Done: *) InjL <> =>
         #() #() (* Unreachable! *)
     | (* Waiting: *) InjR "ws" =>
-        let: "wakers" := cqs_resume_all "ws" in
         (* First set the promise to Done, so that we can update the logical promise state and call enqueue *)
         "p" <- Done "v";;
+        let: "wakers" := cqs_resume_all "ws" in
         list_iter (λ: "waker", "waker" #()) "wakers"
     end))%V.
 
@@ -310,7 +312,8 @@ End implementation.
 (* -------------------------------------------------------------------------- *)
 (** Cameras. *)
 
-(* The verification relies on ghost cells of two kinds: either from the
+(* a.d. TODO rewrite
+   The verification relies on ghost cells of two kinds: either from the
    camera [M],
 
      M ≜ Auth ((Loc * GName) -fin-> Ag(Later(val -d> iProp)));
@@ -363,40 +366,17 @@ Section predicates.
   (* ------------------------------------------------------------------------ *)
   (* Definitions. *)
 
-  (* torch γ ≜ own γ (Excl ())
-
-     isPromise p Φ ≜
-       ∃ γ, own promise_name (◯ {[(p,γ) := Φ]})
-
-     isPromiseMap M ≜
-       own promise_name (● M)
-
-     promiseInv ≜
-       ∃ M, promiseMap M ∗
-         [∗ map] (p,γ) ↦ Φ ∈ M,
-             (∃y, p ↦ Done y ∗ □ Φ y ∗ torch γ)
-           ∨
-             (∃l ks,
-                p ↦ Waiting l ∗
-                isList l ks   ∗
-                [∗ list] k ∈ ks, ready q Φ k)
-
-     ready q Φ k ≜
-       ∀ y.
-         □ Φ y -∗
-           ▷ promiseInv -∗
-             ▷ is_queue q (ready q (λ y. y = ())) -∗
-               EWP (k y) <| ⊥ |> {{ _. True }}
-  *)
-
-  (* Unique token [γ]: a fiber holds possession of [torch γ] while running. *)
+  (* Promise state starts as whole, then it's split up and half is saved in the invariant and half is kept by the fiber.
+     When the fiber is done, it updates the state to done. *)
   Definition promise_state_whole γ := own γ (Cinl 1%Qp).
   Definition promise_state_waiting γ := own γ (Cinl (1/2)%Qp).
   Definition promise_state_done γ := own γ (Cinr (to_agree ())).
 
+  (* Fragment of the promise map. *)
   Definition isMember p γ ε :=
     own promise_name (◯ {[(p, γ, ε) := tt]}).
   
+  (* Saved predicate for the promise result. *)
   Definition isPromiseResult ε (Φ : val -d> iPropO Σ) := 
     saved_pred_own ε Φ.
 
@@ -404,9 +384,12 @@ Section predicates.
     ∃ γ ε, isMember p γ ε ∗ isPromiseResult ε Φ
   )%I.
 
+  (* Authoritative promise map. *)
   Definition isPromiseMap (M : gmap (loc * gname * gname) unit) :=
     own promise_name (● M).
 
+  (* Using the indirection of the saved predicate, the promise map is now timeless.
+     a.d. TODO actually I don't think we need this. Removing Φ from the type of the map is enough. *)
   Definition isPromiseMap_timeless M : Timeless (isPromiseMap M).
   Proof. by apply _. Qed. 
 
@@ -426,13 +409,22 @@ Section predicates.
     immediately, and a (▷ □ Φ v) (and b/c ▷ and □ commutes, we can take a copy and use it after closing the invariant)
      *)
      
+  (*  *)
   Definition promise_cqs (wakers: val) (γ : gname) : iProp Σ :=
     (is_cqs wakers (λ waker, ∀ (v: val), 
             (* a.d. TODO do we want more generic P's? *)
             let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
             P v -∗
+            (* Each waker changes the run queue so we should have an is_queue as a precondition but we can actually
+               supply it when creating the waker in the scheduler. This way, the invariant does not need to know about
+               the queue. *)
               EWP (App (Val waker) v) <| ⊥ |> {{_, True }} ))%I.
     
+  (* The inner proposition of the invariant.
+     A promise is either done or waiting.
+     If done, then there exists some predicate identified by ε that satisfies the value.
+        Using saved_pred we can get look up one promise in the promise map and then get a (▷ Φ y) 
+     If waiting, then there exists a cqs that contains wakers. *)
   Definition promiseInv_inner : iProp Σ := (
     ∃ M, isPromiseMap M ∗ 
       [∗ map] args ↦ tt ∈ M, let '(p, γ, ε) := args in
@@ -443,10 +435,6 @@ Section predicates.
         ((* Unfulfilled: *) ∃ wakers,
           p ↦ Waiting' wakers ∗
           promise_state_waiting γ ∗
-          (* ks now does not contain a list of continuations but a list of enqueue functions. 
-             Each of these functions will change the run queue (in the future they can change an arbitrary run queue)
-             so we have is_queue as a precondition
-          *)
           promise_cqs wakers γ)
   )%I.
     
@@ -455,9 +443,8 @@ Section predicates.
   Global Instance promiseInv_Persistent : Persistent promiseInv.
   Proof. by apply _. Qed.
 
-  (* by now ready is just a predicate on a function value f, that f is safe to execute under the assumption
-     that promiseInv holds. When promiseInv becomes an actual invariant, then probably even this precondition
-     goes away. *)
+  (* Now ready is just a predicate on a continuation k, that k is safe to execute under the assumption
+     that promiseInv holds. *)
   Definition ready (k: val) : iProp Σ := (
     promiseInv -∗ EWP (k #()) {{ _, True }}
   )%I.
@@ -605,16 +592,6 @@ Section predicates.
       done.
     Qed.
 
-    (* Lemma promise_unfold_equiv (Φ' Φ : val → iProp Σ) :
-      promise_unfold Φ' ≡ promise_unfold Φ -∗
-        ▷ (∀ v, Φ' v ≡ Φ v : iProp Σ).
-    Proof.
-      rewrite /promise_unfold.
-      rewrite agree_equivI. iIntros "Heq". iNext. iIntros (v).
-      iDestruct (discrete_fun_equivI with "Heq") as "Heq".
-      by iSpecialize ("Heq" $! v).
-    Qed. *)
-
     Lemma promiseSt_non_duplicable p γ γ' ε ε' :
       promiseSt p γ ε -∗ promiseSt p γ' ε' -∗ False.
     Proof.
@@ -625,10 +602,6 @@ Section predicates.
       iPoseProof (Haux with "Hp'") as "[%v' Hp']".
       by iDestruct (mapsto_ne with "Hp Hp'") as "%Hneq".
     Qed.
-
-    (* Lemma promiseSt_proper' p γ Φ Φ' :
-      (Φ ≡ Φ') -∗ promiseSt p γ Φ -∗ promiseSt p γ Φ'.
-    Proof. by iIntros "HΦ Hp"; iRewrite -"HΦ". Qed. *)
 
     Lemma update_promiseInv_inner p γ ε :
       promiseInv_inner ∗ promiseSt p γ ε ==∗
@@ -998,11 +971,6 @@ Section verification.
     iSplitR "Hps_start".
     iNext. iApply "HpInvIn". iRight. iExists wakers. by iFrame.
     ewp_pure_steps. ewp_bind_rule. simpl.
-    iApply ewp_mono. 
-    iApply (cqs_resume_all_spec with "Hwakers").
-    (* now we have a list of resumed enq's and call them all *)
-    iIntros (to_resume) "(%ws & Hl & Hws) !>".
-    ewp_pure_steps. ewp_bind_rule. simpl.
     (* now we change the logical promise state, but for that we need to open it again. *)
     iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
@@ -1016,9 +984,14 @@ Section verification.
     iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
     iSplitL "Hclose". iApply "Hclose".
     iModIntro.
-    iSplitR "Hl Hws".
+    iSplitL.
     iNext. iApply "HpInvIn". iLeft. iExists v. iFrame. iSplit; first done.
     iExists Φ. by iSplit.
+    ewp_pure_steps. ewp_bind_rule. simpl.
+    iApply ewp_mono. 
+    iApply (cqs_resume_all_spec with "Hwakers").
+    (* now we have a list of resumed enq's and call them all *)
+    iIntros (to_resume) "(%ws & Hl & Hws) !>".
     ewp_pure_steps.
     (* now we just call all the enqueue functions. *)
     set I : list val → iProp Σ := (λ us,
