@@ -1,5 +1,8 @@
 (* asynchronous_computation.v *)
 
+(* a.d. TODO do we really need the saved proposition. Check again if the lookup lemma can be proven without it.
+If not, write an explanation why. *)
+
 (* a.d. TODO rewrite
    The ability offered by effect handlers (or any other interface for
    programming with continuations) to suspend a computation and reify it as a
@@ -158,70 +161,102 @@ End concurrent_queue.
 Section cqs.
   Context `{!heapGS Σ, !ListLib Σ}.
 
-  Parameter cqs_create     : val.
+  Definition is_waker (P: val -> iProp Σ) (k : val): iProp Σ := ∀ v, P v -∗ EWP (k v) {{_, True}}.
+
+  Parameter cqs_new     : val.
   Parameter cqs_suspend    : val.
   Parameter cqs_resume_all : val.
-  Parameter cqs_cancel     : val.
+  Parameter cqs_try_cancel     : val.
 
   (* put the suspend proposition into the queue *)
-  Parameter is_cqs :
-    val -d> (val -d> iPropO Σ) -d> iPropO Σ.
+  Parameter is_thread_queue :
+    val -> iProp Σ.
+  Parameter thread_queue_state :
+    nat -> iProp Σ.
+  Parameter resume_all_permit :
+    iProp Σ.
+  Parameter is_thread_queue_suspend_result :
+    gname -> val -> val -> iProp Σ.
+  Parameter suspension_permit :
+    iProp Σ.
 
-  Parameter is_cqs_request : 
-    val -d> val -d> iPropO Σ.
-    
-  Parameter is_cqs_ne_proof : ∀ (q: val) (n: nat),
-    Proper ((dist n) ==> (dist n)) (is_cqs q).
-  
-  Parameter is_cqs_proper_proof : ∀ (q: val),
-    Proper ((≡) ==> (≡)) (is_cqs q).
-  
-  Parameter is_cqs_Persistent_proof : ∀ (q: val) (I: val -> iProp Σ),
-    Persistent (is_cqs q I).
+  Parameter is_thread_queue_Persistent_proof : ∀ q,
+    Persistent (is_thread_queue q).
+  Parameter thread_queue_state_timeless_proof : ∀ n,
+    Timeless (thread_queue_state n).
+  Parameter resume_all_permit_timeless_proof : 
+    Timeless (resume_all_permit).
 
-  Parameter cqs_create_spec : ∀ (Ψ1 Ψ2: iEff Σ),
-    ⊢ EWP cqs_create #() <| Ψ1 |> {| Ψ2 |} {{ q,
-        ∀ I, is_cqs q I }}.
-  
-  (* a.d. TODO actual suspend returns an Option since it can fail. *)
-  Parameter cqs_suspend_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ) v,
-    is_cqs q I -∗ I v -∗
-      EWP cqs_suspend q v <| Ψ1 |> {| Ψ2 |} {{ r, is_cqs_request r v }}.
+  Parameter thread_queue_append': ∀ n q E',
+    is_thread_queue q -∗
+    ▷ thread_queue_state n ={E'}=∗
+    thread_queue_state (S n) ∗ suspension_permit .
+      
+  Parameter newThreadQueue_spec:
+    ⊢ EWP cqs_new #()
+    {{ q, is_thread_queue q 
+        ∗ thread_queue_state 0 ∗ resume_all_permit }}.
           
-  (* a.d. TODO actual cancel returns a bool because cell could be resumed before cancellation succeeds. *)
-  (* a.d. TODO remove protocols *)
-  Parameter cqs_cancel_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ) v r,
-    is_cqs q I -∗ is_cqs_request r v -∗ 
-      EWP cqs_cancel q r <| Ψ1 |> {| Ψ2 |} {{ _, I v }}.
+  (* todo use parameters correctly and make V'/R also a parameter. *)
+  Parameter cqs_suspend_spec: ∀ q k V',
+        is_thread_queue q ∗ 
+    (* a generic permit to call suspend *)
+        suspension_permit ∗ 
+    (* the WP of the closure k so that we can create a callback. *)
+        is_waker V' k
+    ⊢
+      EWP cqs_suspend q k
+    {{ v, ⌜v = NONEV⌝ ∨
+                  ∃ γk v', ⌜v = SOMEV v'⌝ ∗
+                           is_thread_queue_suspend_result γk v' k }}.
 
-  Parameter cqs_resume_all_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ),
-    is_cqs q I -∗
-      EWP cqs_resume_all q <| Ψ1 |> {| Ψ2 |} {{ l, ∃ ks, (is_list l ks ∗ [∗ list] k ∈ ks, I k)%I }}.
+  Parameter cqs_try_cancel_spec: ∀ q γk r k V',
+    (* the invariant about the state of CQS. *)
+        is_thread_queue q ∗ 
+        is_thread_queue_suspend_result γk r k
+    ⊢
+      EWP cqs_try_cancel r
+    {{ v, ∃ (b: bool), ⌜ v = #b ⌝ ∗ if b then 
+                    (* is_waker gives us the WP for executing k *)
+                    is_waker V' k 
+                    (* if cancellation fails we don't know anything (on the metalevel we know that another thread will eventually call k, but we don't have this linearity in the Iris proof yet). *)
+                    else True }}.
 
-  Global Instance is_cqs_ne q n:
-    Proper ((dist n) ==> (dist n)) (is_cqs q).
+  Parameter cqs_resume_all_spec: ∀ q n R,
+      is_thread_queue q ∗
+      □ ▷ R ∗
+      resume_all_permit ∗
+      thread_queue_state n
+    ⊢
+      EWP cqs_resume_all q
+      {{ _, True }}.
+
+  Global Instance is_cqs_Persistent q:
+    Persistent (is_thread_queue q).
   Proof.
-    apply is_cqs_ne_proof.
+    apply is_thread_queue_Persistent_proof.
+  Qed.
+  
+  Global Instance thread_queue_state_Timeless n:
+    Timeless (thread_queue_state n).
+  Proof.
+    apply thread_queue_state_timeless_proof.
   Qed.
 
-  Global Instance is_cqs_proper q :
-    Proper ((≡) ==> (≡)) (is_cqs q).
+  Global Instance resume_all_permit_Timeless:
+    Timeless (resume_all_permit).
   Proof.
-    apply is_cqs_proper_proof.
+    apply resume_all_permit_timeless_proof.
   Qed.
 
-  Global Instance is_cqs_Persistent q I:
-    Persistent (is_cqs q I).
-  Proof.
-    apply is_cqs_Persistent_proof.
-  Qed.
 End cqs.
+
 
 Section implementation.
   Context `{!heapGS Σ, !ListLib Σ}.
 
   Definition new_promise : val := (λ: <>,
-    ref (Waiting (cqs_create #()))
+    ref (Waiting (cqs_new #()))
   )%V.
   Definition fork : val := (λ: "f", do: (Fork "f"))%V.
   Definition suspend : val := (λ: "f", do: (Suspend "f"))%V.
@@ -239,8 +274,7 @@ Section implementation.
     | (* Waiting: *) InjR "ws" =>
         (* First set the promise to Done, so that we can update the logical promise state and call enqueue *)
         "p" <- Done "v";;
-        let: "wakers" := cqs_resume_all "ws" in
-        list_iter (λ: "waker", "waker" #()) "wakers"
+        cqs_resume_all "ws"
     end))%V.
 
   (* fork a new fiber "f" and return a promise to get the result. *)
@@ -254,13 +288,18 @@ Section implementation.
     (* We do the same as Eio and suspend in CQS and then check the state of the promise again. 
        Since we gave enqueue to the queue in suspend, if p is Done, we first need to cancel the reques to get the permission to
        call enqueue back. *)
-    let: "req" := cqs_suspend "ws" "waker" in
-    match: Load "p" with
-        (* Done: *) InjL <>  => 
-        cqs_cancel "ws" "req";;
-        "waker" #()
-    | (* Waiting: *) InjR <> => #()
-    end
+    let: "res" := cqs_suspend "ws" "waker" in
+    match: "res" with
+      InjL <> => #()
+    | InjR "req" =>
+        match: Load "p" with
+            (* Done: *) InjL <>  => 
+            if: cqs_try_cancel "req"
+            then "waker" #()
+            else #()
+        | (* Waiting: *) InjR <> => #()
+        end
+      end
   ))%V.
 
   Definition await : val := (λ: "p",
@@ -410,15 +449,8 @@ Section predicates.
      *)
      
   (*  *)
-  Definition promise_cqs (wakers: val) (γ : gname) : iProp Σ :=
-    (is_cqs wakers (λ waker, ∀ (v: val), 
-            (* a.d. TODO do we want more generic P's? *)
-            let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ) in
-            P v -∗
-            (* Each waker changes the run queue so we should have an is_queue as a precondition but we can actually
-               supply it when creating the waker in the scheduler. This way, the invariant does not need to know about
-               the queue. *)
-              EWP (App (Val waker) v) <| ⊥ |> {{_, True }} ))%I.
+  Definition promise_cqs (wakers: val): iProp Σ :=
+    (is_thread_queue wakers)%I.
     
   (* The inner proposition of the invariant.
      A promise is either done or waiting.
@@ -435,7 +467,9 @@ Section predicates.
         ((* Unfulfilled: *) ∃ wakers,
           p ↦ Waiting' wakers ∗
           promise_state_waiting γ ∗
-          promise_cqs wakers γ)
+          (∃ n, thread_queue_state n) ∗
+          resume_all_permit ∗
+          promise_cqs wakers)
   )%I.
     
   Definition promiseInv := inv promiseN promiseInv_inner.
@@ -457,7 +491,9 @@ Section predicates.
     ((* Unfulfilled: *) ∃ wakers,
       p ↦ Waiting' wakers ∗
       promise_state_waiting γ ∗
-      promise_cqs wakers γ).
+      (∃ n, thread_queue_state n) ∗
+      resume_all_permit ∗
+      promise_cqs wakers).
 
   Definition promiseSt_later p γ ε : iProp Σ :=
     ((* Fulfilled: *) ∃ y,
@@ -467,7 +503,9 @@ Section predicates.
     ((* Unfulfilled: *) ∃ wakers,
       p ↦ Waiting' wakers ∗
       promise_state_waiting γ ∗
-      ▷ promise_cqs wakers γ).
+      (∃ n, thread_queue_state n) ∗
+      resume_all_permit ∗
+      ▷ promise_cqs wakers).
 
   (* ------------------------------------------------------------------------ *)
   (* Non-expansiveness. *)
@@ -622,7 +660,7 @@ Section predicates.
       ▷ promiseSt p γ ε ={Ε}=∗ promiseSt_later p γ ε.
     Proof.
       rewrite /promiseSt_later.
-      iIntros "[[%y (>Hp&#>Hps&%Φ&Hεy)]|[%enqs (>Hp&>Hps&#Hks)]]".
+      iIntros "[[%y (>Hp&#>Hps&%Φ&Hεy)]|[%enqs (>Hp&>Hps&>Htqstate&>Hres&#Hks)]]".
       - iModIntro.
         iLeft. iExists y. iFrame. iSplit; first iAssumption.
         iExists Φ. by iFrame. 
@@ -740,14 +778,14 @@ End protocol_coop.
 Section verification.
   Context `{!heapGS Σ, !promiseGS Σ, !ListLib Σ, !savedPredG Σ val}.
 
-  Lemma ewp_new_promise Ψ Φ :
-    promiseInv ⊢ EWP (new_promise #()) <| Ψ |> {{ y,
+  Lemma ewp_new_promise Φ :
+    promiseInv ⊢ EWP (new_promise #()) {{ y,
         ∃ p γ ε, ⌜ y = #(p : loc) ⌝ ∗ promise_state_waiting γ ∗ isMember p γ ε ∗ isPromiseResult ε Φ}}.
   Proof.
     iIntros "HpInv".
     unfold new_promise. ewp_pure_steps. ewp_bind_rule. simpl.
-    iApply ewp_mono. { by iApply cqs_create_spec. }
-    iIntros (enqs) "#Hcqs !>". ewp_pure_steps.
+    iApply ewp_mono. { by iApply newThreadQueue_spec. }
+    iIntros (enqs) "(#Hcqs & Htqstate & Hres) !>". ewp_pure_steps.
     (* open the invariant -> evaluate the alloc -> change and close the invariant *)
     rewrite /promiseInv.
     assert (Hatom: Atomic StronglyAtomic (Alloc (InjRV enqs))).
@@ -759,8 +797,10 @@ Section verification.
     iMod promise_state_create as "[%γ Hps]".
     iMod (promise_state_split with "Hps") as "[Hps1 Hps2]".
     iMod (saved_pred_alloc Φ) as "[%ε #Hε]".
-    iAssert (promiseSt p γ ε) with "[Hp Hps1]" as "HpSt".
-    { iRight. iExists enqs. by iFrame. }
+    iAssert (promiseSt p γ ε) with "[Hp Hps1 Htqstate Hres]" as "HpSt".
+    { iRight. iExists enqs. iFrame.
+      iSplit; last by done.
+      iExists _. by iAssumption. }
     iMod (update_promiseInv_inner with "[HpInvIn Hε HpSt]") as "(HpInvIn & #Hmem)"; first by iFrame.
     iModIntro.
     iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
@@ -812,24 +852,29 @@ Section verification.
     iExists f, P. iSplit; [done|]. iFrame.
     iIntros (v) "Hv". by iFrame.
   Qed.
-
+  
   Lemma ewp_await_callback (p: loc) (wakers: val) γ ε Φ:
-  let P := (λ v, ⌜ v = #() ⌝ ∗ promise_state_done γ)%I in
-    isMember p γ ε ∗ isPromiseResult ε Φ ∗ promise_cqs wakers γ
+    suspension_permit ∗ isMember p γ ε ∗ isPromiseResult ε Φ ∗ promise_cqs wakers 
   ⊢
     EWP (await_callback #p wakers) <| ⊥ |> {{f, 
-      ∀ (waker: val), (∀ (v: val), P v -∗ EWP (waker v) <| ⊥ |> {{_, True }}) -∗
+      ∀ (waker: val), (∀ (v: val), (⌜ v = #() ⌝ ∗ promise_state_done γ)%I -∗ EWP (waker v) <| ⊥ |> {{_, True }}) -∗
       promiseInv -∗ 
         (▷ EWP (f waker) <| ⊥ |> {{_, True }}) }}.
   Proof.
-    iIntros "(#Hmem & #Hε & #Hcqs)". rewrite /await_callback. ewp_pure_steps.
+    set (P:=λ v, (⌜ v = #() ⌝ ∗ promise_state_done γ)%I).
+    iIntros "(HIsSus & #Hmem & #Hε & #Hcqs)". rewrite /await_callback. ewp_pure_steps.
     iIntros (waker) "Hwaker #HpInv". iNext.
     ewp_pure_steps. 
     (* now we suspend waker*)
     iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
-    iApply (ewp_mono with "[Hwaker]").
-      by iApply (cqs_suspend_spec with "Hcqs Hwaker").
-    iIntros (r) "Hreq !>".
+    iApply (ewp_mono with "[HIsSus Hwaker]").
+    { iApply (cqs_suspend_spec _ _ P with "[HIsSus Hwaker]").
+      iFrame.
+      by done.
+    }
+    iIntros (res) "[-> | (% & % & -> & Hreq)] !>".
+    { (* we are already resumed so return. *) 
+      ewp_pure_steps. by done. }
     ewp_pure_steps. ewp_bind_rule. simpl.
     (* a.d. here we need to open the invariant to read the promise *)
     rewrite /promiseInv.
@@ -837,7 +882,7 @@ Section verification.
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
     iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
     iModIntro.
-    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%wakers' & Hp & Hps & #Hwakers') ]".
+    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%wakers' & Hp & Hps & Htqstate & Hres & #Hwakers') ]".
     - (* the promise was fulfilled *)
       iApply (ewp_load with "Hp"). 
       iIntros "!> Hp !>".
@@ -845,16 +890,23 @@ Section verification.
       iSplitL "Hclose". iApply "Hclose".
       iModIntro.
       iSplitR "Hreq".
-      + iNext. iApply "HpInvIn".
+      { iNext. iApply "HpInvIn".
         iLeft. iExists y. iFrame. iSplit; first done.
-        iExists Φ'. by iSplit. 
-      + ewp_pure_steps.
-        iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
-        iApply (ewp_mono with "[Hreq]").
-        iApply (cqs_cancel_spec with "Hcqs Hreq").
-        iIntros (dummy) "Henq !>".
-        ewp_pure_steps.
-        iApply "Henq". by iSplit.
+        iExists Φ'. by iSplit. }
+      (* try cancellation. If it works we call the callback ourselves. *)
+      ewp_pure_steps.
+      iApply (ewp_bind' (IfCtx _ _)); first by done. simpl.
+      iApply (ewp_mono with "[Hreq]").
+      iApply (cqs_try_cancel_spec _ _ _ _ P with "[Hreq]").
+      by iFrame.
+      iIntros (?) "(% & -> & Hk) !>".
+      destruct b.
+      2: {
+        (* cancellation failed so we are not responsible anymore. *)
+        ewp_pure_steps. by done.
+      }
+      ewp_pure_steps.
+      iApply "Hk". rewrite /P. by iSplit.
     - (* the promise is not yet fulifilled, our job is done and we don't do anything *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". 
@@ -879,7 +931,7 @@ Section verification.
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
     iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
     iModIntro.
-    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%wakers & Hp & Hps & #Hwakers) ]".
+    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%wakers & Hp & Hps & Htqstate & Hres & #Hwakers) ]".
     - (* the promise is already fulfilled *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". 
@@ -887,7 +939,7 @@ Section verification.
       iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
       iSplitL "Hclose". iApply "Hclose".
       iModIntro.
-      iSplitR "Heqv".
+      iSplitL.
       iNext. iApply "HpInvIn". iLeft. iExists y. iFrame. iSplit; first by done.
       iExists Φ'. by iSplit.
       ewp_pure_steps. 
@@ -897,16 +949,23 @@ Section verification.
          After the suspend returns, we know the promise is fulfilled. *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>".
+      (* do the suspend registration *)
+      iDestruct "Htqstate" as (n) "Htqstate".
+      iMod (thread_queue_append' with "Hwakers Htqstate") as "(Htqstate & HIsSus)".
       iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
       iSplitL "Hclose". iApply "Hclose".
       iModIntro.
-      iSplitL.
-      iNext. iApply "HpInvIn". iRight. iExists wakers. by iFrame.
+      iSplitR "HIsSus".
+      iNext. iApply "HpInvIn". iRight. iExists wakers. iFrame.
+      iSplit; last done. by iExists (S n). 
       ewp_pure_steps. 
       iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
-      iApply ewp_mono. 
+      iApply (ewp_mono with "[HIsSus]"). 
       iApply ewp_os_prot_mono. iApply iEff_le_bottom.
-      iApply ewp_await_callback. by auto.
+      iApply (ewp_await_callback with "[HIsSus]"). iFrame. 
+      iSplit; first done.
+      iSplit; first done.
+      by done.
       iIntros (callback) "Hf !>".
       ewp_pure_steps.
       ewp_bind_rule. simpl.
@@ -921,7 +980,7 @@ Section verification.
       iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
       iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
       iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
-      iDestruct "HpSt" as "[[%y (Hp&#Hps'&%Φ'&#Hε'&#Hy)]| (%wakers & Hp & Hps' & #Hwakers) ]";
+      iDestruct "HpSt" as "[[%y (Hp&#Hps'&%Φ'&#Hε'&#Hy)]| (%wakers & Hp & Hps' & Htqstate & Hres & #Hwakers) ]";
         last by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
       iModIntro.
       iApply (ewp_load with "Hp").
@@ -961,7 +1020,7 @@ Section verification.
     (* a.d. using the maybe unsound rule of getting the inner promise state *)
     iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
     iModIntro.
-    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%wakers & Hp & Hps & #Hwakers) ]";
+    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%wakers & Hp & Hps & Htqstate & Hres & #Hwakers) ]";
       first by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
     iApply (ewp_load with "Hp").
     iIntros "!> Hp !>". 
@@ -975,7 +1034,7 @@ Section verification.
     iApply (ewp_atomic ⊤ (⊤ ∖ ↑promiseN)).
     iMod (inv_acc with "HpInv") as "(HpInvIn & Hclose)"; first by done.
     iMod (lookup_promiseInv_inner with "HpInvIn Hmem") as "[HpInvIn HpSt]".
-    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%enqs' & Hp & Hps & #Henqs') ]";
+    iDestruct "HpSt" as "[[%y (Hp&#Hps&%Φ'&#Hε'&#Hy)]| (%enqs' & Hp & Hps & Htqstate & Hres & #Henqs') ]";
       first by iDestruct (promise_state_disjoint γ with "[$]") as "HFalse".
     iMod (promise_state_join with "[$]") as "Hps".
     iMod (promise_state_fulfill with "Hps") as "#Hps".
@@ -984,37 +1043,17 @@ Section verification.
     iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
     iSplitL "Hclose". iApply "Hclose".
     iModIntro.
-    iSplitL.
+    iSplitR "Htqstate Hres".
     iNext. iApply "HpInvIn". iLeft. iExists v. iFrame. iSplit; first done.
     iExists Φ. by iSplit.
     ewp_pure_steps. ewp_bind_rule. simpl.
-    iApply ewp_mono. 
-    iApply (cqs_resume_all_spec with "Hwakers").
-    (* now we have a list of resumed enq's and call them all *)
-    iIntros (to_resume) "(%ws & Hl & Hws) !>".
-    ewp_pure_steps.
-    (* now we just call all the enqueue functions. *)
-    set I : list val → iProp Σ := (λ us,
-      ∃ vs, ⌜ us ++ vs = ws ⌝ ∗ [∗ list] enq ∈ vs, 
-        ∀ v0 : val, ⌜v0 = #()⌝ ∗ promise_state_done γ -∗
-                    EWP (App (Val enq) v0) <| ⊥ |> {{ _, True }}
-      )%I.
-    iApply (ewp_mono with "[Hws Hl]").
+    iApply (ewp_mono with "[Htqstate Hres]"). 
     { iApply ewp_os_prot_mono. iApply iEff_le_bottom.
-      iApply (list_iter_spec _ I with "[] Hl [Hws]").
-      2: by iExists ws; iFrame.
-      iIntros "!#" (us enq vs) "<- [%vs' [%Heq Hvs']]".
-      specialize (app_inj_1 us us vs' (enq :: vs) eq_refl Heq) as [_ ->].
-      iDestruct "Hvs'" as "[Hk Hvs]". 
-      ewp_pure_steps. iApply (ewp_mono with "[Hk]").
-      { iApply ("Hk" $! #()). by iSplit. }
-      iIntros (?) "_ !>".
-      rewrite /I.
-      iFrame.
-      iExists vs. iFrame.
-      iPureIntro. by rewrite -app_assoc.
-    }
-    iIntros (?) "[Hl _] !>". done.
+      iDestruct "Htqstate" as (n) "Htqstate".
+      iApply (cqs_resume_all_spec _ _ (promise_state_done γ) with "[Htqstate Hres Hwakers]").
+      iFrame. iSplit; first done. 
+      by done. }
+    iIntros (?) "_ !>". by done.
   Qed.
 
   Lemma ewp_fork_promise  (f: val) Φ :
@@ -1025,7 +1064,10 @@ Section verification.
   Proof.
     iIntros "(#HpInv & Hf)". rewrite /fork_promise. ewp_pure_steps.
     ewp_bind_rule. simpl.
-    iApply ewp_mono. iApply (ewp_new_promise _ Φ with "HpInv").
+    iApply ewp_mono. 
+    iApply ewp_os_prot_mono. 
+      by iApply iEff_le_bottom. 
+    iApply (ewp_new_promise Φ with "HpInv").
     iIntros (v) "(%p & %γ & %ε & -> & Hps & #Hmem) !>".
     ewp_pure_steps.
     iApply (ewp_bind' (AppRCtx _)); first done. simpl.
@@ -1044,15 +1086,13 @@ Section verification.
   Qed.
       
   Lemma ewp_run (main : val) Φ :
-    promiseInv -∗
-      (promiseInv -∗ EWP main #() <| Coop |> {{ v, □ Φ v }}) -∗
-        EWP run main {{ _, True }}.
+    promiseInv ∗ EWP main #() <| Coop |> {{ v, □ Φ v }} ⊢
+      EWP run main {{ _, True }}.
   Proof.
-    iIntros "#HpInv Hmain". unfold run. ewp_pure_steps.
+    iIntros "(#HpInv & Hmain)". unfold run. ewp_pure_steps.
     ewp_bind_rule. iApply ewp_mono. { by iApply queue_create_spec. }
     iIntros (q) "Hq !>". simpl. ewp_pure_steps.
     iSpecialize ("Hq" $! ready).
-    iSpecialize ("Hmain" with "HpInv").
     iLöb as "IH" forall (main q Φ).
     iApply (ewp_deep_try_with with "Hmain").
     iLöb as "IH_handler" forall (q Φ).
@@ -1131,7 +1171,7 @@ Section specification.
   }.
 
   Definition run_spec (main : val) :=
-    (∀ _ : AsyncCompLib, promise_inv -∗ EWP main #() <| coop |> {{ _, True }}) ={⊤}=∗
+    (∀ _ : AsyncCompLib, EWP main #() <| coop |> {{ _, □ True }}) ={⊤}=∗
       EWP run main <| ⊥ |> {{ _, True }}.
 
 End specification.
@@ -1175,10 +1215,8 @@ Section closed_proof.
     iIntros "He".
     iMod promiseInv_init as "[%HpromiseGS #HpInv]".
     iSpecialize ("He" $! async_comp_lib). iModIntro.
-    iApply (ewp_run _ (λ _, True)%I with "HpInv").
-    iIntros "#HpInv'".
-    iApply (ewp_mono with "[He]"). 
-    by iApply "He".
-    iIntros (_) "_ !> !>". by done.
+    iApply (ewp_run _ (λ _, True)%I with "[HpInv He]").
+    iFrame.
+    by iAssumption.
   Qed.
 End closed_proof.
