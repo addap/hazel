@@ -30,6 +30,7 @@ From iris.base_logic.lib Require Import iprop wsat saved_prop.
 From program_logic Require Import reasoning_rules.
 From case_studies Require Import list_lib .
 
+From case_studies.eio Require Import atomics concurrent_queue cqs.
 
 (* ========================================================================== *)
 (** * Implementation of the Scheduler. *)
@@ -45,212 +46,6 @@ Notation Waiting ws := (InjR ws) (only parsing).
 
 Notation Done' y := (InjLV y) (only parsing).
 Notation Waiting' ws := (InjRV ws) (only parsing).
-
-Notation ONone := (InjL #()) (only parsing).
-Notation OSome v := (InjR v) (only parsing).
-Notation ONone' := (InjLV #()) (only parsing).
-Notation OSome' v := (InjRV v) (only parsing).
-
-Section atomics.
-  Definition sub_redexes_are_values (e : expr) :=
-    ∀ K e', e = fill K e' → to_val e' = None → K = [].
-
-  Definition head_atomic (a : atomicity) (e : expr) : Prop :=
-    ∀ σ e' σ' ,
-      head_step e σ e' σ' →
-      if a is WeaklyAtomic then irreducible e' σ' else is_Some (to_val e').
-
-  Lemma ectx_language_atomic a e :
-    head_atomic a e → sub_redexes_are_values e → Atomic a e.
-  Proof.
-    intros Hatomic_step Hatomic_fill σ e' κ σ' efs H.
-    unfold language.prim_step in H. simpl in H. unfold prim_step' in H.
-    destruct κ, efs; try by destruct H.
-    destruct H as [K e1' e2' -> -> Hstep].
-    assert (K = []) as -> by eauto 10 using val_head_stuck.
-    simpl fill. simpl fill in Hatomic_step.
-    eapply Hatomic_step. by apply Hstep.
-  Qed.
-
-  Lemma fill_val2 (k : ectx) (e: expr) :
-    is_Some (to_val (fill k e)) → is_Some (to_val e).
-  Proof.
-    intros (v & [-> ->]%fill_val).
-    simpl. done.
-  Qed.
-
-  Lemma fill_no_value (k: ectx) (e: expr) (v: val) :
-    to_val e = None → fill k e = v → False.
-  Proof.
-    intros Hv Hfill.
-    specialize (fill_not_val k _ Hv) as Hfill'.
-    rewrite Hfill in Hfill'.
-    simpl in Hfill'. discriminate Hfill'.
-  Qed.
-
-  Local Ltac solve_atomic := 
-    apply ectx_language_atomic;
-    [ inversion 1; naive_solver
-    | intros [|f?] ? H ?; [|
-      exfalso; destruct f; inversion H; by eapply fill_no_value ]].
-
-  Global Instance store_atomic v1 v2 : Atomic StronglyAtomic (Store (Val v1) (Val v2)).
-  Proof. by solve_atomic. Qed.
-
-  Global Instance load_atomic v : Atomic StronglyAtomic (Load (Val v)).
-  Proof. by solve_atomic. Qed.
-  
-  Global Instance alloc_atomic v : Atomic StronglyAtomic (Alloc (Val v)).
-  Proof. by solve_atomic. Qed.
-End atomics. 
-
-Section concurrent_queue.
-  Context `{!heapGS Σ}.
-
-  Parameter queue_create : val.
-  Parameter queue_push   : val.
-  Parameter queue_pop    : val.
-
-  Parameter is_queue :
-    val -d> (val -d> iPropO Σ) -d> iPropO Σ.
-    
-  Parameter is_queue_ne_proof : ∀ (q: val) (n: nat),
-    Proper ((dist n) ==> (dist n)) (is_queue q).
-  
-  Parameter is_queue_proper_proof : ∀ (q: val),
-    Proper ((≡) ==> (≡)) (is_queue q).
-  
-  Parameter is_queue_Persistent_proof : ∀ (q: val) (I: val -> iProp Σ),
-    Persistent (is_queue q I).
-
-  Parameter queue_create_spec : ∀ (Ψ1 Ψ2: iEff Σ),
-    ⊢ EWP queue_create #() <| Ψ1 |> {| Ψ2 |} {{ q,
-        ∀ I, is_queue q I }}.
-
-  Parameter queue_push_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ) v,
-    is_queue q I -∗
-      I v -∗
-        EWP queue_push q v <| Ψ1 |> {| Ψ2 |} {{ _, True }}.
-
-  Parameter queue_pop_spec : ∀ (Ψ1 Ψ2: iEff Σ) (q: val) (I: val -> iProp Σ),
-    is_queue q I -∗
-      EWP queue_pop q <| Ψ1 |> {| Ψ2 |} {{ y,
-        ⌜ y = ONone' ⌝ ∨ 
-        ∃ (v: val), ⌜ y = OSome' v ⌝ ∗ I v }}.
-
-  Global Instance is_queue_ne q n:
-    Proper ((dist n) ==> (dist n)) (is_queue q).
-  Proof.
-    apply is_queue_ne_proof.
-  Qed.
-
-  Global Instance is_queue_proper q :
-    Proper ((≡) ==> (≡)) (is_queue q).
-  Proof.
-    apply is_queue_proper_proof.
-  Qed.
-
-  Global Instance is_queue_Persistent q I:
-    Persistent (is_queue q I).
-  Proof.
-    apply is_queue_Persistent_proof.
-  Qed.
-End concurrent_queue.
-
-(* An axiomatization of CQS *)
-Section cqs.
-  Context `{!heapGS Σ, !ListLib Σ}.
-
-  Definition is_waker (P: val -> iProp Σ) (k : val): iProp Σ := ∀ v, P v -∗ EWP (k v) {{_, True}}.
-
-  Parameter cqs_new     : val.
-  Parameter cqs_suspend    : val.
-  Parameter cqs_resume_all : val.
-  Parameter cqs_try_cancel     : val.
-
-  (* put the suspend proposition into the queue *)
-  Parameter is_thread_queue :
-    val -> iProp Σ.
-  Parameter thread_queue_state :
-    nat -> iProp Σ.
-  Parameter resume_all_permit :
-    iProp Σ.
-  Parameter is_thread_queue_suspend_result :
-    gname -> val -> val -> iProp Σ.
-  Parameter suspension_permit :
-    iProp Σ.
-
-  Parameter is_thread_queue_Persistent_proof : ∀ q,
-    Persistent (is_thread_queue q).
-  Parameter thread_queue_state_timeless_proof : ∀ n,
-    Timeless (thread_queue_state n).
-  Parameter resume_all_permit_timeless_proof : 
-    Timeless (resume_all_permit).
-
-  Parameter thread_queue_append': ∀ n q E',
-    is_thread_queue q -∗
-    ▷ thread_queue_state n ={E'}=∗
-    thread_queue_state (S n) ∗ suspension_permit .
-      
-  Parameter newThreadQueue_spec:
-    ⊢ EWP cqs_new #()
-    {{ q, is_thread_queue q 
-        ∗ thread_queue_state 0 ∗ resume_all_permit }}.
-          
-  (* todo use parameters correctly and make V'/R also a parameter. *)
-  Parameter cqs_suspend_spec: ∀ q k V',
-        is_thread_queue q ∗ 
-    (* a generic permit to call suspend *)
-        suspension_permit ∗ 
-    (* the WP of the closure k so that we can create a callback. *)
-        is_waker V' k
-    ⊢
-      EWP cqs_suspend q k
-    {{ v, ⌜v = NONEV⌝ ∨
-                  ∃ γk v', ⌜v = SOMEV v'⌝ ∗
-                           is_thread_queue_suspend_result γk v' k }}.
-
-  Parameter cqs_try_cancel_spec: ∀ q γk r k V',
-    (* the invariant about the state of CQS. *)
-        is_thread_queue q ∗ 
-        is_thread_queue_suspend_result γk r k
-    ⊢
-      EWP cqs_try_cancel r
-    {{ v, ∃ (b: bool), ⌜ v = #b ⌝ ∗ if b then 
-                    (* is_waker gives us the WP for executing k *)
-                    is_waker V' k 
-                    (* if cancellation fails we don't know anything (on the metalevel we know that another thread will eventually call k, but we don't have this linearity in the Iris proof yet). *)
-                    else True }}.
-
-  Parameter cqs_resume_all_spec: ∀ q n R,
-      is_thread_queue q ∗
-      □ ▷ R ∗
-      resume_all_permit ∗
-      thread_queue_state n
-    ⊢
-      EWP cqs_resume_all q
-      {{ _, True }}.
-
-  Global Instance is_cqs_Persistent q:
-    Persistent (is_thread_queue q).
-  Proof.
-    apply is_thread_queue_Persistent_proof.
-  Qed.
-  
-  Global Instance thread_queue_state_Timeless n:
-    Timeless (thread_queue_state n).
-  Proof.
-    apply thread_queue_state_timeless_proof.
-  Qed.
-
-  Global Instance resume_all_permit_Timeless:
-    Timeless (resume_all_permit).
-  Proof.
-    apply resume_all_permit_timeless_proof.
-  Qed.
-
-End cqs.
-
 
 Section implementation.
   Context `{!heapGS Σ, !ListLib Σ}.
@@ -342,8 +137,6 @@ Section implementation.
   )%V.
 
 End implementation.
-
-
 
 (* ========================================================================== *)
 (** * Internal Logical Definitions. *)
@@ -861,14 +654,13 @@ Section verification.
       promiseInv -∗ 
         (▷ EWP (f waker) <| ⊥ |> {{_, True }}) }}.
   Proof.
-    set (P:=λ v, (⌜ v = #() ⌝ ∗ promise_state_done γ)%I).
     iIntros "(HIsSus & #Hmem & #Hε & #Hcqs)". rewrite /await_callback. ewp_pure_steps.
     iIntros (waker) "Hwaker #HpInv". iNext.
     ewp_pure_steps. 
     (* now we suspend waker*)
     iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
     iApply (ewp_mono with "[HIsSus Hwaker]").
-    { iApply (cqs_suspend_spec _ _ P with "[HIsSus Hwaker]").
+    { iApply (cqs_suspend_spec (promise_state_done γ) with "[HIsSus Hwaker]").
       iFrame.
       by done.
     }
@@ -897,7 +689,7 @@ Section verification.
       ewp_pure_steps.
       iApply (ewp_bind' (IfCtx _ _)); first by done. simpl.
       iApply (ewp_mono with "[Hreq]").
-      iApply (cqs_try_cancel_spec _ _ _ _ P with "[Hreq]").
+      iApply (cqs_try_cancel_spec (promise_state_done γ) with "[Hreq]").
       by iFrame.
       iIntros (?) "(% & -> & Hk) !>".
       destruct b.
@@ -906,7 +698,7 @@ Section verification.
         ewp_pure_steps. by done.
       }
       ewp_pure_steps.
-      iApply "Hk". rewrite /P. by iSplit.
+      iApply "Hk". by iSplit.
     - (* the promise is not yet fulifilled, our job is done and we don't do anything *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". 
@@ -1050,7 +842,7 @@ Section verification.
     iApply (ewp_mono with "[Htqstate Hres]"). 
     { iApply ewp_os_prot_mono. iApply iEff_le_bottom.
       iDestruct "Htqstate" as (n) "Htqstate".
-      iApply (cqs_resume_all_spec _ _ (promise_state_done γ) with "[Htqstate Hres Hwakers]").
+      iApply (cqs_resume_all_spec (promise_state_done γ) with "[Htqstate Hres Hwakers]").
       iFrame. iSplit; first done. 
       by done. }
     iIntros (?) "_ !>". by done.

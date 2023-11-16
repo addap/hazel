@@ -38,9 +38,13 @@ theories/case_studies/exceptions.v
 theories/case_studies/state.v
 #theories/case_studies/shift_reset.v
 theories/case_studies/asynchronous_computation.v
-theories/case_studies/asynchronous_computation_eio.v
-#theories/case_studies/asynchronous_computation_effects.v
-#theories/case_studies/asynchronous_computation_withcontext.v
-theories/case_studies/asynchronous_computation_passing.v
+theories/case_studies/asynchronous_computation_eio_cancel.v
+theories/case_studies/asynchronous_computation_eio_withcontext.v
+theories/case_studies/asynchronous_computation_eio_getcontext.v
 #theories/case_studies/automatic_differentiation.v
 theories/case_studies/ml_references.v
+
+theories/case_studies/eio/atomics.v
+theories/case_studies/eio/concurrent_queue.v
+theories/case_studies/eio/cqs.v
+theories/case_studies/eio/eio.v
