@@ -144,7 +144,7 @@ Ltac match_ewp_goal lemma tac :=
 
 (* Tactic for applying the lemma [ewp_pure_step']. *)
 Ltac ewp_pure_step_lemma :=
-  iApply ewp_pure_step'.
+  iApply ewp_pure_step_no_fork'.
 
 (* Tactic for applying the lemma [ewp_bind]. *)
 Ltac ewp_bind_rule_lemma k :=

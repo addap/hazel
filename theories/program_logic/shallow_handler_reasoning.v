@@ -129,11 +129,11 @@ Proof.
   iModIntro. iSplitR.
   - iPureIntro. rewrite /reducible //=.
     exists [], (fill k w), (heap_upd <[l:=#true]> σ), []. simpl.
-    apply (Ectx_prim_step _ _ _ _ [] (ContV k l w) (fill k w)); try done.
+    apply (Ectx_prim_step _ _ _ _ [] [] (ContV k l w) (fill k w)); try done.
     apply ContS; by eauto.
-  - iIntros (e₂ σ₂ Hstep).
+  - iIntros (e₂ σ₂ efs₂ Hstep).
     destruct κ; [|done]. simpl in Hstep.
-    specialize (prim_step_inv_Cont _ _ _ _ _ _ Hstep) as [-> ->].
+    specialize (prim_step_inv_Cont _ _ _ _ _ _ _ Hstep) as (-> & -> & ->).
     by iFrame; auto.
 Qed.
 
@@ -153,7 +153,7 @@ Proof.
   - rewrite <-(of_to_val _ _ He).
     iIntros "HΦ [Hr _]".
     iApply fupd_ewp. iMod (ewp_value_inv with "HΦ") as "HΦ". iModIntro.
-    iApply ewp_pure_step'. { by apply pure_prim_step_TryWithVal. }
+    iApply ewp_pure_step_no_fork'. { by apply pure_prim_step_TryWithVal. }
     by iApply ("Hr" with "HΦ").
   (* Effect branch. *)
   - rewrite <-(of_to_eff _ _ _ _ He').
@@ -167,25 +167,28 @@ Proof.
       * iPureIntro. rewrite /reducible //=.
         set (l := fresh_locs (dom (gset loc) σ.(heap))).
         exists [], (h v (ContV k l)), (heap_upd <[l:=#false]> σ), []. simpl.
-        apply (Ectx_prim_step _ _ _ _ []
+        apply (Ectx_prim_step _ _ _ _ [] []
               (TryWith (Eff OS v k) h r) (h v (ContV k l))); try done.
         by apply try_with_fresh.
-      * iIntros (e₂ σ₂ Hstep). destruct κ; [|done]. simpl in Hstep.
-        specialize (prim_step_inv_TryWithOSEff _ _ _ _ _ _ _ Hstep)
-          as [l [Hlkp [-> ->]]].
+      * iIntros (e₂ σ₂ efs₂ Hstep). destruct κ; [|done]. simpl in Hstep.
+        specialize (prim_step_inv_TryWithOSEff _ _ _ _ _ _ _ efs₂ Hstep)
+          as [l [Hlkp (-> & -> & ->)]].
         iMod (gen_heap_alloc _ l #false with "Hσ") as "($ & Hl & Hm)". { done. }
         iSpecialize ("Hh" $! v (ContV k l) with "[Heff Hl]").
         { iDestruct "Heff" as "[%Q [HΨ1 Hk]]". iExists Q. iFrame.
           iIntros (w) "HQ". iApply (ewp_cont with "[HQ Hk] Hl").
           by iApply "Hk".
         }
-        iIntros "!> !> !>". by iMod "Hclose".
+        iIntros "!> !> !>".
+        iMod "Hclose".
+        iSplitL; last by iModIntro.
+        by done.
     (* Multi-shot. *)
     + rewrite -ewp_eff_ms_eq.
-      iApply ewp_pure_step. { by apply pure_prim_step_TryWithMSEff. }
+      iApply ewp_pure_step_no_fork. { by apply pure_prim_step_TryWithMSEff. }
       iApply "Hh". iApply (pers_monotonic_prot with "[] Heff").
       iIntros "!#" (w) "Hk".
-      iApply ewp_pure_step'. { by apply pure_prim_step_Kont. }
+      iApply ewp_pure_step_no_fork'. { by apply pure_prim_step_Kont. }
       done.
   (* One execution step. *)
   - iIntros "He Hhandler".
@@ -198,22 +201,22 @@ Proof.
       rewrite /prim_step'; simpl.
       destruct 1 as [obs [e₄ [σ₄ [efs Hstep]]]].
       case obs in Hstep; [|done].
-      case efs in Hstep; [|done].
       inversion Hstep. simplify_eq.
-      exists [], (TryWith (fill k e2') h r), σ₄, [].
-      by apply (Ectx_prim_step _ _ _ _ ((TryWithCtx h r) :: k) e1' e2').
-    + iModIntro. iIntros (e₄ σ₄) "%".
+      exists [], (TryWith (fill k e2') h r), σ₄, efs.
+      by apply (Ectx_prim_step _ _ _ _ _ ((TryWithCtx h r) :: k) e1' e2').
+    + iModIntro. iIntros (e₄ σ₄ efs₄) "%".
       destruct k'; [|done]. rename H0 into Hstep. simpl in Hstep.
-      assert (Hstep' : ∃ e₅, prim_step e σ₁ e₅ σ₄ ∧ e₄ = TryWith e₅ h r).
+      assert (Hstep' : ∃ e₅, prim_step e σ₁ e₅ σ₄ efs₄ ∧ e₄ = TryWith e₅ h r).
       { inversion Hstep. destruct k as [|f k].
         - simpl in H; simplify_eq. inversion H2; naive_solver.
         - destruct f; try naive_solver. simpl in *; simplify_eq.
           exists (fill k e2'). simpl. split;[| done].
-          by apply (Ectx_prim_step _ _ _ _ k e1' e2').
+          by apply (Ectx_prim_step _ _ _ _ _ k e1' e2').
       }
       destruct Hstep' as [e₅ [Hstep' ->]].
-      iDestruct ("He" $! e₅ σ₄ Hstep') as "> He".
+      iDestruct ("He" $! e₅ σ₄ efs₄ Hstep') as "> He".
       iIntros "!> !>". iMod "He". iModIntro.
-      iMod "He" as "[$ He]". iModIntro.
+      iMod "He" as "[$ (He & Hefs)]". iModIntro.
+      iFrame.
       by iApply ("IH" with "He Hhandler").
 Qed.
