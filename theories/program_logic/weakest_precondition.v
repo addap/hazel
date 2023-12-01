@@ -35,9 +35,10 @@ Definition ewp_pre `{!irisGS eff_lang Σ} :
           ∀ σ₁ ns κ κs nt,
             state_interp σ₁ ns (κ ++ κs) nt ={E,∅}=∗
               ⌜ reducible e₁ σ₁ ⌝ ∗ 
-              ∀ e₂ σ₂, ⌜ prim_step' e₁ σ₁ κ e₂ σ₂ [] ⌝
+              ∀ e₂ σ₂ efs, ⌜ prim_step' e₁ σ₁ κ e₂ σ₂ efs ⌝
                 ={∅}▷=∗^(S $ num_laters_per_step ns) |={∅,E}=>
-                state_interp σ₂ (S ns) κs nt ∗ ewp E e₂ Ψ₁ Ψ₂ Φ
+                state_interp σ₂ (S ns) κs nt ∗ ewp E e₂ Ψ₁ Ψ₂ Φ ∗
+                [∗ list] i ↦ ef ∈ efs, ewp ⊤ ef ⊥ ⊥ fork_post
       end
   end%I.
 
@@ -45,10 +46,11 @@ Local Instance ewp_pre_contractive `{!irisGS eff_lang Σ} : Contractive ewp_pre.
 Proof.
   rewrite /ewp_pre=> n ewp ewp' Hwp E e Ψ1 Ψ2 Φ.
   do 6 f_equiv; try by intros =>?; f_contractive; apply Hwp.
-  do 14 (f_contractive || f_equiv). 
+  do 16 (f_contractive || f_equiv). 
   induction num_laters_per_step as [|k IH]; simpl.
   - repeat (f_contractive || f_equiv); apply Hwp.
-  - do 3 f_equiv. by apply IH.
+  - do 3 f_equiv. 
+    apply IH.
 Qed.
 Definition ewp_def `{!irisGS eff_lang Σ} :
   coPset -d> expr -d> iEff Σ -d> iEff Σ -d> (val -d> iPropO Σ) -d> iPropO Σ :=
@@ -78,9 +80,9 @@ Proof.
   - by apply HΨ2.
   - do 4 (f_contractive || f_equiv).
     apply IH; try lia; eapply dist_le; eauto with lia.
-  - do 14 (f_contractive || f_equiv).
+  - do 16 (f_contractive || f_equiv).
     induction num_laters_per_step as [|k IH']; simpl.
-    + do 2 (f_contractive || f_equiv).
+    + do 3 (f_contractive || f_equiv).
       apply IH; try lia; eapply dist_le; eauto with lia.
     + do 3 f_equiv. by apply IH'.
 Qed.

@@ -94,11 +94,12 @@ Section reasoning_rules.
       iIntros (σ₁ ns k ks nt) "Hσ".
       iMod (fupd_mask_subseteq E) as "Hclose"; first done.
       iMod ("He" with "[$]") as "[$ H]".
-      iModIntro. iIntros (e₂ σ₂ Hstep).
+      iModIntro. iIntros (e₂ σ₂ efs Hstep).
       iMod ("H" with "[//]") as "H". iIntros "!> !>".
       iMod "H". iModIntro.
       iApply (step_fupdN_wand with "[H]"); first by iApply "H".
-      iIntros ">($ & H)". iMod "Hclose" as "_". iModIntro.
+      iIntros ">($ & H & Hefs)". iMod "Hclose" as "_". iModIntro.
+      iFrame.
       iApply ("IH" with "H HΦ").
   Qed.
 
@@ -109,8 +110,9 @@ Section reasoning_rules.
           □ (∀ v, Φ v ={E'}=∗ Φ' v) -∗
             EWP e @ E' <| Ψ1' |> {| Ψ2' |} {{ Φ' }}.
   Proof.
-      iIntros (HE) "He #HΨ1 #HΨ2 #HΦ".
-      iLöb as "IH" forall (e).
+      iIntros (HE) "He #HΨ1 #HΨ2".
+      iLöb as "IH" forall (e Φ Φ').
+      iIntros "#HΦ".
       destruct (to_val e) as [ v         |] eqn:?;
     [|destruct (to_eff e) as [((m, v), k)|] eqn:?].
     - rewrite !ewp_unfold /ewp_pre Heqo.
@@ -121,17 +123,18 @@ Section reasoning_rules.
       iApply (iEff_le_upcl with "HΨ2")]; [
       iApply (monotonic_prot with "[HΦ] He")|
       iApply (pers_monotonic_prot with "[] He"); iModIntro];
-      iIntros (w) "Hk"; iNext; by iApply ("IH" with "Hk").
+      iIntros (w) "Hk"; iNext; iApply ("IH" with "Hk HΦ").
     - rewrite !ewp_unfold /ewp_pre Heqo Heqo0.
       iIntros (σ₁ ns k ks nt) "Hσ".
       iMod (fupd_mask_subseteq E) as "Hclose"; first done.
       iMod ("He" with "[$]") as "[$ H]".
-      iModIntro. iIntros (e₂ σ₂ Hstep).
+      iModIntro. iIntros (e₂ σ₂ efs Hstep).
       iMod ("H" with "[//]") as "H". iIntros "!> !>".
       iMod "H". iModIntro.
       iApply (step_fupdN_wand with "[H]"); first by iApply "H".
-      iIntros ">($ & H)". iMod "Hclose" as "_". iModIntro.
-      iApply ("IH" with "H").
+      iIntros ">($ & H & Hefs)". iMod "Hclose" as "_". iModIntro.
+      iFrame.
+      iApply ("IH" with "H HΦ").
   Qed.
 
   Corollary ewp_pers_mono E Ψ1 Ψ2 Φ Φ' e :
@@ -234,18 +237,19 @@ Section reasoning_rules.
     - by iDestruct "H" as ">>> $".
     - by inversion H.
     - iIntros (σ1 ns k κs nt) "Hσ". iMod "H". iMod ("H" $! σ1 with "Hσ") as "[$ H]".
-      iModIntro. iIntros (e2 σ2 Hstep).
+      iModIntro. iIntros (e2 σ2 efs Hstep).
       iApply (step_fupdN_wand with "[H]"); first by iApply "H".
       iIntros ">(Hσ & H)".
       rewrite !ewp_unfold /ewp_pre.
         destruct (to_val e2) as [ v2     |] eqn:He2;
       [|destruct (to_eff e2) as [(v2, k2)|] eqn:He2'].
-      + iDestruct "H" as ">> $". by iFrame.
-      + have Hstep' : prim_step' e σ1 [] e2 σ2 []. { by destruct k. }
+      + iDestruct "H" as "(>> $ & $)". by iFrame.
+      + have Hstep' : prim_step' e σ1 [] e2 σ2 efs. { by destruct k. }
         edestruct (atomic _ _ _ _ _ Hstep'); by naive_solver.
-      + iMod ("H" $! _ _ [] with "[$]") as "[H _]".
+      + iDestruct "H" as "[H Hefs]".
+        iMod ("H" $! _ _ [] with "[$]") as "[H _]".
         iDestruct "H" as %(? & ? & ? & ? & ?).
-        have Hstep' : prim_step' e σ1 [] e2 σ2 []. { by destruct k. }
+        have Hstep' : prim_step' e σ1 [] e2 σ2 efs. { by destruct k. }
         edestruct (atomic _ _ _ _ _ Hstep'); by naive_solver.
   Qed.
 
@@ -253,60 +257,62 @@ Section reasoning_rules.
   (* ------------------------------------------------------------------------ *)
   (** Reasoning about Pure Steps. *)
 
-  Lemma ewp_pure_step' E e e' Ψ1 Ψ2 Φ :
-    pure_prim_step e e' → 
+  Lemma ewp_pure_step_no_fork' E e e' Ψ1 Ψ2 Φ :
+    pure_prim_step_no_fork e e' → 
       ▷ EWP e' @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }} -∗
           EWP e @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
   Proof.
     intros Hstep.
       destruct (to_val e) as [ v         |] eqn:He;
     [|destruct (to_eff e) as [((m, v), k)|] eqn:He'].
-    - by specialize (val_not_pure' _ _   e' He).
-    - by specialize (eff_not_pure' _ _ e' He').
+    - by specialize (val_not_pure' _ _   e' [] He).
+    - by specialize (eff_not_pure' _ _ e' [] He').
     - rewrite !(ewp_unfold E e) /ewp_pre He He'.
       iIntros "Hewp" (σ₁ ns k ks nt) "Hs".
       iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
       iModIntro. iSplitR;
-      [iPureIntro; by apply (pure_prim_step_imp_reducible _ e')|].
-      iIntros (e₂ σ₂ Hstep'). destruct k; [|done].
-      destruct (pure_prim_step_det _ _ Hstep _ _ _ Hstep') as [-> ->].
+      [iPureIntro; by apply (pure_prim_step_imp_reducible _ e' [])|].
+      (* a.d. TODO why done if k not empty list? *)
+      iIntros (e₂ σ₂ efs₂ Hstep'). destruct k; [|done].
+      destruct (pure_prim_step_det _ _ [] Hstep _ _ _ efs₂ Hstep') as (-> & -> & <-).
       simpl. iIntros "!> !>".
       iMod (state_interp_mono with "Hs") as "Hs". iModIntro.
-      induction num_laters_per_step as [|k IH]; simpl;
-      [by iFrame|iIntros "!>!>!>"; by apply IH].
+      induction num_laters_per_step as [|k IH]; simpl.
+      + by iFrame.
+      + iIntros "!>!>!>"; by apply IH.
   Qed.
 
-  Lemma ewp_pure_step E e e' Ψ1 Ψ2 Φ :
-    pure_prim_step e e' → 
+  Lemma ewp_pure_step_no_fork E e e' Ψ1 Ψ2 Φ :
+    pure_prim_step_no_fork e e' → 
       EWP e' @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }} -∗
         EWP e @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
-  Proof. iIntros "% Hwp". by iApply (ewp_pure_step' with "Hwp"). Qed.
-
-  Lemma ewp_pure_steps' E e e' Ψ1 Ψ2 Φ :
-    tc pure_prim_step e e' → 
+  Proof. iIntros "% Hwp". by iApply (ewp_pure_step_no_fork' with "Hwp"). Qed.
+  
+  Lemma ewp_pure_steps_no_fork' E e e' Ψ1 Ψ2 Φ :
+    tc pure_prim_step_no_fork e e' → 
       ▷ EWP e' @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }} -∗
           EWP e @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
   Proof.
     intros Hstep; iInduction Hstep as [|] "IH".
-    - by iApply ewp_pure_step'.
-    - iIntros "Hewp". iApply ewp_pure_step'. apply H. iNext. by iApply "IH".
+    - by iApply ewp_pure_step_no_fork'.
+    - iIntros "Hewp". iApply ewp_pure_step_no_fork'. apply H. iNext. by iApply "IH".
   Qed.
 
   Lemma ewp_pure_steps E e e' Ψ1 Ψ2 Φ :
-    rtc pure_prim_step e e' → 
+    rtc pure_prim_step_no_fork e e' → 
       EWP e' @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }} -∗
         EWP e @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
   Proof.
     intros Hstep; iInduction Hstep as [|] "IH".
     - by iIntros "?".  
-    - iIntros "Hewp". iApply ewp_pure_step. apply H. by iApply "IH".
+    - iIntros "Hewp". iApply ewp_pure_step_no_fork. apply H. by iApply "IH".
   Qed.
 
   (* Combination of [ewp_eff] and [ewp_pure_step]. *)
   Lemma ewp_do_os E v Ψ1 Ψ2 Φ :
     iEff_car (upcl OS Ψ1) v Φ -∗ EWP do: v @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
   Proof.
-    iIntros "HΨ". iApply ewp_pure_step. { by apply pure_prim_step_Do. }
+    iIntros "HΨ". iApply ewp_pure_step_no_fork. { by apply pure_prim_step_Do. }
     iApply ewp_eff_os. iApply (monotonic_prot with "[] HΨ").
     iIntros (w) "HΦ". by iApply ewp_value.
   Qed.
@@ -314,11 +320,69 @@ Section reasoning_rules.
   Lemma ewp_do_ms E v Ψ1 Ψ2 Φ :
     iEff_car (upcl MS Ψ2) v Φ -∗ EWP doₘ: v @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
   Proof.
-    iIntros "HΨ". iApply ewp_pure_step. { by apply pure_prim_step_Do. }
+    iIntros "HΨ". iApply ewp_pure_step_no_fork. { by apply pure_prim_step_Do. }
     iApply ewp_eff_ms. iApply (pers_monotonic_prot with "[] HΨ").
     iIntros "!#" (w) "HΦ". by iApply ewp_value.
   Qed.
+  
+  Lemma to_eff_not_to_val {e eff} :
+    to_eff e = Some eff -> to_val e = None. 
+  Proof.
+    rewrite /to_eff /to_val.
+    by destruct e.
+  Qed.
 
+  (* EWP of fork rule *)
+  Lemma ewp_fork E e Ψ1 Ψ2 Φ :
+    ▷ EWP e @ ⊤ <| ⊥ |> {| ⊥ |} {{ fork_post }} -∗ ▷ Φ (LitV LitUnit) -∗ EWP Fork e @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
+  Proof.
+    iIntros "He HΦ". 
+    destruct (to_eff e) as [((m, v), k)|] eqn:He.
+    - (* by definition of EWP, we have iEff_car of empty protocol, i.e. False *) 
+      specialize (to_eff_not_to_val He) as He'.
+      rewrite !(ewp_unfold ⊤ e) /ewp_pre He He'. 
+      destruct m; rewrite upcl_bottom.
+      + rewrite !(ewp_unfold E (Fork e)) /ewp_pre.
+        simpl.
+        iIntros (σ₁ ns k' ks' nt) "Hs".
+        iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
+        iModIntro. iSplitR.
+        * iPureIntro. apply (pure_prim_step_imp_reducible _ (LitV LitUnit) [e]).
+          by apply pure_prim_step_Fork.
+        * iIntros (e₂ σ₂ efs₂ Hstep'). destruct k'; [|done].
+          destruct (pure_prim_step_det _ _ [e] (pure_prim_step_Fork _) _ _ _ efs₂ Hstep') as (-> & -> & <-).
+          simpl. iIntros "!> !>".
+          iDestruct "He" as %[].
+      + rewrite !(ewp_unfold E (Fork e)) /ewp_pre.
+        simpl.
+        iIntros (σ₁ ns k' ks' nt) "Hs".
+        iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
+        iModIntro. iSplitR.
+        * iPureIntro. apply (pure_prim_step_imp_reducible _ (LitV LitUnit) [e]).
+          by apply pure_prim_step_Fork.
+        * iIntros (e₂ σ₂ efs₂ Hstep'). destruct k'; [|done].
+          destruct (pure_prim_step_det _ _ [e] (pure_prim_step_Fork _) _ _ _ efs₂ Hstep') as (-> & -> & <-).
+          simpl. iIntros "!> !>".
+          iDestruct "He" as %[].
+    - 
+      rewrite !(ewp_unfold E (Fork e)) /ewp_pre.
+      simpl.
+      iIntros (σ₁ ns k' ks' nt) "Hs".
+      iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
+      iModIntro. iSplitR.
+      * iPureIntro. apply (pure_prim_step_imp_reducible _ (LitV LitUnit) [e]).
+        by apply pure_prim_step_Fork.
+      * iIntros (e₂ σ₂ efs₂ Hstep'). destruct k'; [|done].
+        destruct (pure_prim_step_det _ _ [e] (pure_prim_step_Fork _) _ _ _ efs₂ Hstep') as (-> & -> & <-).
+        simpl. iIntros "!> !>".
+        iMod (state_interp_mono with "Hs") as "Hs". iModIntro.
+        induction num_laters_per_step as [|k IH]; simpl.
+        + iFrame.
+          iMod "Hclose" as "_". iModIntro.
+          rewrite !(ewp_unfold E #()) /ewp_pre.
+          simpl. by iFrame.
+        + iIntros "!>!>!>"; by apply IH.
+  Qed.
 
   (* ------------------------------------------------------------------------ *)
   (** Bind Rule. *)
@@ -326,7 +390,7 @@ Section reasoning_rules.
   Lemma ewp_eff_steps k `{NeutralEctx k} E Ψ1 Ψ2 Φ m v k' :
     EWP Eff m v (k ++ k') @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }} -∗
       EWP fill k (Eff m v k') @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
-  Proof. by apply ewp_pure_steps, rtc_pure_prim_step_Eff. Qed.
+  Proof. by apply ewp_pure_steps, rtc_pure_prim_step_no_fork_Eff. Qed.
 
   Lemma ewp_bind k `{NeutralEctx k} E Ψ1 Ψ2 Φ e e' :
     e' = fill k e  →
@@ -353,13 +417,15 @@ Section reasoning_rules.
       iIntros "Hewp" (σ₁ ns k' ks nt) "Hs".
       iMod ("Hewp" $! σ₁ with "Hs") as "[% Hewp]". iModIntro.
       iSplitR; [iPureIntro; by apply reducible_fill|].
-      iIntros (e₂ σ₂) "%".
+      iIntros (e₂ σ₂ efs₂) "%".
       destruct k'; [|done]. rename H1 into Hstep. simpl in Hstep.
-      destruct (Ectx_prim_step_inv k _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
-      iMod ("Hewp" $! e' σ₂ Hstep') as "Hewp". iIntros "!> !>".
+      destruct (Ectx_prim_step_inv k _ _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
+      iMod ("Hewp" $! e' σ₂ efs₂ Hstep') as "Hewp". iIntros "!> !>".
       iMod "Hewp". iModIntro.
       iApply (step_fupdN_wand with "[Hewp]"); first by iApply "Hewp".
       iIntros "H". iMod "H" as "[$ Hewp]". iModIntro.
+      iDestruct "Hewp" as "(Hewp & Hefs)".
+      iFrame.
       by iApply "IH".
   Qed.
 
@@ -389,13 +455,15 @@ Section reasoning_rules.
       iIntros "Hewp"  (σ₁ ns k' ks nt) "Hs".
       iMod ("Hewp" $! σ₁ with "Hs") as "[% Hewp]". iModIntro.
       iSplitR; [iPureIntro; by apply reducible_fill|].
-      iIntros (e₂ σ₂) "%".
+      iIntros (e₂ σ₂ efs₂) "%".
       destruct k';[|done]; rename H0 into Hstep, H into Hred.
-      destruct (Ectx_prim_step_inv k _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
-      iMod ("Hewp" $! e' σ₂ Hstep') as "Hewp". iIntros "!> !>".
+      destruct (Ectx_prim_step_inv k _ _ _ _ efs₂ He He' Hstep) as [e' [Hstep' ->]].
+      iMod ("Hewp" $! e' σ₂ efs₂ Hstep') as "Hewp". iIntros "!> !>".
       iMod "Hewp". iModIntro.
       iApply (step_fupdN_wand with "[Hewp]"); first by iApply "Hewp".
       iIntros "H". iMod "H" as "[$ Hewp]". iModIntro.
+      iDestruct "Hewp" as "(Hewp & Hefs)".
+      iFrame.
       by iApply "IH".
   Qed.
 

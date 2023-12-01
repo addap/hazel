@@ -103,6 +103,8 @@ Section eff_lang.
     | Alloc (e : expr)
     | Load (e : expr)
     | Store (e1 e2 : expr)
+    (* Concurrency *)
+    | Fork (e : expr)
 
   (* Values. *)
   with val :=
@@ -229,6 +231,8 @@ Section induction_principle.
     (Alloc_case : ∀ e, P e → P (Alloc e))
     (Load_case : ∀ e, P e → P (Load e))
     (Store_case : ∀ e1 e2, P e1 → P e2 → P (Store e1 e2))
+    (* Concurrency *)
+    (Fork_case : ∀ e, P e → P (Fork e))
 
   (* Values. *)
     (* Base values. *)
@@ -326,6 +330,8 @@ Section induction_principle.
         Load_case e (expr_ind e)
     | Store e1 e2 =>
         Store_case e1 e2 (expr_ind e1) (expr_ind e2)
+    | Fork e =>
+        Fork_case e (expr_ind e)
     end.
 
   Definition val_ind_pre
@@ -602,6 +608,14 @@ Section eq_decidable.
       | _ => right _
       end); congruence.
   Qed.
+  Definition eq_dec_Fork_case e
+    (He : P e) : P (Fork e).
+    refine (λ e',
+      match e' with
+      | Fork e => cast_if (He e)
+      | _ => right _
+      end); congruence.
+  Qed.
 
   (* Values. *)
   Definition eq_dec_LitV_case l : Q (LitV l).
@@ -792,6 +806,7 @@ Section eq_decidable.
       eq_dec_Alloc_case
       eq_dec_Load_case
       eq_dec_Store_case
+      eq_dec_Fork_case
       eq_dec_LitV_case
       eq_dec_RecV_case
       eq_dec_PairV_case
@@ -842,6 +857,7 @@ Section eq_decidable.
       eq_dec_Alloc_case
       eq_dec_Load_case
       eq_dec_Store_case
+      eq_dec_Fork_case
       eq_dec_LitV_case
       eq_dec_RecV_case
       eq_dec_PairV_case
@@ -892,6 +908,7 @@ Section eq_decidable.
       eq_dec_Alloc_case
       eq_dec_Load_case
       eq_dec_Store_case
+      eq_dec_Fork_case
       eq_dec_LitV_case
       eq_dec_RecV_case
       eq_dec_PairV_case
@@ -942,6 +959,7 @@ Section eq_decidable.
       eq_dec_Alloc_case
       eq_dec_Load_case
       eq_dec_Store_case
+      eq_dec_Fork_case
       eq_dec_LitV_case
       eq_dec_RecV_case
       eq_dec_PairV_case
@@ -1130,6 +1148,8 @@ Section countable.
     GenNode 17 [ge].
   Definition encode_Store (e1 e2 : expr) (ge1 ge2 : gtree) : gtree :=
     GenNode 18 [ge1; ge2].
+  Definition encode_Fork (e : expr) (ge : gtree) : gtree :=
+    GenNode 19 [ge].
 
   (* Values. *)
   Definition encode_LitV l : gtree :=
@@ -1214,6 +1234,7 @@ Section countable.
       encode_Alloc
       encode_Load
       encode_Store
+      encode_Fork
       encode_LitV
       encode_RecV
       encode_PairV
@@ -1264,6 +1285,7 @@ Section countable.
       encode_Alloc
       encode_Load
       encode_Store
+      encode_Fork
       encode_LitV
       encode_RecV
       encode_PairV
@@ -1314,6 +1336,7 @@ Section countable.
       encode_Alloc
       encode_Load
       encode_Store
+      encode_Fork
       encode_LitV
       encode_RecV
       encode_PairV
@@ -1364,6 +1387,7 @@ Section countable.
       encode_Alloc
       encode_Load
       encode_Store
+      encode_Fork
       encode_LitV
       encode_RecV
       encode_PairV
@@ -1439,6 +1463,8 @@ Section countable.
         Load (decode_expr ge)
     | GenNode 18 [ge1; ge2] =>
         Store (decode_expr ge1) (decode_expr ge2)
+    | GenNode 19 [ge] =>
+        Fork (decode_expr ge)
     | _ =>
         Val $ LitV $ LitUnit
     end.

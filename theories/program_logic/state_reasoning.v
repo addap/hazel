@@ -120,16 +120,18 @@ Section reasoning_rules.
     - iPureIntro. rewrite /reducible //=.
       set (l := fresh_locs (dom (gset loc) σ.(heap))).
       exists [], #l, (heap_upd <[l:=v]> σ), []. simpl.
-      apply (Ectx_prim_step _ _ _ _ [] (ref v)%E (#l)); try done.
+      apply (Ectx_prim_step _ _ _ _ [] [] (ref v)%E (#l)); try done.
       by apply alloc_fresh.
-    - iIntros (e₂ σ₂ Hstep).
+    - iIntros (e₂ σ₂ efs₂ Hstep).
       destruct κ; [|done]. simpl in Hstep.
       destruct Hstep; destruct k  as [|f k];
       [| destruct f; try naive_solver ].
       + simpl in H, H0. simplify_eq. inversion H1.
         iMod (gen_heap_alloc _ l v with "Hσ") as "($ & Hl & Hm)". { done. }
+        iIntros "!> !> !>". iMod "Hclose".
+        iSplitL; last by iModIntro.
         iApply ewp_value.
-        iIntros "!> !> !>". iMod "Hclose". by iMod ("HΦ" with "Hl").
+         by iMod ("HΦ" with "Hl").
       + destruct (fill_val' k e1' v) as [-> ->]. naive_solver. by inversion H1.
   Qed.
 
@@ -152,14 +154,16 @@ Section reasoning_rules.
     iModIntro. iSplitR.
     - iPureIntro. rewrite /reducible //=.
       exists [], (Val v), σ, []. simpl.
-      apply (Ectx_prim_step _ _ _ _ [] (Load #l) v); try done.
+      apply (Ectx_prim_step _ _ _ _ [] [] (Load #l) v); try done.
       by apply LoadS.
-    - iIntros (e₂ σ₂ Hstep).
+    - iIntros (e₂ σ₂ efs₂ Hstep).
       destruct κ; [|done]. simpl in Hstep.
       destruct Hstep; destruct k  as [|f k]; [| destruct f; try naive_solver ].
       + simpl in H, H0. simplify_eq. inversion H1. simplify_eq. iFrame.
+        iIntros "!> !> !>". iMod "Hclose".
+        iSplitL; last by iModIntro.
         iApply ewp_value. simpl.
-        iIntros "!> !> !>". iMod "Hclose". by iMod ("HΦ" with "Hl").
+         by iMod ("HΦ" with "Hl").
       + destruct (fill_val' k e1' #l) as [-> ->]. naive_solver. by inversion H1.
   Qed.
 
@@ -182,16 +186,17 @@ Section reasoning_rules.
     iSplitR.
     - iPureIntro. rewrite /reducible //=.
       exists [], (#()), (heap_upd <[ l := w ]> σ), []. simpl.
-      apply (Ectx_prim_step _ _ _ _ [] (#l <- w)%E #()); try done.
+      apply (Ectx_prim_step _ _ _ _ [] [] (#l <- w)%E #()); try done.
       apply StoreS. by eauto.
-    - iIntros (e₂ σ₂ Hstep) "!>!>".
+    - iIntros (e₂ σ₂ efs₂ Hstep) "!>!>".
       iMod (gen_heap_update  _ _ _ w with "Hσ Hl") as "[Hσ Hl]".
       destruct κ; [|done]. simpl in Hstep.
       destruct Hstep; destruct k  as [|f k]; [| destruct f; try naive_solver ].
       + simpl in H, H0. simplify_eq. inversion H1. simplify_eq. iFrame.
-        iMod "Hclose". iMod ("HΦ" with "Hl").
+        iMod "Hclose". iMod ("HΦ" with "Hl") as "HΦ".
         iApply fupd_mask_intro. by apply empty_subseteq. iIntros "Hclose'".
         iMod "Hclose'". iModIntro.
+        iSplitL; last by done.
         by iApply ewp_value.
       + destruct (fill_val' k e1' #l) as [-> ->]. naive_solver. by inversion H1.
       + destruct (fill_val' k e1' w)  as [-> ->]. naive_solver. by inversion H1.
