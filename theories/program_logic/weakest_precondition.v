@@ -37,7 +37,7 @@ Definition ewp_pre `{!irisGS eff_lang Σ} :
               ⌜ reducible e₁ σ₁ ⌝ ∗ 
               ∀ e₂ σ₂ efs, ⌜ prim_step' e₁ σ₁ κ e₂ σ₂ efs ⌝
                 ={∅}▷=∗^(S $ num_laters_per_step ns) |={∅,E}=>
-                state_interp σ₂ (S ns) κs nt ∗ ewp E e₂ Ψ₁ Ψ₂ Φ ∗
+                state_interp σ₂ (S ns) κs (length efs + nt) ∗ ewp E e₂ Ψ₁ Ψ₂ Φ ∗
                 [∗ list] i ↦ ef ∈ efs, ewp ⊤ ef ⊥ ⊥ fork_post
       end
   end%I.

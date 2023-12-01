@@ -18,6 +18,7 @@ theories/language/eff_lang.v
 
 theories/program_logic/protocols.v
 theories/program_logic/weakest_precondition.v
+theories/program_logic/state_interpretation.v
 theories/program_logic/basic_reasoning_rules.v
 theories/program_logic/state_reasoning.v
 theories/program_logic/shallow_handler_reasoning.v
