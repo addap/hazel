@@ -12,7 +12,7 @@ From program_logic Require Import reasoning_rules.
 (* ========================================================================== *)
 (** * List Interface. *)
 
-Class ListLib Σ `{!irisGS eff_lang Σ} := {
+Class ListLib Σ `{!heapGS Σ} := {
   list_nil  : val;
   list_cons : val;
   list_iter : val;
@@ -56,7 +56,7 @@ Class ListLib Σ `{!irisGS eff_lang Σ} := {
    admits at least one implementation. *)
 
 Section ListLibModel.
-  Context `{!irisGS eff_lang Σ}.
+  Context `{!heapGS Σ}.
 
   (* ------------------------------------------------------------------------ *)
   (** Implementation. *)

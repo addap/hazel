@@ -4,16 +4,17 @@ Definition sub_redexes_are_values (e : expr) :=
   ∀ K e', e = fill K e' → to_val e' = None → K = [].
 
 Definition head_atomic (a : atomicity) (e : expr) : Prop :=
-  ∀ σ e' σ' ,
-    head_step e σ e' σ' →
+  ∀ σ e' σ' efs,
+    head_step e σ e' σ' efs →
     if a is WeaklyAtomic then irreducible e' σ' else is_Some (to_val e').
 
+(* a.d. TODO why does this lemma work? *)
 Lemma ectx_language_atomic a e :
   head_atomic a e → sub_redexes_are_values e → Atomic a e.
 Proof.
   intros Hatomic_step Hatomic_fill σ e' κ σ' efs H.
   unfold language.prim_step in H. simpl in H. unfold prim_step' in H.
-  destruct κ, efs; try by destruct H.
+  destruct κ; last by destruct H.
   destruct H as [K e1' e2' -> -> Hstep].
   assert (K = []) as -> by eauto 10 using val_head_stuck.
   simpl fill. simpl fill in Hatomic_step.

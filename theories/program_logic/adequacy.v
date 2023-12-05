@@ -26,10 +26,10 @@ From program_logic Require Import reasoning_rules.
    notion of [WP] is adequate. The idea is thus to prove that [EWP] entails
    [WP] (under the assumption that both protocols are empty). *)
 
-Lemma ewp_imp_wp `{!irisGS eff_lang Σ} E e Φ :
+Lemma ewp_imp_wp `{!heapGS Σ} E e Φ :
   EWP e @ E <| ⊥ |> {| ⊥ |} {{ Φ }} -∗ WP e @ NotStuck; E {{ Φ }}.
 Proof.
-  iLöb as "IH" forall (e).
+  iLöb as "IH" forall (e E Φ).
   destruct (to_val e) as [ v         |] eqn:?; [|
   destruct (to_eff e) as [((m, v), k)|] eqn:?  ].
   - rewrite ewp_unfold /ewp_pre wp_unfold /wp_pre /= Heqo. by auto.
@@ -41,13 +41,21 @@ Proof.
     iMod ("Hewp" $! σ ns k ks nt with "Hs") as "[$ H]". iModIntro.
     iIntros (e2 σ2 efs Hstep).
     case k   as [|??]; [|done].
-    case efs as [|??]; [|done].
     simpl in Hstep.
     iMod ("H" with "[//]") as "H". iIntros "!> !>".
-    simpl. iMod "H". iModIntro.
-    iApply (step_fupdN_wand with "[H]"); first by iApply "H".
-    iIntros "H". iMod "H" as "[$ Hewp]". iModIntro.
-    by iSplit; [iApply "IH"|].
+    iMod "H". iModIntro.
+    iMod "H". iModIntro.
+    iDestruct "H" as "($ & H & Hefs)".
+    iSplitL "H".
+    + by iApply "IH".
+    + clear e Heqo Heqo0 Hstep.
+      iInduction efs as [|e efs] "IHefs".
+      * done. 
+      * simpl.
+        iDestruct "Hefs" as "[He Hefs]".
+        iSplitL "He".
+        by iApply ("IH" with "He").
+        by iApply ("IHefs" with "Hefs").
 Qed.
 
 

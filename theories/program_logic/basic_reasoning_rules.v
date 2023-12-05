@@ -9,14 +9,14 @@
 
 From iris.proofmode Require Import base tactics classes.
 From iris.program_logic Require Import weakestpre.
-From program_logic Require Import weakest_precondition.
+From program_logic Require Import weakest_precondition state_interpretation.
 
 
 (* ========================================================================== *)
 (** * Reasoning Rules. *)
 
 Section reasoning_rules.
-  Context `{!irisGS eff_lang Σ}.
+  Context `{!heapGS Σ}.
 
   (* ------------------------------------------------------------------------ *)
   (** Values and Effects. *)
@@ -97,9 +97,9 @@ Section reasoning_rules.
       iModIntro. iIntros (e₂ σ₂ efs Hstep).
       iMod ("H" with "[//]") as "H". iIntros "!> !>".
       iMod "H". iModIntro.
-      iApply (step_fupdN_wand with "[H]"); first by iApply "H".
-      iIntros ">($ & H & Hefs)". iMod "Hclose" as "_". iModIntro.
-      iFrame.
+      simpl.
+      iMod "H". iModIntro.
+      iDestruct "H" as "($ & H & $)".
       iApply ("IH" with "H HΦ").
   Qed.
 
@@ -131,9 +131,12 @@ Section reasoning_rules.
       iModIntro. iIntros (e₂ σ₂ efs Hstep).
       iMod ("H" with "[//]") as "H". iIntros "!> !>".
       iMod "H". iModIntro.
-      iApply (step_fupdN_wand with "[H]"); first by iApply "H".
-      iIntros ">($ & H & Hefs)". iMod "Hclose" as "_". iModIntro.
-      iFrame.
+      simpl.
+      (* a.d. TODO better way to use FUP-CHANGE-MASK *)
+      iDestruct "H" as ">H".
+      iMod "Hclose" as "_".
+      iModIntro.
+      iDestruct "H" as "($ & H & $)".
       iApply ("IH" with "H HΦ").
   Qed.
 
@@ -234,11 +237,11 @@ Section reasoning_rules.
     iIntros (?) "H". rewrite !ewp_unfold /ewp_pre.
       destruct (to_val e) as [ v    |] eqn:He;
     [|destruct (to_eff e) as [(v, k)|] eqn:He'].
-    - by iDestruct "H" as ">>> $".
+    - by iDestruct "H" as ">>>$".
     - by inversion H.
     - iIntros (σ1 ns k κs nt) "Hσ". iMod "H". iMod ("H" $! σ1 with "Hσ") as "[$ H]".
       iModIntro. iIntros (e2 σ2 efs Hstep).
-      iApply (step_fupdN_wand with "[H]"); first by iApply "H".
+      iApply (step_fupdN_wand with "[H]"). by iApply ("H" $! e2 σ2 efs Hstep).
       iIntros ">(Hσ & H)".
       rewrite !ewp_unfold /ewp_pre.
         destruct (to_val e2) as [ v2     |] eqn:He2;
@@ -276,10 +279,10 @@ Section reasoning_rules.
       iIntros (e₂ σ₂ efs₂ Hstep'). destruct k; [|done].
       destruct (pure_prim_step_det _ _ [] Hstep _ _ _ efs₂ Hstep') as (-> & -> & <-).
       simpl. iIntros "!> !>".
-      iMod (state_interp_mono with "Hs") as "Hs". iModIntro.
-      induction num_laters_per_step as [|k IH]; simpl.
-      + by iFrame.
-      + iIntros "!>!>!>"; by apply IH.
+      iModIntro.
+      iMod "Hclose" as "_".
+      iModIntro.
+      iFrame.
   Qed.
 
   Lemma ewp_pure_step_no_fork E e e' Ψ1 Ψ2 Φ :
@@ -375,13 +378,12 @@ Section reasoning_rules.
       * iIntros (e₂ σ₂ efs₂ Hstep'). destruct k'; [|done].
         destruct (pure_prim_step_det _ _ [e] (pure_prim_step_Fork _) _ _ _ efs₂ Hstep') as (-> & -> & <-).
         simpl. iIntros "!> !>".
-        iMod (state_interp_mono with "Hs") as "Hs". iModIntro.
-        induction num_laters_per_step as [|k IH]; simpl.
-        + iFrame.
-          iMod "Hclose" as "_". iModIntro.
-          rewrite !(ewp_unfold E #()) /ewp_pre.
-          simpl. by iFrame.
-        + iIntros "!>!>!>"; by apply IH.
+        iModIntro.
+        iMod "Hclose" as "_". iModIntro.
+        iFrame.
+        rewrite !(ewp_unfold E #()) /ewp_pre.
+        simpl. 
+        by iFrame.
   Qed.
 
   (* ------------------------------------------------------------------------ *)
@@ -422,10 +424,9 @@ Section reasoning_rules.
       destruct (Ectx_prim_step_inv k _ _ _ _ _ He He' Hstep) as [e' [Hstep' ->]].
       iMod ("Hewp" $! e' σ₂ efs₂ Hstep') as "Hewp". iIntros "!> !>".
       iMod "Hewp". iModIntro.
-      iApply (step_fupdN_wand with "[Hewp]"); first by iApply "Hewp".
-      iIntros "H". iMod "H" as "[$ Hewp]". iModIntro.
-      iDestruct "Hewp" as "(Hewp & Hefs)".
-      iFrame.
+      simpl.
+      iMod "Hewp". iModIntro.
+      iDestruct "Hewp" as "($ & Hewp & $)".
       by iApply "IH".
   Qed.
 
@@ -460,10 +461,9 @@ Section reasoning_rules.
       destruct (Ectx_prim_step_inv k _ _ _ _ efs₂ He He' Hstep) as [e' [Hstep' ->]].
       iMod ("Hewp" $! e' σ₂ efs₂ Hstep') as "Hewp". iIntros "!> !>".
       iMod "Hewp". iModIntro.
-      iApply (step_fupdN_wand with "[Hewp]"); first by iApply "Hewp".
-      iIntros "H". iMod "H" as "[$ Hewp]". iModIntro.
-      iDestruct "Hewp" as "(Hewp & Hefs)".
-      iFrame.
+      simpl.
+      iMod "Hewp". iModIntro.
+      iDestruct "Hewp" as "($ & Hewp & $)".
       by iApply "IH".
   Qed.
 

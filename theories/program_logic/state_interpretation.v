@@ -68,5 +68,3 @@ Global Instance heapG_irisG `{!heapGS Σ} : irisGS eff_lang Σ := {
   num_laters_per_step _ := 0;
   state_interp_mono _ _ _ _ := fupd_intro _ _
 }.
-
-Print state_interp.

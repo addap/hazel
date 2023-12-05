@@ -12,7 +12,7 @@ From case_studies Require Import list_lib.
 (* ========================================================================== *)
 (** * Queue Interface. *)
 
-Class QueueLib Σ `{!irisGS eff_lang Σ} := {
+Class QueueLib Σ `{!heapGS Σ} := {
   queue_create : val;
   queue_push   : val;
   queue_pop    : val;

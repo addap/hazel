@@ -5,7 +5,7 @@
 From iris.proofmode Require Import base tactics classes.
 From program_logic Require Import protocols weakest_precondition
                                   basic_reasoning_rules
-                                  state_reasoning.
+                                  state_reasoning state_interpretation.
 
 
 (* ========================================================================== *)

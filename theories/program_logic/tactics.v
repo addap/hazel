@@ -13,7 +13,7 @@
 
 From iris.proofmode Require Import base tactics classes.
 From language Require Import eff_lang.
-From program_logic Require Export weakest_precondition basic_reasoning_rules.
+From program_logic Require Export weakest_precondition basic_reasoning_rules state_interpretation.
 
 (* ========================================================================== *)
 (** Tactics. *)
@@ -175,13 +175,14 @@ Ltac ewp_pure_steps :=
 From iris.program_logic Require Import weakestpre.
 
 Section tests.
-  Context `{!irisGS eff_lang Σ}.
+  Context `{!heapGS Σ}.
 
   Goal forall Ψ, ⊢
     EWP
       (λ: <>, λ: <>, if: (#true && #false) then #() #() else #())%E #true #()
     <| Ψ |> {| Ψ |} {{ y, ⌜ y = #() ⌝ }}.
-    iIntros (?). by ewp_pure_steps.
+    iIntros (?).
+    by ewp_pure_steps.
   Qed.
 
 End tests.
