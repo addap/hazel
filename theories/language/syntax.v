@@ -103,6 +103,7 @@ Section eff_lang.
     | Alloc (e : expr)
     | Load (e : expr)
     | Store (e1 e2 : expr)
+    | CmpXchg (e1 : expr) (e2 : expr) (e3 : expr) (* Compare-exchange *)
     (* Concurrency *)
     | Fork (e : expr)
 
@@ -155,7 +156,10 @@ Section eff_lang.
     | AllocCtx
     | LoadCtx
     | StoreLCtx (v2 : val)
-    | StoreRCtx (e1 : expr).
+    | StoreRCtx (e1 : expr)
+    | CmpXchgLCtx (v1 : val) (v2 : val)
+    | CmpXchgMCtx (e1 : expr) (v2 : val)
+    | CmpXchgRCtx (e1 : expr) (e2 : expr).
 
   (* Evaluation contexts. *)
   Definition ectx := list frame.
@@ -231,6 +235,7 @@ Section induction_principle.
     (Alloc_case : ∀ e, P e → P (Alloc e))
     (Load_case : ∀ e, P e → P (Load e))
     (Store_case : ∀ e1 e2, P e1 → P e2 → P (Store e1 e2))
+    (CmpXchg_case : ∀ e1 e2 e3, P e1 → P e2 → P e3 → P (CmpXchg e1 e2 e3))
     (* Concurrency *)
     (Fork_case : ∀ e, P e → P (Fork e))
 
@@ -277,6 +282,9 @@ Section induction_principle.
     (LoadCtx_case : R LoadCtx)
     (StoreLCtx_case : ∀ v2, Q v2 → R (StoreLCtx v2))
     (StoreRCtx_case : ∀ e1, P e1 → R (StoreRCtx e1))
+    (CmpXchgLCtx_case : ∀ v1 v2, Q v1 → Q v2 → R (CmpXchgLCtx v1 v2))
+    (CmpXchgMCtx_case : ∀ e1 v2, P e1 → Q v2 → R (CmpXchgMCtx e1 v2))
+    (CmpXchgRCtx_case : ∀ e1 e2, P e1 → P e2 → R (CmpXchgRCtx e1 e2))
 
   (* Evaluation contexts. *)
     (EmptyCtx_case : S [])
@@ -330,6 +338,8 @@ Section induction_principle.
         Load_case e (expr_ind e)
     | Store e1 e2 =>
         Store_case e1 e2 (expr_ind e1) (expr_ind e2)
+    | CmpXchg e1 e2 e3 =>
+        CmpXchg_case e1 e2 e3 (expr_ind e1) (expr_ind e2) (expr_ind e3)
     | Fork e =>
         Fork_case e (expr_ind e)
     end.
@@ -407,6 +417,12 @@ Section induction_principle.
         StoreLCtx_case v2 (val_ind v2)
     | StoreRCtx e1 =>
         StoreRCtx_case e1 (expr_ind e1)
+    | CmpXchgLCtx v1 v2 =>
+        CmpXchgLCtx_case v1 v2 (val_ind v1) (val_ind v2)
+    | CmpXchgMCtx e1 v2 =>
+        CmpXchgMCtx_case e1 v2 (expr_ind e1) (val_ind v2)
+    | CmpXchgRCtx e1 e2 =>
+        CmpXchgRCtx_case e1 e2 (expr_ind e1) (expr_ind e2)
     end.
 
   Definition ectx_ind_pre
@@ -608,6 +624,14 @@ Section eq_decidable.
       | _ => right _
       end); congruence.
   Qed.
+  Definition eq_dec_CmpXchg_case e1 e2 e3
+    (He1 : P e1) (He2 : P e2) (He3 : P e3) : P (CmpXchg e1 e2 e3).
+    refine (λ e',
+      match e' with
+      | CmpXchg e1' e2' e3' => cast_if_and3 (He1 e1') (He2 e2') (He3 e3')
+      | _ => right _
+      end); congruence.
+  Qed.
   Definition eq_dec_Fork_case e
     (He : P e) : P (Fork e).
     refine (λ e',
@@ -773,6 +797,27 @@ Section eq_decidable.
       | _ => right _
       end); congruence.
   Qed.
+  Definition eq_dec_CmpXchgLCtx_case v1 v2 (Hv1 : Q v1) (Hv2 : Q v2) : R (CmpXchgLCtx v1 v2).
+    refine (λ f',
+      match f' with
+      | CmpXchgLCtx v1' v2' => cast_if_and (Hv1 v1') (Hv2 v2')
+      | _ => right _
+      end); congruence.
+  Qed.
+  Definition eq_dec_CmpXchgMCtx_case e1 v2 (He1 : P e1) (Hv2 : Q v2) : R (CmpXchgMCtx e1 v2).
+    refine (λ f',
+      match f' with
+      | CmpXchgMCtx e1' v2' => cast_if_and (He1 e1') (Hv2 v2')
+      | _ => right _
+      end); congruence.
+  Qed.
+  Definition eq_dec_CmpXchgRCtx_case e1 e2 (He1 : P e1) (He2 : P e2) : R (CmpXchgRCtx e1 e2).
+    refine (λ f',
+      match f' with
+      | CmpXchgRCtx e1' e2' => cast_if_and (He1 e1') (He2 e2')
+      | _ => right _
+      end); congruence.
+  Qed.
 
   (* Evaluation contexts. *)
   Definition eq_dec_EmptyCtx_case : S [].
@@ -806,6 +851,7 @@ Section eq_decidable.
       eq_dec_Alloc_case
       eq_dec_Load_case
       eq_dec_Store_case
+      eq_dec_CmpXchg_case
       eq_dec_Fork_case
       eq_dec_LitV_case
       eq_dec_RecV_case
@@ -833,6 +879,9 @@ Section eq_decidable.
       eq_dec_LoadCtx_case
       eq_dec_StoreLCtx_case
       eq_dec_StoreRCtx_case
+      eq_dec_CmpXchgLCtx_case
+      eq_dec_CmpXchgMCtx_case
+      eq_dec_CmpXchgRCtx_case
       eq_dec_EmptyCtx_case
       eq_dec_ConsCtx_case.
 
@@ -857,6 +906,7 @@ Section eq_decidable.
       eq_dec_Alloc_case
       eq_dec_Load_case
       eq_dec_Store_case
+      eq_dec_CmpXchg_case
       eq_dec_Fork_case
       eq_dec_LitV_case
       eq_dec_RecV_case
@@ -884,6 +934,9 @@ Section eq_decidable.
       eq_dec_LoadCtx_case
       eq_dec_StoreLCtx_case
       eq_dec_StoreRCtx_case
+      eq_dec_CmpXchgLCtx_case
+      eq_dec_CmpXchgMCtx_case
+      eq_dec_CmpXchgRCtx_case
       eq_dec_EmptyCtx_case
       eq_dec_ConsCtx_case.
 
@@ -908,6 +961,7 @@ Section eq_decidable.
       eq_dec_Alloc_case
       eq_dec_Load_case
       eq_dec_Store_case
+      eq_dec_CmpXchg_case
       eq_dec_Fork_case
       eq_dec_LitV_case
       eq_dec_RecV_case
@@ -935,6 +989,9 @@ Section eq_decidable.
       eq_dec_LoadCtx_case
       eq_dec_StoreLCtx_case
       eq_dec_StoreRCtx_case
+      eq_dec_CmpXchgLCtx_case
+      eq_dec_CmpXchgMCtx_case
+      eq_dec_CmpXchgRCtx_case
       eq_dec_EmptyCtx_case
       eq_dec_ConsCtx_case.
 
@@ -959,6 +1016,7 @@ Section eq_decidable.
       eq_dec_Alloc_case
       eq_dec_Load_case
       eq_dec_Store_case
+      eq_dec_CmpXchg_case
       eq_dec_Fork_case
       eq_dec_LitV_case
       eq_dec_RecV_case
@@ -986,6 +1044,9 @@ Section eq_decidable.
       eq_dec_LoadCtx_case
       eq_dec_StoreLCtx_case
       eq_dec_StoreRCtx_case
+      eq_dec_CmpXchgLCtx_case
+      eq_dec_CmpXchgMCtx_case
+      eq_dec_CmpXchgRCtx_case
       eq_dec_EmptyCtx_case
       eq_dec_ConsCtx_case.
 
@@ -1150,6 +1211,8 @@ Section countable.
     GenNode 18 [ge1; ge2].
   Definition encode_Fork (e : expr) (ge : gtree) : gtree :=
     GenNode 19 [ge].
+  Definition encode_CmpXchg (e1 e2 e3 : expr) (ge1 ge2 ge3 : gtree) : gtree :=
+    GenNode 20 [ge1; ge2; ge3].
 
   (* Values. *)
   Definition encode_LitV l : gtree :=
@@ -1206,6 +1269,12 @@ Section countable.
     GenNode 17 [gv2].
   Definition encode_StoreRCtx (e1 : expr) (ge1 : gtree) : gtree :=
     GenNode 18 [ge1].
+  Definition encode_CmpXchgLCtx (v1 v2 : val) (gv1 gv2 : gtree) : gtree :=
+    GenNode 19 [gv1; gv2].
+  Definition encode_CmpXchgMCtx (e1 : expr) (v2 : val) (ge1 gv2 : gtree) : gtree :=
+    GenNode 20 [ge1; gv2].
+  Definition encode_CmpXchgRCtx (e1 e2 : expr) (ge1 ge2 : gtree) : gtree :=
+    GenNode 21 [ge1; ge2].
 
   (* Evaluation contexts. *)
   Definition encode_EmptyCtx : gtree :=
@@ -1234,6 +1303,7 @@ Section countable.
       encode_Alloc
       encode_Load
       encode_Store
+      encode_CmpXchg
       encode_Fork
       encode_LitV
       encode_RecV
@@ -1261,6 +1331,9 @@ Section countable.
       encode_LoadCtx
       encode_StoreLCtx
       encode_StoreRCtx
+      encode_CmpXchgLCtx
+      encode_CmpXchgMCtx
+      encode_CmpXchgRCtx
       encode_EmptyCtx
       encode_ConsCtx.
 
@@ -1285,6 +1358,7 @@ Section countable.
       encode_Alloc
       encode_Load
       encode_Store
+      encode_CmpXchg
       encode_Fork
       encode_LitV
       encode_RecV
@@ -1312,6 +1386,9 @@ Section countable.
       encode_LoadCtx
       encode_StoreLCtx
       encode_StoreRCtx
+      encode_CmpXchgLCtx
+      encode_CmpXchgMCtx
+      encode_CmpXchgRCtx
       encode_EmptyCtx
       encode_ConsCtx.
 
@@ -1336,6 +1413,7 @@ Section countable.
       encode_Alloc
       encode_Load
       encode_Store
+      encode_CmpXchg
       encode_Fork
       encode_LitV
       encode_RecV
@@ -1363,6 +1441,9 @@ Section countable.
       encode_LoadCtx
       encode_StoreLCtx
       encode_StoreRCtx
+      encode_CmpXchgLCtx
+      encode_CmpXchgMCtx
+      encode_CmpXchgRCtx
       encode_EmptyCtx
       encode_ConsCtx.
 
@@ -1387,6 +1468,7 @@ Section countable.
       encode_Alloc
       encode_Load
       encode_Store
+      encode_CmpXchg
       encode_Fork
       encode_LitV
       encode_RecV
@@ -1414,6 +1496,9 @@ Section countable.
       encode_LoadCtx
       encode_StoreLCtx
       encode_StoreRCtx
+      encode_CmpXchgLCtx
+      encode_CmpXchgMCtx
+      encode_CmpXchgRCtx
       encode_EmptyCtx
       encode_ConsCtx.
 
@@ -1465,6 +1550,8 @@ Section countable.
         Store (decode_expr ge1) (decode_expr ge2)
     | GenNode 19 [ge] =>
         Fork (decode_expr ge)
+    | GenNode 20 [ge1; ge2; ge3] =>
+        CmpXchg (decode_expr ge1) (decode_expr ge2) (decode_expr ge3)
     | _ =>
         Val $ LitV $ LitUnit
     end.
@@ -1534,6 +1621,12 @@ Section countable.
         StoreLCtx (decode_val gv2)
     | GenNode 18 [ge1] =>
         StoreRCtx (decode_expr ge1)
+    | GenNode 19 [gv1; gv2] =>
+        CmpXchgLCtx (decode_val gv1) (decode_val gv2)
+    | GenNode 20 [ge1; gv2] =>
+        CmpXchgMCtx (decode_expr ge1) (decode_val gv2)
+    | GenNode 21 [ge1; ge2] =>
+        CmpXchgRCtx (decode_expr ge1) (decode_expr ge2)
     | _ =>
         FstCtx
     end.
@@ -1623,6 +1716,57 @@ Section countable.
 
 End countable.
 
+(** We assume the following encoding of values to 64-bit words: The least 3
+significant bits of every word are a "tag", and we have 61 bits of payload,
+which is enough if all pointers are 8-byte-aligned (common on 64bit
+architectures). The tags have the following meaning:
+
+0: Payload is the data for a LitV (LitInt _).
+1: Payload is the data for a InjLV (LitV (LitInt _)).
+2: Payload is the data for a InjRV (LitV (LitInt _)).
+3: Payload is the data for a LitV (LitLoc _).
+4: Payload is the data for a InjLV (LitV (LitLoc _)).
+4: Payload is the data for a InjRV (LitV (LitLoc _)).
+6: Payload is one of the following finitely many values, which 61 bits are more
+   than enough to encode:
+   LitV LitUnit, InjLV (LitV LitUnit), InjRV (LitV LitUnit),
+   LitV LitPoison, InjLV (LitV LitPoison), InjRV (LitV LitPoison),
+   LitV (LitBool _), InjLV (LitV (LitBool _)), InjRV (LitV (LitBool _)).
+7: Value is boxed, i.e., payload is a pointer to some read-only memory area on
+   the heap which stores whether this is a RecV, PairV, InjLV or InjRV and the
+   relevant data for those cases. However, the boxed representation is never
+   used if any of the above representations could be used.
+
+Ignoring (as usual) the fact that we have to fit the infinite Z/loc into 61
+bits, this means every value is machine-word-sized and can hence be atomically
+read and written.  Also notice that the sets of boxed and unboxed values are
+disjoint. *)
+Definition lit_is_unboxed (l: base_lit) : Prop :=
+  match l with
+  (** Disallow comparing (erased) prophecies with (erased) prophecies, by
+  considering them boxed. *)
+  | LitInt _ | LitBool _  | LitLoc _ | LitUnit => True
+  end.
+Definition val_is_unboxed (v : val) : Prop :=
+  match v with
+  | LitV l => lit_is_unboxed l
+  | InjLV (LitV l) => lit_is_unboxed l
+  | InjRV (LitV l) => lit_is_unboxed l
+  | _ => False
+  end.
+
+Global Instance lit_is_unboxed_dec l : Decision (lit_is_unboxed l).
+Proof. destruct l; simpl; exact (decide _). Defined.
+Global Instance val_is_unboxed_dec v : Decision (val_is_unboxed v).
+Proof. destruct v as [ | | | [] | [] | | ]; simpl; exact (decide _). Defined.
+
+(** We just compare the word-sized representation of two values, without looking
+into boxed data.  This works out fine if at least one of the to-be-compared
+values is unboxed (exploiting the fact that an unboxed and a boxed value can
+never be equal because these are disjoint sets). *)
+Definition vals_compare_safe (vl v1 : val) : Prop :=
+  val_is_unboxed vl ∨ val_is_unboxed v1.
+Global Arguments vals_compare_safe !_ !_ /.
 
 (* -------------------------------------------------------------------------- *)
 (** Inhabited. *)

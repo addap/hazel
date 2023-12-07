@@ -79,6 +79,12 @@ Definition fill_frame (f : frame) (e : expr) : expr :=
       Store e (Val v2)
   | StoreRCtx e1 =>
       Store e1 e
+  | CmpXchgLCtx v1 v2 =>
+      CmpXchg e (Val v1) (Val v2)
+  | CmpXchgMCtx e1 v2 =>
+      CmpXchg e1 e (Val v2) 
+  | CmpXchgRCtx e1 e2 =>
+      CmpXchg e1 e2 e 
   end.
 
 
@@ -186,6 +192,8 @@ Fixpoint subst (x : string) (v : val) (e : expr) : expr :=
       Load (subst x v e)
   | Store e1 e2 =>
       Store (subst x v e1) (subst x v e2)
+  | CmpXchg e1 e2 e3 =>
+      CmpXchg (subst x v e1) (subst x v e2) (subst x v e3)
   | Fork e =>
       Fork (subst x v e)
   end.
@@ -349,6 +357,15 @@ Inductive head_step : expr → state → expr → state → list expr → Prop :
      is_Some (σ.(heap) !! l) →
        head_step (Store (Val $ LitV $ LitLoc l) (Val v)) σ
                  (Val $ LitV LitUnit) (heap_upd <[l:=v]> σ) []
+  (* CmpXchg *)
+  | CmpXchgS l v1 v2 vl σ b :
+     σ.(heap) !! l = Some vl →
+     (* Crucially, this compares the same way as [EqOp]! *)
+     vals_compare_safe vl v1 →
+     b = bool_decide (vl = v1) →
+      head_step (CmpXchg (Val $ LitV $ LitLoc l) (Val v1) (Val v2)) σ
+               (Val $ PairV vl (LitV $ LitBool b)) (if b then heap_upd <[l:=v2]> σ else σ)
+               []
   (* Concurrency *)
   | ForkS e σ :
      head_step (Fork e) σ (Val $ LitV LitUnit) σ [e]   

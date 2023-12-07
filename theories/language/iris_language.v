@@ -138,21 +138,48 @@ Qed.
 
 Lemma pure_prim_stepI' e1 e2 efs :
   (∀ σ, head_step e1 σ e2 σ efs) →
+    (* If this holds, then we look at the prim_step and know that either k = [], in which case the goal follows from
+        head_step determinism, or e1' is a value, in which case e1' could not do a head_step which leads to contradiction. *)
     (∀ k e1', e1 = fill k e1' → k = [] ∨ ∃ v, e1' = Val v) →
       pure_prim_step e1 e2 efs.
 Proof.
   intros Hstep Hfill. apply pure_prim_stepI; auto.
-  intros ???. inversion 1. simplify_eq.
+  intros ????. inversion 1. simplify_eq.
   destruct (Hfill k e1' eq_refl) as [->|[v ->]]; [|by inversion H2].
   specialize (Hstep σ1) as H3.
+  simpl in H3.
+  (* now we to a big case analysis for head_step determinism. *)
   inversion H2; simplify_eq; try naive_solver;
   inversion H3; simplify_eq; try naive_solver.
   - unfold heap_upd in H10. simpl in H10.
-    rewrite lookup_insert in H10. done.
-  - unfold heap_upd in H4. simpl in H4.
-    rewrite lookup_insert in H4. done.
-  - split; [|done]. destruct σ1 as [σ1].
+    rewrite lookup_insert in H10. by contradict H10.
+  - (* Alloc *)
+    unfold heap_upd in H4. simpl in H4.
+    rewrite lookup_insert in H4. by contradict H4.
+  - (* Store *)
+    split; [|done]. destruct σ1 as [σ1].
     by rewrite /heap_upd /= insert_insert.
+  - (* CmpXchg *)
+    (* There are 3 cases for CmpXchg:
+       1. Location is updated to a new value, this leads to a contradiction.
+       2. Location is updated to the same value, this does not change the state so it's valid.
+       3. Comparison fails, so location is not updated so it's valid. 
+       
+       Case 1 is automatically solved by inversion above.
+       *)
+    destruct (bool_decide (vl0 = v1)) eqn:Evl0.
+    + (* from this we know vl = vl0 = v2, so we are in case 2. *)
+      assert (heap (heap_upd <[l:=v2]> σ1) !! l = Some vl0) as H8 by exact H7.
+      unfold heap_upd in H7. simpl in H7.
+      rewrite lookup_insert in H7. injection H7 as ->.
+      rewrite H10 in H8.
+      rewrite H8 in H0. injection H0 as ->.
+      rewrite Evl0 in H2. rewrite Evl0.
+      split; [|by split].
+      by rewrite /heap_upd /= insert_insert.
+    + rewrite H7 in H0. injection H0 as ->.
+      rewrite Evl0.
+      by split; split.
   - unfold heap_upd in H11. simpl in H11.
     rewrite lookup_insert in H11. done.
 Qed.
@@ -384,6 +411,7 @@ Proof.
   apply IHk; eauto.
 Qed.
 
+(* a.d. TODO describe why we add this. *)
 Definition pure_prim_step_no_fork e e' := pure_prim_step e e' [].
 
 Lemma tc_pure_prim_step_no_fork_fill k e e' :

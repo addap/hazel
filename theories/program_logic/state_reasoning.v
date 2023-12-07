@@ -138,5 +138,92 @@ Section reasoning_rules.
       + destruct (fill_val' k e1' #l) as [-> ->]. naive_solver. by inversion H1.
       + destruct (fill_val' k e1' w)  as [-> ->]. naive_solver. by inversion H1.
   Qed.
+  
+  (* ------------------------------------------------------------------------ *)
+  (** CmpXchg. *)
+(* Lemma twp_cmpxchg_fail s E l dq v' v1 v2 :
+  v' ≠ v1 → vals_compare_safe v' v1 →
+  [[{ l ↦{dq} v' }]] CmpXchg (Val $ LitV $ LitLoc l) (Val v1) (Val v2) @ s; E
+  [[{ RET PairV v' (LitV $ LitBool false); l ↦{dq} v' }]].
+Proof.
+  iIntros (?? Φ) "Hl HΦ". iApply twp_lift_atomic_base_step_no_fork; first done.
+  iIntros (σ1 ns κs nt) "(Hσ & Hκs & Hsteps) !>". iDestruct (gen_heap_valid with "Hσ Hl") as %?.
+  iSplit; first by eauto with base_step.
+  iIntros (κ v2' σ2 efs Hstep); inv_base_step.
+  rewrite bool_decide_false //.
+  iMod (steps_auth_update_S with "Hsteps") as "Hsteps".
+  iModIntro; iSplit; first done. iSplit; first done. iFrame. by iApply "HΦ".
+Qed. *)
+
+  Lemma wp_cmpxchg_fail E Ψ1 Ψ2 Φ l v' v1 v2 :
+    v' ≠ v1 → vals_compare_safe v' v1 →
+    ▷ l ↦ v' -∗ 
+      ▷ (l ↦ v' ={E}=∗ Φ (PairV v' (LitV $ LitBool false))) -∗ 
+        EWP (CmpXchg (Val $ LitV $ LitLoc l) (Val v1) (Val v2)) @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
+  Proof.
+    iIntros (Hneq Hsafe) "Hl HΦ". 
+    rewrite ewp_unfold /ewp_pre //=.
+    iIntros (σ ????) "Hσ".
+    iAssert (▷ (l ↦ v' ∗ gen_heap_interp (heap σ) ∗ ⌜ heap σ !! l = Some v' ⌝))%I
+      with "[Hl Hσ]" as "(Hl & >Hσ & >%Hvalid)".
+    { iNext. iDestruct (gen_heap_valid with "Hσ Hl") as %H. by iFrame. }
+    iApply fupd_mask_intro; first by apply empty_subseteq. iIntros "Hclose".
+    iSplitR.
+    - iPureIntro. rewrite /reducible //=.
+      exists [], (v', #false)%V, σ, []. simpl.
+      apply (Ectx_prim_step _ _ _ _ [] [] (CmpXchg (Val $ LitV $ LitLoc l) (Val v1) (Val v2)) (v', #false)%V); try done.
+      apply CmpXchgS. assumption. assumption. 
+      by rewrite bool_decide_false.
+    - iIntros (e₂ σ₂ efs₂ Hstep) "!>!>!>".
+      destruct κ; [|done]. simpl in Hstep.
+      (* a.d. TODO This is basically a pure step, can we use the pure_prim_step things from iris_language.v? *)
+      (* Since we know e1' does a head_step, we can deduce k is empty. The other cases lead to a contradiction. *)
+      destruct Hstep. destruct k  as [|f k]; [| destruct f; try naive_solver ].
+      + simpl in H, H0. simplify_eq. inversion H1. simplify_eq. 
+        rewrite bool_decide_false in H1; last by assumption. rewrite bool_decide_false; last by assumption.
+        iFrame.
+        iMod "Hclose". iMod ("HΦ" with "Hl") as "HΦ".
+        iModIntro.
+        iSplitL; last by done.
+        by iApply ewp_value.
+      + destruct (fill_val' k e1' #l) as [-> ->]. naive_solver. by inversion H1.
+      + destruct (fill_val' k e1' v1) as [-> ->]. naive_solver. by inversion H1.
+      + destruct (fill_val' k e1' v2) as [-> ->]. naive_solver. by inversion H1.
+  Qed.
+
+  Lemma wp_cmpxchg_suc E Ψ1 Ψ2 Φ l v' v1 v2 :
+    v' = v1 → vals_compare_safe v' v1 →
+    ▷ l ↦ v' -∗ 
+      ▷ (l ↦ v2 ={E}=∗ Φ (PairV v' (LitV $ LitBool true))) -∗ 
+        EWP (CmpXchg (Val $ LitV $ LitLoc l) (Val v1) (Val v2)) @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
+  Proof.
+    iIntros (Heq Hsafe) "Hl HΦ". 
+    rewrite ewp_unfold /ewp_pre //=.
+    iIntros (σ ????) "Hσ".
+    iAssert (▷ (l ↦ v' ∗ gen_heap_interp (heap σ) ∗ ⌜ heap σ !! l = Some v' ⌝))%I
+      with "[Hl Hσ]" as "(Hl & >Hσ & >%Hvalid)".
+    { iNext. iDestruct (gen_heap_valid with "Hσ Hl") as %H. by iFrame. }
+    iApply fupd_mask_intro; first by apply empty_subseteq. iIntros "Hclose".
+    iSplitR.
+    - iPureIntro. rewrite /reducible //=.
+      exists [], (v', #true)%V, (heap_upd <[ l := v2 ]> σ), []. simpl.
+      apply (Ectx_prim_step _ _ _ _ [] [] (CmpXchg (Val $ LitV $ LitLoc l) (Val v1) (Val v2)) (v', #true)%V); try done.
+      apply CmpXchgS. assumption. assumption. 
+      by rewrite bool_decide_true.
+    - iIntros (e₂ σ₂ efs₂ Hstep) "!>!>!>".
+      iMod (gen_heap_update  _ _ _ v2 with "Hσ Hl") as "[Hσ Hl]".
+      destruct κ; [|done]. simpl in Hstep.
+      destruct Hstep. destruct k  as [|f k]; [| destruct f; try naive_solver ].
+      + simpl in H, H0. revert Heq. simplify_eq. inversion H1. simplify_eq. intros Heq.
+        rewrite bool_decide_true in H1; last by assumption. rewrite bool_decide_true; last by assumption.
+        iFrame.
+        iMod "Hclose". iMod ("HΦ" with "Hl") as "HΦ".
+        iModIntro.
+        iSplitL; last by done.
+        by iApply ewp_value.
+      + destruct (fill_val' k e1' #l) as [-> ->]. naive_solver. by inversion H1.
+      + destruct (fill_val' k e1' v1) as [-> ->]. naive_solver. by inversion H1.
+      + destruct (fill_val' k e1' v2) as [-> ->]. naive_solver. by inversion H1.
+  Qed.
 
 End reasoning_rules.
