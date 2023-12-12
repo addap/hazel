@@ -1,14 +1,16 @@
 From program_logic Require Import reasoning_rules.
 
+(* I'm not sure why they call it sub_redexes, but this says that all subexpressions of 
+   e are values, i.e. if we decompose it into K[e'] where e' is not a value then K must be empty. *)
 Definition sub_redexes_are_values (e : expr) :=
   ∀ K e', e = fill K e' → to_val e' = None → K = [].
 
+(* This says that e takes one step to a value. *)
 Definition head_atomic (a : atomicity) (e : expr) : Prop :=
   ∀ σ e' σ' efs,
     head_step e σ e' σ' efs →
     if a is WeaklyAtomic then irreducible e' σ' else is_Some (to_val e').
 
-(* a.d. TODO why does this lemma work? *)
 Lemma ectx_language_atomic a e :
   head_atomic a e → sub_redexes_are_values e → Atomic a e.
 Proof.

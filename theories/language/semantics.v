@@ -103,7 +103,7 @@ Proof. induction f; simplify_option_eq; eauto. Qed.
 Lemma fill_frame_no_val_inj f1 f2 e1 e2 :
   to_val e1 = None → to_val e2 = None →
     fill_frame f1 e1 = fill_frame f2 e2 → f1 = f2.
-Proof. revert f1. induction f2, f1; try naive_solver eauto with f_equal. Qed.
+Proof. revert f1. induction f2, f1; naive_solver eauto with f_equal. Qed.
 
 (* -------------------------------------------------------------------------- *)
 (** Contexts. *)
@@ -457,6 +457,7 @@ Inductive head_step : expr → state → expr → state → list expr → Prop :
   | DoEffS m m' v k σ :
      head_step (Do m (Eff m' v k))         σ
                (Eff m' v ((DoCtx m) :: k)) σ [].
+  (* a.d. TODO rules for CmpXchg contexts *)
 
 (* Reduction relation. *)
 (* [prim_step] is the closure of the head-reduction

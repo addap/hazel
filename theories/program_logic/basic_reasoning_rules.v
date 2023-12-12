@@ -252,8 +252,8 @@ Section reasoning_rules.
       + iDestruct "H" as "[H Hefs]".
         iMod ("H" $! _ _ [] with "[$]") as "[H _]".
         iDestruct "H" as %(? & ? & ? & ? & ?).
-        have Hstep' : prim_step' e σ1 [] e2 σ2 efs. { by destruct k. }
-        edestruct (atomic _ _ _ _ _ Hstep'); by naive_solver.
+        destruct k; [|done].
+        edestruct (atomic _ _ _ _ _ Hstep); by naive_solver.
   Qed.
 
 
@@ -340,50 +340,22 @@ Section reasoning_rules.
     ▷ EWP e @ ⊤ <| ⊥ |> {| ⊥ |} {{ fork_post }} -∗ ▷ Φ (LitV LitUnit) -∗ EWP Fork e @ E <| Ψ1 |> {| Ψ2 |} {{ Φ }}.
   Proof.
     iIntros "He HΦ". 
-    destruct (to_eff e) as [((m, v), k)|] eqn:He.
-    - (* by definition of EWP, we have iEff_car of empty protocol, i.e. False *) 
-      specialize (to_eff_not_to_val He) as He'.
-      rewrite !(ewp_unfold ⊤ e) /ewp_pre He He'. 
-      destruct m; rewrite upcl_bottom.
-      + rewrite !(ewp_unfold E (Fork e)) /ewp_pre.
-        simpl.
-        iIntros (σ₁ ns k' ks' nt) "Hs".
-        iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
-        iModIntro. iSplitR.
-        * iPureIntro. apply (pure_prim_step_imp_reducible _ (LitV LitUnit) [e]).
-          by apply pure_prim_step_Fork.
-        * iIntros (e₂ σ₂ efs₂ Hstep'). destruct k'; [|done].
-          destruct (pure_prim_step_det _ _ [e] (pure_prim_step_Fork _) _ _ _ efs₂ Hstep') as (-> & -> & <-).
-          simpl. iIntros "!> !>".
-          iDestruct "He" as %[].
-      + rewrite !(ewp_unfold E (Fork e)) /ewp_pre.
-        simpl.
-        iIntros (σ₁ ns k' ks' nt) "Hs".
-        iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
-        iModIntro. iSplitR.
-        * iPureIntro. apply (pure_prim_step_imp_reducible _ (LitV LitUnit) [e]).
-          by apply pure_prim_step_Fork.
-        * iIntros (e₂ σ₂ efs₂ Hstep'). destruct k'; [|done].
-          destruct (pure_prim_step_det _ _ [e] (pure_prim_step_Fork _) _ _ _ efs₂ Hstep') as (-> & -> & <-).
-          simpl. iIntros "!> !>".
-          iDestruct "He" as %[].
-    - 
-      rewrite !(ewp_unfold E (Fork e)) /ewp_pre.
-      simpl.
-      iIntros (σ₁ ns k' ks' nt) "Hs".
-      iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
-      iModIntro. iSplitR.
-      * iPureIntro. apply (pure_prim_step_imp_reducible _ (LitV LitUnit) [e]).
-        by apply pure_prim_step_Fork.
-      * iIntros (e₂ σ₂ efs₂ Hstep'). destruct k'; [|done].
-        destruct (pure_prim_step_det _ _ [e] (pure_prim_step_Fork _) _ _ _ efs₂ Hstep') as (-> & -> & <-).
-        simpl. iIntros "!> !>".
-        iModIntro.
-        iMod "Hclose" as "_". iModIntro.
-        iFrame.
-        rewrite !(ewp_unfold E #()) /ewp_pre.
-        simpl. 
-        by iFrame.
+    rewrite !(ewp_unfold E (Fork e)) /ewp_pre.
+    simpl.
+    iIntros (σ₁ ns k' ks' nt) "Hs".
+    iMod (fupd_mask_subseteq ∅) as "Hclose"; [by apply empty_subseteq|].
+    iModIntro. iSplitR.
+    - iPureIntro. apply (pure_prim_step_imp_reducible _ (LitV LitUnit) [e]).
+      by apply pure_prim_step_Fork.
+    - iIntros (e₂ σ₂ efs₂ Hstep'). destruct k'; [|done].
+      destruct (pure_prim_step_det _ _ [e] (pure_prim_step_Fork _) _ _ _ efs₂ Hstep') as (-> & -> & <-).
+      simpl. iIntros "!> !>".
+      iModIntro.
+      iMod "Hclose" as "_". iModIntro.
+      iFrame.
+      rewrite !(ewp_unfold E #()) /ewp_pre.
+      simpl. 
+      by iFrame.
   Qed.
 
   (* ------------------------------------------------------------------------ *)

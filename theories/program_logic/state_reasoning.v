@@ -155,7 +155,7 @@ Proof.
   iModIntro; iSplit; first done. iSplit; first done. iFrame. by iApply "HΦ".
 Qed. *)
 
-  Lemma wp_cmpxchg_fail E Ψ1 Ψ2 Φ l v' v1 v2 :
+  Lemma ewp_cmpxchg_fail E Ψ1 Ψ2 Φ l v' v1 v2 :
     v' ≠ v1 → vals_compare_safe v' v1 →
     ▷ l ↦ v' -∗ 
       ▷ (l ↦ v' ={E}=∗ Φ (PairV v' (LitV $ LitBool false))) -∗ 
@@ -191,7 +191,7 @@ Qed. *)
       + destruct (fill_val' k e1' v2) as [-> ->]. naive_solver. by inversion H1.
   Qed.
 
-  Lemma wp_cmpxchg_suc E Ψ1 Ψ2 Φ l v' v1 v2 :
+  Lemma ewp_cmpxchg_suc E Ψ1 Ψ2 Φ l v' v1 v2 :
     v' = v1 → vals_compare_safe v' v1 →
     ▷ l ↦ v' -∗ 
       ▷ (l ↦ v2 ={E}=∗ Φ (PairV v' (LitV $ LitBool true))) -∗ 
