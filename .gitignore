@@ -13,3 +13,7 @@ _opam
 build-dep
 .coq-native/
 _build
+
+.Makefile.coq.d
+Makefile.coq
+Makefile.coq.conf
