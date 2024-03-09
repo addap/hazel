@@ -153,9 +153,21 @@ Proof.
   inversion H3; simplify_eq; try naive_solver.
   - unfold heap_upd in H10. simpl in H10.
     rewrite lookup_insert in H10. by contradict H10.
-  - (* Alloc *)
-    unfold heap_upd in H4. simpl in H4.
-    rewrite lookup_insert in H4. by contradict H4.
+  - (* AllocN *)
+    unfold state_init_heap, heap_upd in H11. 
+    assert (∃ (n': nat), n = n') as [n' ->].
+    { apply Z_of_nat_complete. lia. }
+    destruct n' as [|n']; [by lia|].
+    (* Search (Z.to_nat (Z.pos _)). *)
+    rewrite Nat2Z.id in H11.
+    simpl in H11.
+    specialize (H11 0).
+    rewrite loc_add_0 in H11.
+    rewrite lookup_union_l in H11; [|rewrite lookup_union_l].
+    rewrite lookup_union_l in H11.
+    2-4: by rewrite lookup_insert.
+    rewrite lookup_insert in H11.
+    discriminate H11; by lia.
   - (* Store *)
     split; [|done]. destruct σ1 as [σ1].
     by rewrite /heap_upd /= insert_insert.

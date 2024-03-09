@@ -100,7 +100,7 @@ Section eff_lang.
     | InjR (e : expr)
     | Case (e0 e1 e2 : expr)
     (* Heap. *)
-    | Alloc (e : expr)
+    | AllocN (e1 e2 : expr)
     | Load (e : expr)
     | Store (e1 e2 : expr)
     | CmpXchg (e1 : expr) (e2 : expr) (e3 : expr) (* Compare-exchange *)
@@ -153,12 +153,13 @@ Section eff_lang.
     | InjRCtx
     | CaseCtx (e1 e2 : expr)
     (* Heap. *)
-    | AllocCtx
+    | AllocNLCtx (v2 : val)
+    | AllocNRCtx (e1 : expr)
     | LoadCtx
     | StoreLCtx (v2 : val)
     | StoreRCtx (e1 : expr)
-    | CmpXchgLCtx (v1 : val) (v2 : val)
-    | CmpXchgMCtx (e1 : expr) (v2 : val)
+    | CmpXchgLCtx (v2 : val) (v3 : val)
+    | CmpXchgMCtx (e1 : expr) (v3 : val)
     | CmpXchgRCtx (e1 : expr) (e2 : expr).
 
   (* Evaluation contexts. *)
@@ -232,7 +233,7 @@ Section induction_principle.
     (InjR_case : ∀ e, P e → P (InjR e))
     (Case_case : ∀ e0 e1 e2, P e0 → P e1 → P e2 → P (Case e0 e1 e2))
     (* Heap. *)
-    (Alloc_case : ∀ e, P e → P (Alloc e))
+    (AllocN_case : ∀ e1 e2, P e1 → P e2 → P (AllocN e1 e2))
     (Load_case : ∀ e, P e → P (Load e))
     (Store_case : ∀ e1 e2, P e1 → P e2 → P (Store e1 e2))
     (CmpXchg_case : ∀ e1 e2 e3, P e1 → P e2 → P e3 → P (CmpXchg e1 e2 e3))
@@ -278,7 +279,8 @@ Section induction_principle.
     (InjRCtx_case : R InjRCtx)
     (CaseCtx_case : ∀ e1 e2, P e1 → P e2 → R (CaseCtx e1 e2))
     (* Heap. *)
-    (AllocCtx_case : R AllocCtx)
+    (AllocNLCtx_case : ∀ v2, Q v2 → R (AllocNLCtx v2))
+    (AllocNRCtx_case : ∀ e1, P e1 → R (AllocNRCtx e1))
     (LoadCtx_case : R LoadCtx)
     (StoreLCtx_case : ∀ v2, Q v2 → R (StoreLCtx v2))
     (StoreRCtx_case : ∀ e1, P e1 → R (StoreRCtx e1))
@@ -332,8 +334,8 @@ Section induction_principle.
         InjR_case e (expr_ind e)
     | Case e0 e1 e2 =>
         Case_case e0 e1 e2 (expr_ind e0) (expr_ind e1) (expr_ind e2)
-    | Alloc e =>
-        Alloc_case e (expr_ind e)
+    | AllocN e1 e2 =>
+        AllocN_case e1 e2 (expr_ind e1) (expr_ind e2)
     | Load e =>
         Load_case e (expr_ind e)
     | Store e1 e2 =>
@@ -409,8 +411,10 @@ Section induction_principle.
         InjRCtx_case
     | CaseCtx e1 e2 =>
         CaseCtx_case e1 e2 (expr_ind e1) (expr_ind e2)
-    | AllocCtx =>
-        AllocCtx_case
+    | AllocNLCtx v2 =>
+        AllocNLCtx_case v2 (val_ind v2)
+    | AllocNRCtx e1 =>
+        AllocNRCtx_case e1 (expr_ind e1)
     | LoadCtx =>
         LoadCtx_case
     | StoreLCtx v2 =>
@@ -602,10 +606,10 @@ Section eq_decidable.
       | _ => right _
       end); congruence.
   Qed.
-  Definition eq_dec_Alloc_case e (He : P e) : P (Alloc e).
+  Definition eq_dec_AllocN_case e1 e2 (He1 : P e1) (He2 : P e2) : P (AllocN e1 e2).
     refine (λ e',
       match e' with
-      | Alloc e' => cast_if (He e')
+      | AllocN e1' e2' => cast_if_and (He1 e1') (He2 e2')
       | _ => right _
       end); congruence.
   Qed.
@@ -779,8 +783,20 @@ Section eq_decidable.
       | _ => right _
       end); congruence.
   Qed.
-  Definition eq_dec_AllocCtx_case : R AllocCtx.
-    by refine (λ f', match f' with AllocCtx => left _ | _ => right _ end). Qed.
+  Definition eq_dec_AllocNLCtx_case v2 (Hv2 : Q v2) : R (AllocNLCtx v2).
+    by refine (λ f', 
+      match f' with 
+      | AllocNLCtx v2' => cast_if (Hv2 v2')
+      | _ => right _ 
+      end); congruence. 
+  Qed.
+  Definition eq_dec_AllocNRCtx_case e1 (He1 : P e1) : R (AllocNRCtx e1).
+    by refine (λ f', 
+      match f' with 
+      | AllocNRCtx e1' => cast_if (He1 e1')
+      | _ => right _ 
+      end); congruence. 
+  Qed.
   Definition eq_dec_LoadCtx_case : R LoadCtx.
     by refine (λ f', match f' with LoadCtx => left _ | _ => right _ end). Qed.
   Definition eq_dec_StoreLCtx_case v2 (Hv2 : Q v2) : R (StoreLCtx v2).
@@ -848,7 +864,7 @@ Section eq_decidable.
       eq_dec_InjL_case
       eq_dec_InjR_case
       eq_dec_Case_case
-      eq_dec_Alloc_case
+      eq_dec_AllocN_case
       eq_dec_Load_case
       eq_dec_Store_case
       eq_dec_CmpXchg_case
@@ -875,7 +891,8 @@ Section eq_decidable.
       eq_dec_InjLCtx_case
       eq_dec_InjRCtx_case
       eq_dec_CaseCtx_case
-      eq_dec_AllocCtx_case
+      eq_dec_AllocNLCtx_case
+      eq_dec_AllocNRCtx_case
       eq_dec_LoadCtx_case
       eq_dec_StoreLCtx_case
       eq_dec_StoreRCtx_case
@@ -903,7 +920,7 @@ Section eq_decidable.
       eq_dec_InjL_case
       eq_dec_InjR_case
       eq_dec_Case_case
-      eq_dec_Alloc_case
+      eq_dec_AllocN_case
       eq_dec_Load_case
       eq_dec_Store_case
       eq_dec_CmpXchg_case
@@ -930,7 +947,8 @@ Section eq_decidable.
       eq_dec_InjLCtx_case
       eq_dec_InjRCtx_case
       eq_dec_CaseCtx_case
-      eq_dec_AllocCtx_case
+      eq_dec_AllocNLCtx_case
+      eq_dec_AllocNRCtx_case
       eq_dec_LoadCtx_case
       eq_dec_StoreLCtx_case
       eq_dec_StoreRCtx_case
@@ -958,7 +976,7 @@ Section eq_decidable.
       eq_dec_InjL_case
       eq_dec_InjR_case
       eq_dec_Case_case
-      eq_dec_Alloc_case
+      eq_dec_AllocN_case
       eq_dec_Load_case
       eq_dec_Store_case
       eq_dec_CmpXchg_case
@@ -985,7 +1003,8 @@ Section eq_decidable.
       eq_dec_InjLCtx_case
       eq_dec_InjRCtx_case
       eq_dec_CaseCtx_case
-      eq_dec_AllocCtx_case
+      eq_dec_AllocNLCtx_case
+      eq_dec_AllocNRCtx_case
       eq_dec_LoadCtx_case
       eq_dec_StoreLCtx_case
       eq_dec_StoreRCtx_case
@@ -1013,7 +1032,7 @@ Section eq_decidable.
       eq_dec_InjL_case
       eq_dec_InjR_case
       eq_dec_Case_case
-      eq_dec_Alloc_case
+      eq_dec_AllocN_case
       eq_dec_Load_case
       eq_dec_Store_case
       eq_dec_CmpXchg_case
@@ -1040,7 +1059,8 @@ Section eq_decidable.
       eq_dec_InjLCtx_case
       eq_dec_InjRCtx_case
       eq_dec_CaseCtx_case
-      eq_dec_AllocCtx_case
+      eq_dec_AllocNLCtx_case
+      eq_dec_AllocNRCtx_case
       eq_dec_LoadCtx_case
       eq_dec_StoreLCtx_case
       eq_dec_StoreRCtx_case
@@ -1203,8 +1223,8 @@ Section countable.
     GenNode 14 [ge].
   Definition encode_Case (e0 e1 e2 : expr) (ge0 ge1 ge2 : gtree) : gtree :=
     GenNode 15 [ge0; ge1; ge2].
-  Definition encode_Alloc (e : expr) (ge : gtree) : gtree :=
-    GenNode 16 [ge].
+  Definition encode_AllocN (e1 e2 : expr) (ge1 ge2 : gtree) : gtree :=
+    GenNode 16 [ge1; ge2].
   Definition encode_Load (e : expr) (ge : gtree) : gtree :=
     GenNode 17 [ge].
   Definition encode_Store (e1 e2 : expr) (ge1 ge2 : gtree) : gtree :=
@@ -1261,8 +1281,10 @@ Section countable.
     GenNode 13 [].
   Definition encode_CaseCtx (e1 e2 : expr) (ge1 ge2 : gtree) : gtree :=
     GenNode 14 [ge1; ge2].
-  Definition encode_AllocCtx : gtree :=
-    GenNode 15 [].
+  Definition encode_AllocNLCtx (v2 : val) (gv2 : gtree) : gtree :=
+    GenNode 15 [gv2].
+  Definition encode_AllocNRCtx (e1 : expr) (ge1 : gtree) : gtree :=
+    GenNode 22 [ge1].
   Definition encode_LoadCtx : gtree :=
     GenNode 16 [].
   Definition encode_StoreLCtx (v2 : val) (gv2 : gtree) : gtree :=
@@ -1300,7 +1322,7 @@ Section countable.
       encode_InjL
       encode_InjR
       encode_Case
-      encode_Alloc
+      encode_AllocN
       encode_Load
       encode_Store
       encode_CmpXchg
@@ -1327,7 +1349,8 @@ Section countable.
       encode_InjLCtx
       encode_InjRCtx
       encode_CaseCtx
-      encode_AllocCtx
+      encode_AllocNLCtx
+      encode_AllocNRCtx
       encode_LoadCtx
       encode_StoreLCtx
       encode_StoreRCtx
@@ -1355,7 +1378,7 @@ Section countable.
       encode_InjL
       encode_InjR
       encode_Case
-      encode_Alloc
+      encode_AllocN
       encode_Load
       encode_Store
       encode_CmpXchg
@@ -1382,7 +1405,8 @@ Section countable.
       encode_InjLCtx
       encode_InjRCtx
       encode_CaseCtx
-      encode_AllocCtx
+      encode_AllocNLCtx
+      encode_AllocNRCtx
       encode_LoadCtx
       encode_StoreLCtx
       encode_StoreRCtx
@@ -1410,7 +1434,7 @@ Section countable.
       encode_InjL
       encode_InjR
       encode_Case
-      encode_Alloc
+      encode_AllocN
       encode_Load
       encode_Store
       encode_CmpXchg
@@ -1437,7 +1461,8 @@ Section countable.
       encode_InjLCtx
       encode_InjRCtx
       encode_CaseCtx
-      encode_AllocCtx
+      encode_AllocNLCtx
+      encode_AllocNRCtx
       encode_LoadCtx
       encode_StoreLCtx
       encode_StoreRCtx
@@ -1465,7 +1490,7 @@ Section countable.
       encode_InjL
       encode_InjR
       encode_Case
-      encode_Alloc
+      encode_AllocN
       encode_Load
       encode_Store
       encode_CmpXchg
@@ -1492,7 +1517,8 @@ Section countable.
       encode_InjLCtx
       encode_InjRCtx
       encode_CaseCtx
-      encode_AllocCtx
+      encode_AllocNLCtx
+      encode_AllocNRCtx
       encode_LoadCtx
       encode_StoreLCtx
       encode_StoreRCtx
@@ -1542,8 +1568,8 @@ Section countable.
         InjR (decode_expr ge)
     | GenNode 15 [ge1; ge2; ge3] =>
         Case (decode_expr ge1) (decode_expr ge2) (decode_expr ge3)
-    | GenNode 16 [ge] =>
-        Alloc (decode_expr ge)
+    | GenNode 16 [ge1; ge2] =>
+        AllocN (decode_expr ge1) (decode_expr ge2)
     | GenNode 17 [ge] =>
         Load (decode_expr ge)
     | GenNode 18 [ge1; ge2] =>
@@ -1613,8 +1639,10 @@ Section countable.
         InjRCtx
     | GenNode 14 [ge1; ge2] =>
         CaseCtx (decode_expr ge1) (decode_expr ge2)
-    | GenNode 15 [] =>
-        AllocCtx
+    | GenNode 15 [gv2] =>
+        AllocNLCtx (decode_val gv2)
+    | GenNode 22 [ge1] =>
+        AllocNRCtx (decode_expr ge1)
     | GenNode 16 [] =>
         LoadCtx
     | GenNode 17 [gv2] =>

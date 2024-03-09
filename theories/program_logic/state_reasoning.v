@@ -58,17 +58,25 @@ Section reasoning_rules.
       set (l := fresh_locs (dom (gset loc) σ.(heap))).
       exists [], #l, (heap_upd <[l:=v]> σ), []. simpl.
       apply (Ectx_prim_step _ _ _ _ [] [] (ref v)%E (#l)); try done.
-      by apply alloc_fresh.
+      rewrite -state_init_heap_singleton.
+      apply alloc_fresh. lia.
     - iIntros (e₂ σ₂ efs₂ Hstep).
       destruct κ; [|done]. simpl in Hstep.
       destruct Hstep; destruct k  as [|f k];
       [| destruct f; try naive_solver ].
       + simpl in H, H0. simplify_eq. inversion H1.
-        iMod (gen_heap_alloc _ l v with "Hσ") as "($ & Hl & Hm)". { done. }
+        rewrite state_init_heap_singleton.
+        iMod (gen_heap_alloc _ l v with "Hσ") as "($ & Hl & Hm)". 
+        { specialize (H7 0). rewrite loc_add_0 in H7.
+          apply H7; by lia. }
         iIntros "!> !> !>". iMod "Hclose".
         iSplitL; last by iModIntro.
         iApply ewp_value.
          by iMod ("HΦ" with "Hl").
+      + simpl in H. 
+        injection H as He1'.
+        destruct (fill_val' k e1' #1) as [-> ->]. done.
+        inversion H1.
       + destruct (fill_val' k e1' v) as [-> ->]. naive_solver. by inversion H1.
   Qed.
 

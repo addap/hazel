@@ -71,8 +71,10 @@ Definition fill_frame (f : frame) (e : expr) : expr :=
       InjR e
   | CaseCtx e1 e2 =>
       Case e e1 e2
-  | AllocCtx =>
-      Alloc e
+  | AllocNLCtx v2 =>
+      AllocN e (Val v2)
+  | AllocNRCtx e1 =>
+      AllocN e1 e
   | LoadCtx =>
       Load e
   | StoreLCtx v2 =>
@@ -186,8 +188,8 @@ Fixpoint subst (x : string) (v : val) (e : expr) : expr :=
       InjR (subst x v e)
   | Case e0 e1 e2 =>
       Case (subst x v e0) (subst x v e1) (subst x v e2)
-  | Alloc e =>
-      Alloc (subst x v e)
+  | AllocN e1 e2 =>
+      AllocN (subst x v e1) (subst x v e2)
   | Load e =>
       Load (subst x v e)
   | Store e1 e2 =>
@@ -291,6 +293,56 @@ Definition heap_upd (f : gmap loc val → gmap loc val) : state → state :=
   λ σ,  {| heap := f σ.(heap) |}.
 Arguments heap_upd _ !_ /.
 
+Fixpoint heap_array (l : loc) (vs : list val) : gmap loc val :=
+  match vs with
+  | [] => ∅
+  | v :: vs' => {[l := v]} ∪ heap_array (l +ₗ 1) vs'
+  end.
+
+Lemma heap_array_singleton l v : heap_array l [v] = {[l := v]}.
+Proof. by rewrite /heap_array right_id. Qed.
+
+Lemma heap_array_lookup l vs w k :
+  heap_array l vs !! k = Some w ↔
+  ∃ j, (0 ≤ j)%Z ∧ k = l +ₗ j ∧ vs !! (Z.to_nat j) = Some w.
+Proof.
+  revert k l; induction vs as [|v' vs IH]=> l' l /=.
+  { rewrite lookup_empty. naive_solver lia. }
+  rewrite -insert_union_singleton_l lookup_insert_Some IH. split.
+  - intros [[-> ?] | (Hl & j & ? & -> & ?)].
+    { eexists 0. rewrite loc_add_0. naive_solver lia. }
+    eexists (1 + j)%Z. rewrite loc_add_assoc !Z.add_1_l Z2Nat.inj_succ; auto with lia.
+  - intros (j & ? & -> & Hil). destruct (decide (j = 0)); simplify_eq/=.
+    { rewrite loc_add_0; eauto. }
+    right. split.
+    { rewrite -{1}(loc_add_0 l). intros ?%(inj (loc_add _)); lia. }
+    assert (Z.to_nat j = S (Z.to_nat (j - 1))) as Hj.
+    { rewrite -Z2Nat.inj_succ; last lia. f_equal; lia. }
+    rewrite Hj /= in Hil.
+    eexists (j - 1)%Z. rewrite loc_add_assoc Z.add_sub_assoc Z.add_simpl_l.
+    auto with lia.
+Qed.
+
+Lemma heap_array_map_disjoint (h : gmap loc val) (l : loc) (vs : list val) :
+  (∀ i, (0 ≤ i)%Z → (i < length vs)%Z → h !! (l +ₗ i) = None) →
+  (heap_array l vs) ##ₘ h.
+Proof.
+  intros Hdisj. apply map_disjoint_spec=> l' v1 v2.
+  intros (j&?&->&Hj%lookup_lt_Some%inj_lt)%heap_array_lookup.
+  move: Hj. rewrite Z2Nat.id // => ?. by rewrite Hdisj.
+Qed.
+
+(* [h] is added on the right here to make [state_init_heap_singleton] true. *)
+Definition state_init_heap (l : loc) (n : Z) (v : val) (σ : state) : state :=
+  heap_upd (λ h, heap_array l (replicate (Z.to_nat n) v) ∪ h) σ.
+
+Lemma state_init_heap_singleton l v σ :
+  state_init_heap l 1 v σ = heap_upd <[l:=v]> σ.
+Proof.
+  destruct σ as [h]. rewrite /state_init_heap /=. f_equiv.
+  rewrite right_id insert_union_singleton_l. done.
+Qed.
+
 (* Heap-reduction relation. *)
 Inductive head_step : expr → state → expr → state → list expr → Prop :=
   (* Lambda. *)
@@ -344,10 +396,11 @@ Inductive head_step : expr → state → expr → state → list expr → Prop :
   | CaseRS v e1 e2 σ :
      head_step (Case (Val $ InjRV v) e1 e2) σ (App e2 (Val v)) σ []
   (* Alloc. *)
-  | AllocS v σ l :
-     σ.(heap) !! l = None →
-       head_step (Alloc (Val v))                            σ
-                 (Val $ LitV $ LitLoc l) (heap_upd <[l:=v]> σ) []
+  | AllocNS n v σ l :
+     (0 < n)%Z →
+     (∀ i, (0 ≤ i)%Z → (i < n)%Z → σ.(heap) !! (l +ₗ i) = None) →
+       head_step (AllocN (Val $ LitV $ LitInt n) (Val v))   σ
+                 (Val $ LitV $ LitLoc l) (state_init_heap l n v σ) []
   (* Load. *)
   | LoadS l v σ :
      σ.(heap) !! l = Some v →
@@ -437,10 +490,14 @@ Inductive head_step : expr → state → expr → state → list expr → Prop :
   | CaseEffS m v k e1 e2 σ :
      head_step (Case (Eff m v k) e1 e2)         σ
                (Eff m v ((CaseCtx e1 e2) :: k)) σ []
-  (* AllocCtx. *)
-  | AllocEffS m v k σ :
-     head_step (Alloc (Eff m v k))       σ
-               (Eff m v (AllocCtx :: k)) σ []
+  (* AllocNLCtx. *)
+  | AllocNLEffS m v k v2 σ :
+     head_step (AllocN (Eff m v k) (Val v2))    σ
+               (Eff m v ((AllocNLCtx v2) :: k)) σ []
+  (* AllocNRCtx. *)
+  | AllocNREffS e1 m v k σ :
+     head_step (AllocN e1 (Eff m v k))          σ
+               (Eff m v ((AllocNRCtx e1) :: k)) σ []
   (* LoadCtx. *)
   | LoadEffS m v k σ :
      head_step (Load (Eff m v k))       σ
@@ -531,16 +588,16 @@ Lemma val_head_stuck e1 σ1 e2 σ2 efs : head_step e1 σ1 e2 σ2 efs → to_val 
 Proof. destruct 1; eauto. Qed.
 
 (* There is always a fresh location to be used by [Alloc v]. *)
-Lemma alloc_fresh v σ :
+Lemma alloc_fresh v n σ :
   let l := fresh_locs (dom (gset loc) σ.(heap)) in
-  head_step (Alloc (Val v))                            σ
-            (Val $ LitV $ LitLoc l) (heap_upd <[l:=v]> σ) [].
+  (0 < n)%Z →
+  head_step (AllocN ((Val $ LitV $ LitInt $ n)) (Val v)) σ 
+            (Val $ LitV $ LitLoc l) (state_init_heap l n v σ) [].
 Proof.
   intros.
-  apply AllocS.
+  apply AllocNS; first done.
   intros. apply (not_elem_of_dom (D := gset loc)).
-  specialize (fresh_locs_fresh (dom _ (heap σ)) 0).
-  rewrite loc_add_0. naive_solver.
+  by apply fresh_locs_fresh.
 Qed.
 
 (* There is always a fresh location to be used in the

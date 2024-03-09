@@ -60,8 +60,10 @@ Instance InjRCtx_neutral : NeutralFrame InjRCtx.
 Proof. constructor => m v k σ. by apply InjREffS. Qed.
 Instance CaseCtx_neutral e1 e2 : NeutralFrame (CaseCtx e1 e2).
 Proof. constructor => m v k σ. by apply CaseEffS. Qed.
-Instance AllocCtx_neutral : NeutralFrame AllocCtx.
-Proof. constructor => m v k σ. by apply AllocEffS. Qed.
+Instance AllocNLCtx_neutral v2 : NeutralFrame (AllocNLCtx v2).
+Proof. constructor => m v k σ. by apply AllocNLEffS. Qed.
+Instance AllocCtx_neutral e1 : NeutralFrame (AllocNRCtx e1).
+Proof. constructor => m v k σ. by apply AllocNREffS. Qed.
 Instance LoadCtx_neutral : NeutralFrame LoadCtx.
 Proof. constructor => m v k σ. by apply LoadEffS. Qed.
 Instance StoreLCtx_neutral v2 : NeutralFrame (StoreLCtx v2).
