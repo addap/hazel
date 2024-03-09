@@ -1,7 +1,6 @@
 -Q theories/lib lib
 -Q theories/language language
 -Q theories/program_logic program_logic
--Q theories/program_logic_ext program_logic_ext
 -Q theories/case_studies case_studies
 
 -arg -w -arg -convert_concl_no_check
@@ -28,25 +27,14 @@ theories/program_logic/reasoning_rules.v
 theories/program_logic/proofmode_classes.v
 theories/program_logic/atomics.v
 theories/program_logic/adequacy.v
-#theories/program_logic/logatom.v
-
-theories/program_logic_ext/named_effects.v
+theories/program_logic/logatom.v
 
 theories/case_studies/list_lib.v
 theories/case_studies/queue_lib.v
-theories/case_studies/iteration.v
-#theories/case_studies/callcc.v
-#theories/case_studies/control_inversion.v
-theories/case_studies/shallow_as_deep.v
-theories/case_studies/exceptions.v
-theories/case_studies/state.v
-#theories/case_studies/shift_reset.v
 #theories/case_studies/asynchronous_computation.v
 #theories/case_studies/asynchronous_computation_eio_cancel.v
 #theories/case_studies/asynchronous_computation_eio_withcontext.v
 #theories/case_studies/asynchronous_computation_eio_getcontext.v
-#theories/case_studies/automatic_differentiation.v
-#theories/case_studies/ml_references.v
 
 theories/case_studies/eio/concurrent_queue.v
 theories/case_studies/eio/cqs.v
