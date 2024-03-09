@@ -68,6 +68,12 @@ Instance StoreLCtx_neutral v2 : NeutralFrame (StoreLCtx v2).
 Proof. constructor => m v k σ. by apply StoreLEffS. Qed.
 Instance StoreRCtx_neutral e1 : NeutralFrame (StoreRCtx e1).
 Proof. constructor => m v k σ. by apply StoreREffS. Qed.
+Instance CmpXchgLCtx_neutral v2 v3 : NeutralFrame (CmpXchgLCtx v2 v3).
+Proof. constructor => m v k σ. by apply CmpXchgLS. Qed.
+Instance CmpXchgMCtx_neutral e1 v2 : NeutralFrame (CmpXchgMCtx e1 v2).
+Proof. constructor => m v k σ. by apply CmpXchgMS. Qed.
+Instance CmpXchgRCtx_neutral e1 e2 : NeutralFrame (CmpXchgRCtx e1 e2).
+Proof. constructor => m v k σ. by apply CmpXchgRS. Qed.
 
 Lemma TryWithCtx_not_neutral e2 e3 : ¬ NeutralFrame (TryWithCtx e2 e3).
 Proof.

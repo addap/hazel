@@ -456,8 +456,17 @@ Inductive head_step : expr → state → expr → state → list expr → Prop :
   (* EffCtx. *)
   | DoEffS m m' v k σ :
      head_step (Do m (Eff m' v k))         σ
-               (Eff m' v ((DoCtx m) :: k)) σ [].
-  (* a.d. TODO rules for CmpXchg contexts *)
+               (Eff m' v ((DoCtx m) :: k)) σ []
+  (* CmpXchgLCtx *)
+  | CmpXchgLS m v1 k v2 v3 σ :
+     head_step (CmpXchg (Eff m v1 k) (Val v2) (Val v3)) σ
+               (Eff m v1 ((CmpXchgLCtx v2 v3) :: k))    σ []
+  | CmpXchgMS m e1 v2 k v3 σ :
+     head_step (CmpXchg e1 (Eff m v2 k) (Val v3))       σ
+               (Eff m v2 ((CmpXchgMCtx e1 v3) :: k))    σ []
+  | CmpXchgRS m e1 e2 v3 k σ :
+     head_step (CmpXchg e1 e2 (Eff m v3 k))             σ
+               (Eff m v3 ((CmpXchgRCtx e1 e2) :: k))    σ [].
 
 (* Reduction relation. *)
 (* [prim_step] is the closure of the head-reduction
