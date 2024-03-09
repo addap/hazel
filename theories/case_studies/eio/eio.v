@@ -31,7 +31,7 @@ From iris.base_logic.lib Require Import iprop wsat saved_prop.
 From program_logic Require Import reasoning_rules.
 From case_studies Require Import list_lib .
 
-From case_studies.eio Require Import atomics concurrent_queue cqs.
+From case_studies.eio Require Import concurrent_queue cqs.
 
 (* ========================================================================== *)
 (** * Implementation of the Scheduler. *)
@@ -574,16 +574,16 @@ Section protocol_coop.
   Definition FORK_pre (Coop : pEff) (δ : gname): iEff Σ :=
     >> (ℓstate : loc) e >> !(Fork' #ℓstate e) {{fiberState δ ℓstate ∗ ▷ (fiberContext δ -∗ EWP e #() <|Coop δ |> {{_, fiberContext δ}}) }};
     << (_: val) << ?(#())        {{ fiberState δ ℓstate }} @ OS.
-
       (* a.d. TODO I think I can delete promiseInv from SUSPEND *)
+
   Definition SUSPEND (δ : gname) : iEff Σ :=
     >> (f: val) (P: val → iProp Σ) >> !(Suspend' f) {{
       (* We call suspender with the waker function and waker receives a value satisfying P. *)
         ( (∀ (waker: val),
           (∀ (v: val), P v -∗  (EWP (waker v) <| ⊥ |> {{_, True }}) ) -∗
-          promiseInv -∗ (▷ EWP (f waker) <| ⊥ |> {{_, True  }}) ) 
+          (▷ EWP (f waker) <| ⊥ |> {{_, True  }}) ) 
       ∗
-        fiberContext δ ∗ promiseInv)%I
+        fiberContext δ)%I
     }};
     << y           << ?(y)         {{ P y ∗ fiberContext δ }} @ OS.
 
@@ -636,9 +636,9 @@ Section protocol_coop.
       (* the big precondition of the protocol *)
         ( (∀ (waker: val),
           (∀ (v: val), P v -∗ (EWP (waker v) <| ⊥ |> {{_, True }}) ) -∗
-          promiseInv -∗ (▷ EWP (f waker) <| ⊥ |> {{_, True }}) )
+          (▷ EWP (f waker) <| ⊥ |> {{_, True }}) )
       ∗
-          fiberContext δ ∗ promiseInv) 
+          fiberContext δ) 
       ∗
           (∀ v, (P v ∗ fiberContext δ) -∗ Φ' v))%I.
   Proof. by rewrite /SUSPEND (upcl_tele' [tele _ _] [tele _]). Qed.
@@ -731,9 +731,9 @@ Section verification.
   Lemma ewp_suspend (f : val) (P: val → iProp Σ) δ :
       ( (∀ (waker: val),
         (∀ (v: val), P v -∗ (EWP (waker v) <| ⊥ |> {{_, True}}) ) -∗
-        promiseInv -∗ (▷ EWP (f waker) <| ⊥ |> {{_, True }})) 
+        (▷ EWP (f waker) <| ⊥ |> {{_, True }})) 
     ∗
-      fiberContext δ ∗ promiseInv) 
+      fiberContext δ) 
     ⊢
       EWP (suspend f) <| Coop δ |> {{ v, P v ∗ fiberContext δ }}.
   Proof.
@@ -754,15 +754,14 @@ Section verification.
   Qed.
   
   Lemma ewp_await_callback (p: loc) (wakers: val) γ ε Φ:
-    suspension_permit ∗ isMember p γ ε ∗ isPromiseResult ε Φ ∗ promise_cqs wakers 
+    promiseInv ∗ suspension_permit ∗ isMember p γ ε ∗ isPromiseResult ε Φ ∗ promise_cqs wakers 
   ⊢
     EWP (await_callback #p wakers) <| ⊥ |> {{f, 
       ∀ (waker: val), (∀ (v: val), (⌜ v = #() ⌝ ∗ promise_state_done γ)%I -∗ EWP (waker v) <| ⊥ |> {{_, True }}) -∗
-      promiseInv -∗ 
         (▷ EWP (f waker) <| ⊥ |> {{_, True }}) }}.
   Proof.
-    iIntros "(HIsSus & #Hmem & #Hε & #Hcqs)". rewrite /await_callback. ewp_pure_steps.
-    iIntros (waker) "Hwaker #HpInv". iNext.
+    iIntros "(#HpInv & HIsSus & #Hmem & #Hε & #Hcqs)". rewrite /await_callback. ewp_pure_steps.
+    iIntros (waker) "Hwaker". iNext.
     ewp_pure_steps. 
     (* now we suspend waker*)
     iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
@@ -862,6 +861,7 @@ Section verification.
       iApply (ewp_mono with "[HIsSus]"). 
       iApply ewp_os_prot_mono. iApply iEff_le_bottom.
       iApply (ewp_await_callback with "[HIsSus]"). iFrame. 
+      iSplit; first done.
       iSplit; first done.
       iSplit; first done.
       by done.
@@ -1030,7 +1030,7 @@ Section verification.
     (* Effect branch. *)
     - iIntros (request k). rewrite upcl_Coop upcl_FORK upcl_SUSPEND upcl_GET_CONTEXT.
       iIntros "[(%ℓstate' & %e & -> & (HfState' & He) & Hk)
-               |[(%suspender & %P & -> & (Hsuspender & HfCtx & _) & Hk)
+               |[(%suspender & %P & -> & (Hsuspender & HfCtx) & Hk)
                |(%_ & -> & _ & Hk)]]".
       (* Fork. *)
       + iDestruct (fiber_state_agree with "HfState' HIsState") as (->) "HfState'".
@@ -1073,7 +1073,7 @@ Section verification.
           by iApply ("IH_handler" with "Hq").
         }
         iIntros (waker) "Hwaker !>".
-        iSpecialize ("Hsuspender" $! waker with "Hwaker HpInv").
+        iSpecialize ("Hsuspender" $! waker with "Hwaker").
         ewp_pure_steps.
         ewp_bind_rule. simpl.
         iApply (ewp_mono with "Hsuspender").
