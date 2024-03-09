@@ -27,7 +27,7 @@ Context (N : namespace).
 *)
 
 Lemma spawn_scheduler_spec (Q : val -> iProp Σ) (f: val) :
-  promiseInv -∗ EWP (f #()) <| Coop |> {{ _, True }} -∗
+  promiseInv -∗ (∀ δ, EWP (f #()) <| Coop δ |> {{ _, True }}) -∗
     EWP (spawn_scheduler f) {{ _, True }}.
 Proof.
   iIntros "HInv Hf". rewrite /spawn_scheduler.
@@ -37,8 +37,10 @@ Proof.
   iApply (spawn_spec N with "[HInv Hf]").
   { ewp_pure_steps. 
     iApply (ewp_run f (λ _, True)%I with "[HInv Hf]"). iFrame.
+    iIntros (δ) "Hctx".
+    iSpecialize ("Hf" $! δ).
     (* a.d. TODO remove the stupid box true *)
-    iApply (ewp_mono with "Hf"). by done. }
+    iApply (ewp_mono with "Hf"). iIntros (_) "_ !>". by iFrame. }
   iIntros (v) "(% & -> & Hjoin) !>".
   ewp_pure_steps.
   iApply (join_spec with "Hjoin").
