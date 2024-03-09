@@ -1,4 +1,4 @@
-From program_logic Require Import reasoning_rules.
+From program_logic Require Import state_interpretation.
 
 (* I'm not sure why they call it sub_redexes, but this says that all subexpressions of 
    e are values, i.e. if we decompose it into K[e'] where e' is not a value then K must be empty. *)
@@ -53,3 +53,7 @@ Proof. by solve_atomic. Qed.
 
 Global Instance alloc_atomic v : Atomic StronglyAtomic (Alloc (Val v)).
 Proof. by solve_atomic. Qed.
+
+Global Instance cmpxchg_atomic v1 v2 v3 : Atomic StronglyAtomic (CmpXchg (Val v1) (Val v2) (Val v3)).
+Proof. by solve_atomic. Qed.
+

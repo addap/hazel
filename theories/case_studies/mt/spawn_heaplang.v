@@ -2,8 +2,7 @@ From iris.proofmode Require Import base tactics classes.
 From iris.algebra Require Import excl excl_auth gset gmap agree csum frac excl.
 From iris.base_logic Require Import invariants.
 From iris.base_logic.lib Require Import iprop wsat saved_prop.
-From program_logic Require Import reasoning_rules.
-
+From iris.heap_lang Require Import proofmode notation.
 
 Definition spawn : val :=
   (λ: "f",
@@ -46,58 +45,58 @@ Proof. solve_proper. Qed.
 
 (** The main proofs. *)
 Lemma spawn_spec (Q : val → iProp Σ) (f : val) :
-  EWP (f #()) {{ Q }} -∗ EWP (spawn f) {{ v, ∃ (l: loc), ⌜ v = #l ⌝ ∗ join_handle l Q }}.
+  WP (f #()) {{ Q }} -∗ WP (spawn f) {{ v, ∃ (l: loc), ⌜ v = #l ⌝ ∗ join_handle l Q }}.
 Proof.
   iIntros "Hf". rewrite /spawn. 
-  (* Unset Printing Notations. *)
-  ewp_pure_steps.
-  ewp_bind_rule. simpl. 
-  iApply ewp_alloc. 
-  iIntros "!>" (l) "Hl". 
+  (* a.d. TODO ewp_pure_steps is broken. *)
+  wp_pures. 
+  (wp_bind (ref _)%E). 
+  iApply wp_alloc; first done. iNext.
+  iIntros (l) "[Hl _]". 
   iMod (own_alloc (Excl ())) as (γ) "Hγ"; first done.
   iMod (inv_alloc N _ (spawn_inv γ l Q) with "[Hl]") as "#HInv".
   { iNext. iExists NONEV. iFrame; eauto. }
-  iModIntro.
-  ewp_pure_steps.
-  iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
-  iApply (ewp_fork with "[Hf]").
+  wp_pures.
+  wp_bind (Fork _)%E.
+  iApply (wp_fork with "[Hf]").
   { iNext. 
-    ewp_bind_rule. simpl. iApply (ewp_mono with "Hf"). 
+    wp_bind (f #())%E. iApply (wp_strong_mono with "Hf"); try done.
     iIntros (v) "Hv !>".
-    ewp_pure_steps.
+    wp_pures.
     iInv "HInv" as "HpInvIn" "Hclose".
     iDestruct "HpInvIn" as (lv) "(Hlv & HRest)".
-    iApply (ewp_store with "Hlv"). 
-    iIntros "!> Hlv !>". 
+    iApply (wp_store with "Hlv"). 
+    iIntros "!> Hlv". 
     iMod ("Hclose" with "[Hlv HRest Hv]") as "_".
     2: by done.
     iNext. iExists _. iFrame "Hlv".
     iRight. iExists _. iSplit; first done. by iLeft. 
   }
-  iNext. ewp_pure_steps.
+  iNext. wp_pures. iModIntro.
   iExists _. iSplit; first done.
   iExists _. iSplit; first done. done.
 Qed.
 
 Lemma join_spec (Q : val → iProp Σ) l :
-  join_handle l Q -∗ EWP join #l {{ v, Q v }}.
+  join_handle l Q -∗ WP join #l {{ v, Q v }}.
 Proof.
   iIntros "H". iDestruct "H" as (γ) "[Hγ #HInv]".
   iLöb as "IH".
   rewrite /join.
-  ewp_pure_steps.
-  ewp_bind_rule. simpl.
+  wp_pures.
+  wp_bind (! _)%E.
   iInv "HInv" as "HpInvIn" "Hclose".
   iDestruct "HpInvIn" as (lv) "(Hl & Hlv)".
-  iApply (ewp_load with "Hl"). 
-  iIntros "!> Hl !>". 
+  iApply (wp_load with "Hl"). 
+  iIntros "!> Hl". 
   iDestruct "Hlv" as "[->|(% & -> & Hlv)]".
   - iMod ("Hclose" with "[Hl]") as "_".
     { iNext. iExists _. iFrame "Hl".
       by iLeft. }
     iModIntro.
-    do 4 ewp_value_or_step.
-    iApply ("IH" with "Hγ").
+    iSpecialize ("IH" with "Hγ").
+    wp_match.
+    iApply ("IH").
   - iDestruct "Hlv" as "[HQ|Hγ']".
     (* a.d. TODO iCombine as %[] does not work. *)
     2: {
@@ -109,7 +108,7 @@ Proof.
     { iNext. iExists _. iFrame "Hl".
       iRight. iExists _. iSplit; first by done. by iRight. }
     iModIntro.
-    ewp_pure_steps. by iAssumption.
+    wp_pures. by iAssumption.
 Qed.
 End proof.
 

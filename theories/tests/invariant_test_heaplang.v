@@ -25,6 +25,11 @@ Definition setone : val := (λ: "l",
   "l" <- #1
 )%V.
 
+Definition program : val := (λ: <>,
+  let: "l" := ref #0 in
+  setone "l"
+)%V.
+
 Lemma ewp_setone (l: loc): 
   MyInv l ⊢ WP (setone #l) {{_, True}}.
 Proof.
@@ -79,13 +84,28 @@ Restart.
   iApply "Hclose". iNext. iExists #1. done.
 Qed.
 
-Lemma allocate_MyInv: 
-  ⊢ |==> ∃ l, MyInv l.
+Lemma allocate_MyInv (l: loc) (n: nat): 
+  (l ↦ #n) ⊢ |={⊤}=> MyInv l.
 Proof.
-  (* iInv () *)
-(* Goal ∀ l, MyInv  *)
-Admitted.
+  Check inv_alloc.
+  iIntros "Hl".
+  rewrite /MyInv.
+  iMod (inv_alloc invN ⊤ (inner l) with "[-]") as "#HInv".
+  { iNext. rewrite /inner. by iExists #n. }
+  done.
+Qed.
 
+Lemma wp_program: 
+  ⊢ WP (program #()) {{_, True}}.
+Proof.
+  iIntros. rewrite /program.
+  wp_pures.
+  (wp_bind (ref _)%E). simpl.
+  iApply wp_alloc; first done. iIntros "!> %l [Hl _]".
+  iMod (allocate_MyInv l 0 with "Hl") as "#HInv".
+  wp_pures.
+  by iApply ewp_setone.
+Qed.
 
 Parameter P2 Q2 : iProp Σ.
 Parameter P2_Timeless' : Timeless P2.

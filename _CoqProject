@@ -25,7 +25,10 @@ theories/program_logic/shallow_handler_reasoning.v
 theories/program_logic/tactics.v
 theories/program_logic/deep_handler_reasoning.v
 theories/program_logic/reasoning_rules.v
+theories/program_logic/proofmode_classes.v
+theories/program_logic/atomics.v
 theories/program_logic/adequacy.v
+#theories/program_logic/logatom.v
 
 theories/program_logic_ext/named_effects.v
 
@@ -38,14 +41,13 @@ theories/case_studies/shallow_as_deep.v
 theories/case_studies/exceptions.v
 theories/case_studies/state.v
 #theories/case_studies/shift_reset.v
-theories/case_studies/asynchronous_computation.v
+#theories/case_studies/asynchronous_computation.v
 #theories/case_studies/asynchronous_computation_eio_cancel.v
 #theories/case_studies/asynchronous_computation_eio_withcontext.v
 #theories/case_studies/asynchronous_computation_eio_getcontext.v
 #theories/case_studies/automatic_differentiation.v
-theories/case_studies/ml_references.v
+#theories/case_studies/ml_references.v
 
-theories/case_studies/eio/atomics.v
 theories/case_studies/eio/concurrent_queue.v
 theories/case_studies/eio/cqs.v
 theories/case_studies/eio/eio.v

@@ -5,7 +5,7 @@ From iris.base_logic Require Import invariants.
 From iris.base_logic.lib Require Import iprop wsat saved_prop.
 From program_logic Require Import reasoning_rules.
 
-From case_studies.eio Require Import atomics eio.
+From case_studies.eio Require Import eio.
 From case_studies.mt Require Import spawn.
 
 
