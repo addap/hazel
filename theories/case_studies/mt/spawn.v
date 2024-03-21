@@ -50,8 +50,12 @@ Lemma spawn_spec (Q : val → iProp Σ) (f : val) :
 Proof.
   iIntros "Hf". rewrite /spawn. 
   (* Unset Printing Notations. *)
+  (* a.d. wtf now ewp_pure_steps is broken again. It only evaluates to
+      ref (InjL #()) and not to  ref (InjLV #()) *)
   ewp_pure_steps.
-  ewp_bind_rule. simpl. 
+  iApply (ewp_bind' (AppRCtx _)). by simpl.
+  iApply (ewp_bind' (AllocNRCtx _)). by simpl.
+  ewp_pure_steps.
   iApply ewp_alloc. 
   iIntros "!>" (l) "Hl". 
   iMod (own_alloc (Excl ())) as (γ) "Hγ"; first done.

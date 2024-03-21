@@ -9,9 +9,10 @@ From case_studies.eio Require Import eio.
 From case_studies.mt Require Import spawn.
 
 
-Definition spawn_scheduler : val :=
-  (λ: "f",
-    let: "new_scheduler" := (λ: <>, run "f") in
+(* Proof-of-concept spawn function that blocks the thread. *)
+Definition spawn_scheduler : val := 
+  (λ: "init" "f",
+    let: "new_scheduler" := (λ: <>, run "init" "f") in
     let: "c" := spawn "new_scheduler" in
     join "c")%V.
       
@@ -26,21 +27,21 @@ Context (N : namespace).
   EWP (spawn_scheduler f) <| ⊥ |> {{ Q }}
 *)
 
-Lemma spawn_scheduler_spec (Q : val -> iProp Σ) (f: val) :
-  promiseInv -∗ (∀ δ, EWP (f #()) <| Coop δ |> {{ _, True }}) -∗
-    EWP (spawn_scheduler f) {{ _, True }}.
+Lemma spawn_scheduler_spec (I Φ : val -> iProp Σ) (init f: val) :
+  promiseInv -∗ I init -∗ (∀ δℓ, EWP (f #()) <| Coop δℓ |> {{ v, □ Φ v }}) -∗
+    EWP (spawn_scheduler init f) {{ v, □ Φ v }}.
 Proof.
-  iIntros "HInv Hf". rewrite /spawn_scheduler.
+  iIntros "HInv Hinit Hf". rewrite /spawn_scheduler.
   ewp_pure_steps.
   ewp_bind_rule. simpl.
-  iApply (ewp_mono with "[HInv Hf]").
-  iApply (spawn_spec N with "[HInv Hf]").
+  iApply (ewp_mono with "[HInv Hinit Hf]").
+  iApply (spawn_spec N with "[HInv Hinit Hf]").
   { ewp_pure_steps. 
-    iApply (ewp_run f (λ _, True)%I with "[HInv Hf]"). iFrame.
-    iIntros (δ) "Hctx".
-    iSpecialize ("Hf" $! δ).
+    iApply (ewp_run init f I Φ with "[HInv Hinit Hf]"). iFrame.
+    iIntros (δ ℓres) "HfRes".
+    iSpecialize ("Hf" $! (δ, ℓres)).
     (* a.d. TODO remove the stupid box true *)
-    iApply (ewp_mono with "Hf"). iIntros (_) "_ !>". by iFrame. }
+    iApply (ewp_mono with "Hf"). iIntros (?) "HΦ !>". by iFrame. }
   iIntros (v) "(% & -> & Hjoin) !>".
   ewp_pure_steps.
   iApply (join_spec with "Hjoin").
