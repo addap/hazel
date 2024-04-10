@@ -31,7 +31,6 @@ From iris.base_logic.lib Require Import iprop wsat saved_prop.
 From program_logic Require Import reasoning_rules.
 
 From case_studies.eio Require Import concurrent_queue cqs.
-
 (* ========================================================================== *)
 (** * Implementation of the Scheduler. *)
 
@@ -81,7 +80,7 @@ Section implementation.
       (* Empty *) InjL <> => 
         match: Load "res" with
           (* Not Done *) InjL <> => "next" "res" "q"
-        | (* Done *)     InjR <> => #() (* diverge *)
+        | (* Done *)     InjR <> => #() 
         end
     | (* Nonempty *) InjR "f" => "f" #()
     end)%V.
@@ -147,7 +146,9 @@ Section implementation.
           (* Fork: *) InjL "contextf" =>
             let: "new_context" := Fst "contextf" in 
             let: "f" := Snd "contextf" in
+            queue_change_state #();;
             queue_push "q" (λ: <>, "k" #());;
+            queue_change_state #();;
             "execute" "new_context" "f"
         | (* Suspend/GetContext: *) InjR "e1" =>
           match: "e1" with
@@ -155,8 +156,10 @@ Section implementation.
               (* a.d. probably the most complicated line 
               When waker is called with a value v, a closure calling the continuation with v is put into the run_queue. 
               suspender can either put waker somewhere that causes it to be called later or just call it directly. *)
+              queue_change_state #();;
               let: "waker" := (λ: "v", queue_push "q" (λ: <>, "k" "v")) in
               "suspender" "waker";;
+              queue_change_state #();;
               next "result" "q"
           | (* GetContext: *) InjR <> =>
               "k" "context"
@@ -262,8 +265,7 @@ Section predicates.
       saved_pred_own δ I.
     
   Definition isFiberContext (δ : (gname * gname)) (l : loc) : iProp Σ := 
-    let (δ1, δ2) := δ in
-      tlvAgree δ1 l ∗ (∃ v (I : val -d> iPropO Σ), isTlvPred δ2 I ∗ l ↦ v ∗ I v)%I.
+      tlvAgree δ.1 l ∗ (∃ v (I : val -d> iPropO Σ), isTlvPred δ.2 I ∗ l ↦ v ∗ I v)%I.
 
   Definition isMainResult (θ : (gname * gname)) ℓres : iProp Σ := 
     let (θ1, θ2) := θ in (
@@ -274,7 +276,8 @@ Section predicates.
 
   (* This resource is always held by the active fiber, so we need to pass it in and out of effects 
      and need it as a precondition of a ready fiber. *)
-  Definition fiberResources (δ : ((gname * gname) * (gname * gname))) (ℓres : loc) := ((∃ (l : loc), isFiberContext (fst δ) l) ∗ isMainResult (snd δ) ℓres)%I.
+  Definition fiberResources (δ : ((gname * gname) * (gname * gname))) (ℓres : loc) := 
+    ((∃ (l : loc), isFiberContext (fst δ) l) ∗ isMainResult (snd δ) ℓres)%I.
     
   (* Fragment of the promise map. *)
   Definition isMember p γ ε :=
@@ -299,6 +302,7 @@ Section predicates.
 
   (* invariant stuff *)
   Definition promiseN : namespace := nroot .@ "promise".
+  (* Definition queueN : namespace := nroot .@ "queue". *)
 
   (* we can remove the ready & q from promiseInv because we keep all the queue handling inside the 
      effect handler. This makes it much easier since
@@ -352,9 +356,41 @@ Section predicates.
   (* Now ready is just a predicate on a continuation k, that k is safe to execute under the assumption
      that promiseInv holds.
     a.d. TODO remove promiseInv *)
-  Definition ready δ ℓres (k: val) : iProp Σ := (
-    fiberResources δ ℓres -∗ EWP (k #()) {{ _, fiberResources δ ℓres ∗ ∃ v, promise_state_done (fst (snd δ)) v }}
+  (* Definition ready_pre δ ℓres (q k: val) : iProp Σ := (
+    is_queue q fiberResources δ ℓres -∗ EWP (k #()) {{ _, fiberResources δ ℓres ∗ ∃ v, promise_state_done (fst (snd δ)) v }}
+  )%I. *)
+
+  (* a.d. why do we need is_queue here again? 
+    We want to return the is_queue_reader from the next function, but next calls a continuation
+    which could enter the effect handler again.
+    I think if we change `next` to return the
+     continuation instead of calling it directly we don't need ready here. *)
+  Definition ready_pre :
+    (((gnameO * gnameO) * (gnameO * gnameO)) -d> locO -d> val -d> val -d> iPropO Σ) →
+    (((gnameO * gnameO) * (gnameO * gnameO)) -d> locO -d> val -d> val -d> iPropO Σ) := (λ ready δ ℓres q k,
+    ▷ is_queue_reader q (ready δ ℓres q) -∗ 
+    fiberResources δ ℓres -∗
+      EWP (k #()) {{ _, fiberResources δ ℓres ∗ ∃ v, promise_state_done (fst (snd δ)) v ∗ ▷ is_queue_reader q (ready δ ℓres q) }}
   )%I.
+
+  Local Instance ready_contractive : Contractive ready_pre.
+  Proof.
+    rewrite /ready_pre=> n ready ready' Hn δ ℓres q k.
+    repeat (f_contractive || apply is_queue_ne || f_equiv);
+    try apply Hn; try done; try (intros=>?; apply Hn).
+    intros _. f_equiv. f_equiv.
+    intros v. f_equiv. f_contractive.
+    apply is_queue_reader_ne.
+    apply Hn.
+  Qed.
+  Definition ready_def : ((gnameO * gnameO) * (gnameO * gnameO)) -d> locO -d> val -d> val -d> iPropO Σ :=
+    fixpoint ready_pre.
+  Definition ready_aux : seal ready_def. Proof. by eexists. Qed.
+  Definition ready := ready_aux.(unseal).
+  Definition ready_eq : ready = ready_def :=
+    ready_aux.(seal_eq).
+  Global Lemma ready_unfold δ ℓres q k : ready δ ℓres q k ⊣⊢ ready_pre ready δ ℓres q k.
+  Proof. rewrite ready_eq /ready_def. apply (fixpoint_unfold ready_pre). Qed.
 
   Definition promiseSt p γ ε: iProp Σ :=
     ((* Fulfilled: *) ∃ y,
@@ -684,14 +720,14 @@ Section protocol_coop.
     << (_: val) << ?(#())        {{ fiberResources (fst δℓ) (snd δℓ) }} @ OS.
 
   Definition SUSPEND (δℓ : ((gname * gname) * (gname * gname) * loc)) : iEff Σ :=
-    >> (f: val) (P: val → iProp Σ) >> !(Suspend' f) {{
+    >> (reg: val) (P: val → iProp Σ) (Q: iProp Σ)>> !(Suspend' reg) {{
         fiberResources (fst δℓ) (snd δℓ) ∗
       (* We call suspender with the waker function and waker receives a value satisfying P. *)
-        (∀ (waker: val),
+        ∀ (waker: val),
           (∀ (v: val), P v -∗  (EWP (waker v) <| ⊥ |> {{_, True }}) ) -∗
-          (▷ EWP (f waker) <| ⊥ |> {{_, True  }}) ) 
+          ( EWP (reg waker) <| ⊥ |> {{_, □ Q }})
     }};
-    << y           << ?(y)         {{ fiberResources (fst δℓ) (snd δℓ) ∗ P y }} @ OS.
+    << y           << ?(y)         {{ fiberResources (fst δℓ) (snd δℓ) ∗ P y ∗ Q }} @ OS.
 
   Definition GET_CONTEXT (δℓ : ((gname * gname) * (gname * gname) * loc)) : iEff Σ :=
     >> (_: val) >> !(GetContext') {{ True }};
@@ -737,15 +773,15 @@ Section protocol_coop.
 
   Lemma upcl_SUSPEND δ v Φ' :
     iEff_car (upcl OS (SUSPEND δ)) v Φ' ≡
-      (∃ (f : val) (P: val → iProp Σ), ⌜ v = Suspend' f ⌝ 
+      (∃ (f : val) (P: val → iProp Σ) (Q: iProp Σ), ⌜ v = Suspend' f ⌝ 
       ∗ 
       ( fiberResources (fst δ) (snd δ) ∗ 
-        (∀ (waker: val),
+        ∀ (waker: val),
           (∀ (v: val), P v -∗ (EWP (waker v) <| ⊥ |> {{_, True }}) ) -∗
-          (▷ EWP (f waker) <| ⊥ |> {{_, True }}) ) )
+          ( EWP (f waker) <| ⊥ |> {{_, □ Q }}) )
       ∗
-          (∀ v, (fiberResources (fst δ) (snd δ) ∗ P v ) -∗ Φ' v))%I.
-  Proof. by rewrite /SUSPEND (upcl_tele' [tele _ _] [tele _]). Qed.
+          (∀ v, (fiberResources (fst δ) (snd δ) ∗ P v ∗ Q ) -∗ Φ' v))%I.
+  Proof. by rewrite /SUSPEND (upcl_tele' [tele _ _ _] [tele _]). Qed.
 
   Lemma upcl_GET_CONTEXT (δ : (gname * gname) * (gname * gname) * loc) v Φ' :
     iEff_car (upcl OS (GET_CONTEXT δ)) v Φ' ≡ 
@@ -820,7 +856,7 @@ Section verification.
   Qed.
   
   Lemma ewp_new_context init (I : val -> iProp Σ) :
-    I init ⊢ EWP new_context init {{ tlv, ∃ (ℓtlv : loc) δ, ⌜ tlv = #ℓtlv ⌝ ∗ isFiberContext δ ℓtlv }}.
+    I init ⊢ EWP new_context init {{ tlv, ∃ (ℓtlv : loc) δ, ⌜ tlv = #ℓtlv ⌝ ∗ isFiberContext δ ℓtlv ∗ isTlvPred δ.2 I }}.
   Proof.
     iIntros "HI". rewrite /new_context.
     ewp_pure_steps.
@@ -831,22 +867,24 @@ Section verification.
     iModIntro.
     iExists ℓtlv, (δ1, δ2).
     iSplit; first by done.
+    iSplit; last by done.
     iSplit; first by done.
     iExists init, I.
     by iFrame.
   Qed.
     
   Lemma ewp_next δ ℓres q Ψ :
-    fiberResources δ ℓres ∗ is_queue q (ready δ ℓres) 
+    fiberResources δ ℓres ∗ is_queue_reader q (ready δ ℓres q) 
   ⊢
-    EWP (next #ℓres q) <| Ψ |> {{ _, fiberResources δ ℓres ∗ ∃ v, promise_state_done (fst (snd δ)) v }}.
+    EWP (next #ℓres q) <| Ψ |> {{ _, fiberResources δ ℓres ∗ ∃ v, promise_state_done (fst (snd δ)) v ∗ ▷ is_queue_reader q (ready δ ℓres q) }}.
   Proof.
     iLöb as "IH".
-    iIntros "(HfRes & #Hq)". unfold next. ewp_pure_steps. ewp_bind_rule.
-    iApply ewp_mono; [iApply (queue_pop_spec with "Hq")|].
+    iIntros "(HfRes & Hq)". unfold next. ewp_pure_steps. 
+    ewp_bind_rule. simpl.
+    iApply ewp_os_prot_mono; [by iApply iEff_le_bottom|].
+    iApply (ewp_mono with "[Hq]"); [iApply (queue_pop_spec with "Hq")|].
     destruct δ as ((δ11 & δ12) & (δ21 & δ22)).
-    simpl.
-    iIntros (y) "[->|(%k & -> & Hk)] !>".
+    iIntros (y) "(Hq & [->|(%k & -> & Hk)]) !>".
     - (* queue is empty *) 
       ewp_pure_steps.
       ewp_bind_rule; simpl.
@@ -856,7 +894,7 @@ Section verification.
         iApply (ewp_load with "Hres").
         iIntros "!> Hres !>".
         do 4 ewp_value_or_step. 
-        iApply "IH". iFrame. iSplit; last done.
+        iApply "IH". iFrame.
         iExists _. iSplit; first done. 
         iLeft. by iFrame.
       + (* Main fiber is done. *)
@@ -867,12 +905,15 @@ Section verification.
         iFrame. 
         iExists _. iSplit; first by done. 
         iRight. iExists _. iFrame. by iSplit.
-        by iExists _.
+        iFrame. by iExists _.
     - (* queue has a continuation *)
       ewp_pure_steps.
-      rewrite {3}/ready.
-      iSpecialize ("Hk" with "HfRes").
-      iApply ewp_os_prot_mono. { by iApply iEff_le_bottom. } { done. }
+      rewrite ready_unfold /ready_pre.
+      iSpecialize ("Hk" with "Hq HfRes").
+      iApply ewp_os_prot_mono. { by iApply iEff_le_bottom. } 
+      iApply (ewp_mono with "Hk"). 
+      iIntros (_) "(HfRes & H) !>".
+      by iFrame.
   Qed.
 
   Lemma ewp_fork (ℓstate ℓres: loc) (e : val) δ :
@@ -886,31 +927,33 @@ Section verification.
     iIntros (_) "H". by done.
   Qed.
 
-  Lemma ewp_suspend (ℓres : loc) (f : val) (P: val → iProp Σ) δ :
+  Lemma ewp_suspend (ℓres : loc) (f : val) (P: val → iProp Σ) (Q: iProp Σ) δ :
     ( fiberResources δ ℓres ∗
-      (∀ (waker: val),
+      ∀ (waker: val),
         (∀ (v: val), P v -∗ (EWP (waker v) <| ⊥ |> {{_, True}}) ) -∗
-        (▷ EWP (f waker) <| ⊥ |> {{_, True }})) ) 
+        ( EWP (f waker) <| ⊥ |> {{_, □ Q }}) ) 
     ⊢
-      EWP (suspend f) <| Coop (δ, ℓres) |> {{ v, fiberResources δ ℓres ∗ P v }}.
+      EWP (suspend f) <| Coop (δ, ℓres) |> {{ v, fiberResources δ ℓres ∗ P v ∗ Q }}.
   Proof.
     iIntros "(HfRes & He)". rewrite /suspend. ewp_pure_steps.
     iApply ewp_do_os. rewrite upcl_Coop upcl_SUSPEND. iRight; iLeft.
-    iExists f, P. iSplit; [done|]. iFrame.
+    iExists f, P, Q. iSplit; [done|]. iFrame.
     iIntros (v) "Hv". by iFrame.
   Qed.
 
   Lemma ewp_yield (ℓres : loc) δ :
     fiberResources δ ℓres
   ⊢ 
-    EWP (yield #()) <| Coop (δ, ℓres) |> {{ _, fiberResources δ ℓres }}.
+    EWP (yield #()) <| Coop (δ, ℓres) |> {{ v, (λ _, fiberResources δ ℓres) v }}.
   Proof.
     iIntros "HfRes".
     rewrite /yield. ewp_pure_steps.
-    iApply (ewp_mono with "[HfRes]"); first iApply (ewp_suspend _ _ (λ _, True)%I).
+    iApply (ewp_mono with "[HfRes]"); first iApply (ewp_suspend _ _ (λ _, True)%I True).
     { iFrame. iIntros (waker) "Hwaker". 
-      iSpecialize ("Hwaker" $! #() with "[$]").
-      iNext. ewp_pure_steps. iApply "Hwaker". }
+      iSpecialize ("Hwaker" $! #() with "[//]").
+      ewp_pure_steps.
+      iApply (ewp_mono with "[Hwaker]"); [iApply "Hwaker"|].
+      iIntros (_) "_ !>". by done. }
     iIntros (?) "[$ _] !>".
     done.
   Qed.
@@ -931,10 +974,10 @@ Section verification.
   ⊢
     EWP (await_callback #p wakers) <| ⊥ |> {{f, 
       ∀ (waker: val), (∀ (v: val), (⌜ v = #() ⌝ ∗ ∃ v', promise_state_done γ v')%I -∗ EWP (waker v) <| ⊥ |> {{_, True }}) -∗
-        (▷ EWP (f waker) <| ⊥ |> {{_, True }}) }}.
+        ( EWP (f waker) <| ⊥ |> {{_, □ True }}) }}.
   Proof.
     iIntros "(#HpInv & HIsSus & #Hmem & #Hε & #Hcqs)". rewrite /await_callback. ewp_pure_steps.
-    iIntros (waker) "Hwaker". iNext.
+    iIntros (waker) "Hwaker".
     ewp_pure_steps. 
     (* now we suspend waker*)
     iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
@@ -977,6 +1020,8 @@ Section verification.
         ewp_pure_steps. by done.
       }
       ewp_pure_steps.
+      iApply (ewp_mono _ _ (λ _, True)%I with "[Hk]").
+      2: by done.
       iApply "Hk".
       rewrite /V'.
       iSplit; first done.
@@ -1045,10 +1090,10 @@ Section verification.
       ewp_pure_steps.
       ewp_bind_rule. simpl.
       iApply (ewp_mono with "[Hf HfCtx]").
-      { iApply (ewp_suspend _ callback (λ v, ⌜ v = #() ⌝ ∗ ∃ v', promise_state_done γ v')%I). 
-        by iFrame. }
+      { iApply (ewp_suspend _ callback (λ v, ⌜ v = #() ⌝ ∗ ∃ v', promise_state_done γ v')%I True%I). 
+        iFrame. }
       (* after we have performed the effect we get promise_state_done. *)
-      iIntros (v) "(HfCtx & (-> & (%&Hps))) !>".
+      iIntros (v) "(HfCtx & (-> & (%&Hps)) & _) !>".
       ewp_pure_steps. ewp_bind_rule. simpl.
       (* now we match on the promise again but this time we know it must be fulfilled *)
       iClear "Hwakers". clear wakers.
@@ -1173,11 +1218,11 @@ Section verification.
   Qed.
 
   Lemma ewp_execute (q fiber : val) δ ℓres ℓtlv :
-    is_queue q (ready δ ℓres) -∗
+    is_queue_reader q (ready δ ℓres q) -∗
     fiberResources δ ℓres -∗
     tlvAgree (fst (fst δ)) ℓtlv -∗
     (fiberResources δ ℓres -∗ EWP fiber #() <| Coop (δ, ℓres) |> {{ _, fiberResources δ ℓres }}) -∗
-      EWP execute q #ℓres #ℓtlv fiber {{_, fiberResources δ ℓres ∗ ∃ v, promise_state_done (fst (snd δ)) v }}.
+      EWP execute q #ℓres #ℓtlv fiber {{_, fiberResources δ ℓres ∗ ∃ v, promise_state_done (fst (snd δ)) v ∗ ▷ is_queue_reader q (ready δ ℓres q) }}.
   Proof.
     iIntros "Hq HfRes #HtlvAg Hfiber".
     rewrite /execute.
@@ -1187,17 +1232,16 @@ Section verification.
     ewp_pure_steps.
     iApply (ewp_deep_try_with with "Hfiber").
     iLöb as "IH_handler".
-    iDestruct "Hq" as "#Hq".
     rewrite deep_handler_unfold.
     iSplit; [|iSplit]; last (by iIntros (??) "HFalse"; rewrite upcl_bottom).
     (* Return branch. *)
     - iIntros (?) "HfRes".
       ewp_pure_steps. 
-      iApply ewp_next. iFrame. by iAssumption.
+      iApply ewp_next. by iFrame.
     (* Effect branch. *)
     - iIntros (request k). rewrite upcl_Coop upcl_FORK upcl_SUSPEND upcl_GET_CONTEXT.
       iIntros "[(%ℓtlv' & %e & -> & (HfRes'' & #HtlvAg' & He) & Hk)
-               |[(%suspender & %P & -> & (HfCtx & Hsuspender) & Hk)
+               |[(%suspender & %P & %Q & -> & (HfCtx & Hsuspender) & Hk)
                |(%_ & -> & _ & Hk)]]".
       (* Fork. *)
       + iDestruct "HfRes''" as "[HfRes'' Hres]".
@@ -1205,10 +1249,19 @@ Section verification.
         iDestruct (isFiberContext_agree with "HfCtx'' HtlvAg") as (->) "HfCtx".
         iDestruct (isFiberContext_agree with "HfCtx HtlvAg'") as (->) "HfCtx".
         ewp_pure_steps.
+        (* change queue state to register a push. *)
+        ewp_bind_rule; simpl.
+        iApply (ewp_mono with "[Hq]"); [iApply (queue_register_push True%I with "Hq")|].
+        iIntros (?) "(#Hq & Hfulfill & % & Hpush) !>".
+        ewp_pure_steps.
+        (* prepare the push, this one does not have a precondition bc the fiber is immediately ready. *)
         iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
-        iApply (ewp_mono with "[Hk]").
-        { iApply (queue_push_spec with "Hq"). rewrite /ready.
-          iIntros "HfRes". ewp_pure_steps.
+        iApply (ewp_mono with "[Hk Hpush]").
+        { iApply (queue_push_spec with "Hq Hpush [Hk]").
+          iIntros "!> _".
+          rewrite ready_unfold /ready_pre.
+          iClear "Hq".
+          iIntros "Hq HfRes". ewp_pure_steps.
           iSpecialize ("Hk" $! #() with "HfRes").
           (* iApply (ewp_mono _ _ (λ _, isMainResult θ ℓres ∗ (∃ v : valO, promise_state_done θ v ∗ □ Φ v))%I (λ _, isMainResult θ ℓres ∗ (∃ v : valO, promise_state_done θ v))%I with "[Hk Hres]").
           2: {
@@ -1216,42 +1269,67 @@ Section verification.
             by iExists _.
           } *)
           iApply "Hk". iNext. 
-          iSpecialize ("IH_handler" with "Hq").
+          (* iSpecialize ("IH_handler" with "Hq"). *)
           rewrite -deep_handler_unfold.
           iApply "IH_handler".
+          by iAssumption.
         }
         iIntros (?) "_ !>". do 3 ewp_value_or_step.
+        (* fulfill the Q *)
+        ewp_bind_rule; simpl.
+        iApply (ewp_mono with "[Hfulfill]").
+        { iApply (queue_fulfill_Q with "Hq Hfulfill []").
+          done. }
+        iClear "Hq".
+        iIntros (?) "Hq !>". do 3 ewp_value_or_step.
         iApply ("IH" with "Hq [Hres HfCtx] He").
         iFrame.
         by iExists _.
       (* Suspend/GetContext. *)
       + do 12 ewp_value_or_step.
-        ewp_bind_rule. simpl.
+        (* prepare the push, this one must take the Q as a precondition. Not sure if it's okay to use the string "v" in the definition of the value. *)
+        ewp_bind_rule; simpl.
+        iApply (ewp_mono with "[Hq]"); [iApply (queue_register_push Q with "Hq")|].
+        iIntros (?) "(#Hq & Hfulfill & % & Hpush) !>".
+        do 3 ewp_value_or_step.
+        ewp_bind_rule; simpl.
         (* here we bind the creation of waker. Now we should prove a spec for it. *)
         set (Hwaker := (λ (waker: val), (∀ (v : val),
               P v -∗
               EWP waker v <| ⊥ |> {{ _, True }})%I)).
-        iApply (ewp_mono _ _ Hwaker with "[Hk]").
+        iApply (ewp_mono _ _ Hwaker with "[Hpush Hk]").
         { 
+          rewrite /Hwaker.
           ewp_pure_steps.
-          iIntros (v) "HP".
+          iIntros (?) "HP".
           ewp_pure_steps.
-          iApply (queue_push_spec with "Hq"). rewrite /ready.
-          iIntros "HfRes". ewp_pure_steps.
-          iSpecialize ("Hk" $! v with "[$]").
+          iApply (queue_push_spec with "Hq Hpush").
+          iIntros "!> HQ".
+          rewrite ready_unfold /ready_pre.
+          iClear "Hq".
+          iIntros "Hq HfRes". ewp_pure_steps.
+          iSpecialize ("Hk" $! v0 with "[$]").
           iApply "Hk". iNext.
           iSpecialize ("IH_handler" with "Hq").
           rewrite -deep_handler_unfold.
           iApply "IH_handler".
         }
         iIntros (waker) "Hwaker !>".
+        rewrite /Hwaker.
         iSpecialize ("Hsuspender" $! waker with "Hwaker").
         ewp_pure_steps.
-        ewp_bind_rule. simpl.
+        ewp_bind_rule; simpl.
         iApply (ewp_mono with "Hsuspender").
-        iIntros (?) "_ !>". ewp_pure_steps.
-        iApply (ewp_next).
-        by iFrame.
+        iIntros (?) "HQ !>". ewp_pure_steps.
+        (* fulfill the Q *)
+        ewp_bind_rule; simpl.
+        iApply (ewp_mono with "[Hfulfill HQ]");
+          [iApply (queue_fulfill_Q with "Hq Hfulfill HQ")|].
+        iClear "Hq".
+        iIntros (?) "Hq !>".
+        ewp_pure_steps.
+        iApply ewp_next.
+        iFrame.
       + do 12 ewp_value_or_step.
         iApply ("Hk" with "HtlvAg"). iNext.
         iSpecialize ("IH_handler" with "Hq").
@@ -1260,10 +1338,10 @@ Section verification.
   Qed.
     
   Lemma ewp_run (init main : val) I Φ :
-    promiseInv ∗ I init ∗ (∀ δ ℓres, fiberResources δ ℓres -∗ EWP main #() <| Coop (δ, ℓres) |> {{ v, □ Φ v ∗ fiberResources δ ℓres }}) ⊢
+    I init ∗ (∀ δ ℓres, isTlvPred δ.1.2 I -∗ fiberResources δ ℓres -∗ EWP main #() <| Coop (δ, ℓres) |> {{ v, □ Φ v ∗ fiberResources δ ℓres }}) ⊢
       EWP run init main {{ v, □ Φ v }}.
   Proof.
-    iIntros "(#HpInv & HI & Hmain)". unfold run. ewp_pure_steps.
+    iIntros "(HI & Hmain)". unfold run. ewp_pure_steps.
     (* Main fiber result *)
     ewp_bind_rule; simpl. iApply ewp_mono.
     by iApply (ewp_new_scheduler_result Φ).
@@ -1271,21 +1349,23 @@ Section verification.
     ewp_pure_steps.
     (* Initial fiber context. *) 
     ewp_bind_rule. simpl. iApply (ewp_mono with "[HI]"). 
-    { by iApply ewp_new_context. }
-    iIntros (tlv) "(%ℓtlv & %δ & -> & HfCtx) !>".
+    { by iApply (ewp_new_context with "HI"). }
+    iIntros (tlv) "(%ℓtlv & %δ & -> & HfCtx & HPred) !>".
     iPoseProof (isFiberContext_tlvAgree with "HfCtx") as "(#HtlvAg & HfCtx)".
     (* a.d. We must do this up here so that ∀ δ does not appear in IH.
        a.d. TODO can we speciaize Hℓstate, too? *)
-    iSpecialize ("Hmain" $! (δ, θ) ℓres).
+    iSpecialize ("Hmain" $! (δ, θ) ℓres with "HPred").
     ewp_pure_steps.
-    ewp_bind_rule. simpl. iApply ewp_mono. { by iApply queue_create_spec. }
-    iIntros (q) "#Hq !>". 
+    ewp_bind_rule; simpl. 
+    iApply ewp_mono; [iApply queue_create_spec|].
+    iIntros (q) "Hq !>". 
     (* a.d. it's kind of interesting that ready is now also scheduler specific. But it's nice to know that
        we cannot schedule a fiber in a different scheduler. *)
-    iSpecialize ("Hq" $! (ready (δ, θ) ℓres)).
+    iSpecialize ("Hq" $! (ready (δ, θ) ℓres q)).
+    iDestruct "Hq" as ">Hq".
     ewp_pure_steps.
     iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
-    iApply (ewp_mono with "[Hmain Hres Hwaiting HfCtx]").
+    iApply (ewp_mono with "[Hmain Hres Hwaiting HfCtx Hq]").
     { iApply (ewp_execute with "Hq [HfCtx Hres] HtlvAg [Hmain Hwaiting]").
       { iFrame. by iExists _. }
       iIntros "HfRes".
@@ -1306,7 +1386,7 @@ Section verification.
       iFrame.
       iExists Φ. iSplit; first by done.
       iRight. iExists _. iFrame. by iAssumption. }
-    - iIntros (?) "(HfRes & (%v' & Hdone)) !>".
+    - iIntros (?) "(HfRes & (%v' & Hdone & Hq)) !>".
       ewp_pure_steps.
       iDestruct "HfRes" as "[HfCtx Hres]".
       simpl.
@@ -1334,6 +1414,7 @@ Section specification.
 
   Class AsyncCompLib := {
     coop : ((gname * gname) * (gname * gname) * loc) → iEff Σ;
+    is_tlv_pred : gname → (val → iProp Σ) → iProp Σ;
     tlv_agree : gname → loc → iProp Σ;
     tlv_agree_Persistent δ ℓtlv : Persistent (tlv_agree δ ℓtlv);
     fiber_resources : ((gname * gname) * (gname * gname)) → loc → iProp Σ;
@@ -1355,7 +1436,7 @@ Section specification.
 
   Definition run_spec (init main : val) (I Φ : val -> iProp Σ)  :=
     I init -∗ 
-    (∀ _ : AsyncCompLib, ∀ δ ℓres, fiber_resources δ ℓres -∗ EWP main #() <| coop (δ, ℓres) |> {{ v, □ Φ v ∗ fiber_resources δ ℓres }}) ={⊤}=∗
+    (∀ _ : AsyncCompLib, ∀ δ ℓres, is_tlv_pred δ.1.2 I -∗ fiber_resources δ ℓres -∗ EWP main #() <| coop (δ, ℓres) |> {{ v, □ Φ v ∗ fiber_resources δ ℓres }}) ={⊤}=∗
       EWP run init main <| ⊥ |> {{ v, □ Φ v }}.
 
 End specification.
@@ -1385,6 +1466,7 @@ Section closed_proof.
   Local Program Instance async_comp_lib `{!promiseGS Σ} :
     AsyncCompLib (Σ:=Σ) := {
     coop := Coop;
+    is_tlv_pred := isTlvPred;
     tlv_agree := tlvAgree;
     tlv_agree_Persistent := _;
     fiber_resources := fiberResources;
@@ -1416,6 +1498,7 @@ Section closed_proof.
     iSpecialize ("He" $! async_comp_lib). iModIntro.
     iApply (ewp_run _ _ I Φ with "[HpInv He Hinit]").
     iFrame.
-    by iAssumption.
   Qed.
 End closed_proof.
+
+Print Assumptions run_correct.

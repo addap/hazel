@@ -34,15 +34,21 @@ Definition spawn_inv (γ : gname) (l : loc) (Ψ : val → iProp Σ) : iProp Σ :
   ∃ lv, l ↦ lv ∗ (⌜lv = NONEV⌝ ∨
                   ∃ w, ⌜lv = SOMEV w⌝ ∗ (Ψ w ∨ own γ (Excl ()))).
 
+Definition is_spawn γ l Ψ := inv N (spawn_inv γ l Ψ).
+Definition join_permission γ := own γ (Excl ()).
+
 Definition join_handle (l : loc) (Ψ : val → iProp Σ) : iProp Σ :=
-  ∃ γ, own γ (Excl ()) ∗ inv N (spawn_inv γ l Ψ).
+  ∃ γ, join_permission γ ∗ is_spawn γ l Ψ.
 
 Global Instance spawn_inv_ne n γ l :
   Proper (pointwise_relation val (dist n) ==> dist n) (spawn_inv γ l).
 Proof. solve_proper. Qed.
 Global Instance join_handle_ne n l :
   Proper (pointwise_relation val (dist n) ==> dist n) (join_handle l).
-Proof. solve_proper. Qed.
+Proof. 
+  rewrite /join_handle /join_permission /is_spawn.
+  solve_proper. 
+Qed.
 
 (** The main proofs. *)
 Lemma spawn_spec (Q : val → iProp Σ) (f : val) :
