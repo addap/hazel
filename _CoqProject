@@ -44,3 +44,6 @@ theories/case_studies/eio/eio.v
 
 theories/case_studies/mt/spawn.v
 theories/case_studies/mt/domain_manager.v
+
+# Example
+theories/case_studies/eio/example.v

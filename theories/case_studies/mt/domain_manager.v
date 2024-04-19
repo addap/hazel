@@ -126,33 +126,29 @@ End spec.
       
 Section proof.
   Context `{!heapGS Σ, !spawnG Σ, !promiseGS Σ, !savedPredG Σ val, !domainG Σ}.
-  Context (N Njoin : namespace).
+  Context (N Njoin Nreturn: namespace).
 
   Lemma make_register_spec γ δ ℓ (I Φ : val -> iProp Σ) (init f: val) :
-    ⊢ promiseInv -∗ 
-      I init -∗ 
-      (∀ δℓ, isTlvPred δℓ.1.1.2 I -∗ fiberResources (fst δℓ) (snd δℓ) -∗ EWP (f #()) <| Coop δℓ |> {{ v, □ Φ v ∗ fiberResources (fst δℓ) (snd δℓ) }}) -∗
+    ⊢ I init -∗ 
+      (∀ ℓres, fiberResources (ℓres, I) -∗ EWP (f #()) <| Coop (ℓres, I) |> {{ v, □ Φ v ∗ fiberResources (ℓres, I) }}) -∗
       is_domain_ref N Njoin γ δ ℓ Φ -∗ 
       domain_state_unset γ -∗
         EWP (make_register #ℓ init f) <| ⊥ |> {{reg, 
           ∀ (waker: val), (∀ (v: val), □ True -∗ EWP (waker v) <| ⊥ |> {{_, True }}) -∗
-            (▷ EWP (reg waker) <| ⊥ |> {{_, □ domain_state_set γ }}) }}.
+            (EWP (reg waker) <| ⊥ |> {{_, □ domain_state_set γ }}) }}.
   Proof.
-    iIntros "HInv Hinit Hf Hdr Hγ". rewrite /make_register.
+    iIntros "Hinit Hf Hdr Hγ". rewrite /make_register.
     ewp_pure_steps.
-    iIntros (waker) "Hwaker !>".
+    iIntros (waker) "Hwaker".
     ewp_pure_steps.
     (* spawn the new thread *)
     ewp_bind_rule; simpl.
-    iApply (ewp_mono with "[Hwaker HInv Hinit Hf]").
-    { iApply (spawn_spec Njoin (λ v, □ Φ v)%I with "[Hwaker HInv Hinit Hf]").
+    iApply (ewp_mono with "[Hwaker Hinit Hf]").
+    { iApply (spawn_spec Njoin (λ v, □ Φ v)%I with "[Hwaker Hinit Hf]").
       ewp_pure_steps.
       iApply (ewp_bind' (AppRCtx _)); [by done|simpl].
-      iApply (ewp_mono with "[HInv Hinit Hf]").
-      { iApply (ewp_run _ _ I Φ). iFrame "Hinit".
-        iIntros (δf ℓres) "HPred HfRes".
-        iSpecialize ("Hf" $! (δf, ℓres) with "HPred HfRes").
-        iApply ("Hf"). }
+      iApply (ewp_mono with "[Hinit Hf]").
+      { iApply (ewp_run Nreturn _ _ I Φ with "Hinit Hf"). }
       iIntros (?) "Hv !>".
       ewp_pure_steps.
       (* call the waker function *)
@@ -181,14 +177,13 @@ Section proof.
     iModIntro. by iAssumption.
   Qed.
 
-  Lemma spawn_scheduler2_spec δf ℓres (I Φ : val -> iProp Σ) (init f: val) :
-    ⊢ promiseInv -∗ 
-      I init -∗ 
-      (∀ δℓ, isTlvPred δℓ.1.1.2 I -∗ fiberResources (fst δℓ) (snd δℓ) -∗ EWP (f #()) <| Coop δℓ |> {{ v, □ Φ v ∗ fiberResources (fst δℓ) (snd δℓ) }}) -∗
-      fiberResources δf ℓres -∗ 
-        EWP (spawn_scheduler2 init f) <| Coop (δf, ℓres) |> {{ v, □ Φ v ∗ fiberResources δf ℓres }}.
+  Lemma spawn_scheduler2_spec fargs (I Φ : val -> iProp Σ) (init f: val) :
+    ⊢ I init -∗ 
+      fiberResources fargs -∗ 
+      (∀ ℓres, fiberResources (ℓres, I) -∗ EWP (f #()) <| Coop (ℓres, I) |> {{ v, □ Φ v ∗ fiberResources (ℓres, I) }}) -∗
+        EWP (spawn_scheduler2 init f) <| Coop fargs |> {{ v, □ Φ v ∗ fiberResources fargs }}.
   Proof.
-    iIntros "HInv Hinit Hf HfRes". rewrite /spawn_scheduler2.
+    iIntros "Hinit HfRes Hf". rewrite /spawn_scheduler2.
     ewp_pure_steps.
     (* Allocate domain ref and its invariant. *)
     (* a.d. TODO bind rule does not work for binding ref *)
@@ -198,15 +193,15 @@ Section proof.
     iModIntro. ewp_pure_steps.
     (* Create the register function. *)
     iApply (ewp_bind' (AppRCtx _)); [by done|simpl].
-    iApply (ewp_mono with "[Hdr HInv Hinit Hf Hγ]").
+    iApply (ewp_mono with "[Hdr Hinit Hf Hγ]").
     { iApply (ewp_os_prot_mono _ ⊥); first iApply iEff_le_bottom.
-      iApply (make_register_spec with "HInv Hinit Hf Hdr Hγ"). }
+      iApply (make_register_spec with "Hinit Hf Hdr Hγ"). }
     iIntros (reg) "Hreg !>".
     ewp_pure_steps.
     (* Perform suspend effect to get back domain_state_set γ *)
     ewp_bind_rule; simpl.
     iApply (ewp_mono with "[Hreg HfRes]").
-    { iApply ewp_suspend. iFrame. }
+    { iApply (ewp_suspend _ _ (λ _, □ True)%I (domain_state_set γ) with "HfRes Hreg"). }
     iIntros (?) "(HfRes & _ & Hγ) !>".
     ewp_pure_steps.
     (* Match the domain ref and contradict the second case. *)

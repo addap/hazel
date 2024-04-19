@@ -7,56 +7,7 @@ From case_studies Require Import list_lib .
 From case_studies.eio Require Import eio.
 From case_studies.mt Require Import spawn domain_manager.
 
-Section simple.
-  Context `{AsyncCompLib}.
-  
-  Existing Instance promise_inv_Persistent.
-
-  Definition simple_dispatch : val := (λ: <>, 
-    #1
-  )%V.
-  Definition simple_main : val := (λ: <>, 
-    let: "p" := fork_promise simple_dispatch in
-    let: "r" := await "p" in
-    "r"
-  )%V.
-
-  Lemma ewp_simple_dispatch δ ℓres : 
-    ⊢ EWP simple_dispatch #() <| coop (δ, ℓres) |> {{ v, ⌜ v = #1 ⌝ }}.
-  Proof.
-    iIntros.
-    rewrite /simple_dispatch.
-    ewp_pure_steps.
-    done.
-  Qed.
-    
-  Lemma ewp_simple_main δ ℓres : 
-    fiber_resources δ ℓres ∗ promise_inv
-    ⊢ EWP simple_main #() <| coop (δ, ℓres) |> {{ v, ⌜ v = #1 ⌝ }}.
-  Proof.
-    iIntros "(HfRes & #HpInv)".
-    rewrite /simple_main. ewp_pure_steps.
-    ewp_bind_rule; simpl.
-    iApply (ewp_mono _ _ with "[HfRes]"). 
-    { iApply fork_spec. iFrame. iSplit; first by done.
-      iIntros "HfRes". iApply (ewp_mono). iApply ewp_simple_dispatch.
-      iIntros (?) "-> !>".
-      Unshelve. 2: exact (λ v, ⌜ v = #1 ⌝%I).
-      simpl. iSplit; first done. done.
-    }
-    iIntros (p) "(Hp & HfRes) !>".
-    ewp_pure_steps.
-    ewp_bind_rule; simpl.
-    iApply (ewp_mono with "[HfRes Hp]").
-    { iApply await_spec. iFrame. by iAssumption. }
-    iIntros (?) "(-> & HfRes) !>".
-    ewp_pure_steps.
-    done.
-  Qed.
-End simple.
-
 Section complex.
-  (* main fiber spawns N schedulers in other threads and collects their results. *)
 
   (* fiber that gets spawned in a new thread *)
   Definition work : val := (λ: "seed" <>,
@@ -136,19 +87,16 @@ End spec.
 
 Section proof.
   Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val, !spawnG Σ, !domainG Σ, !exampleG Σ}.
+  Context (Nresult : namespace).
   
-  Existing Instance promise_inv_Persistent.
-  Existing Instance tlv_agree_Persistent.
-  Existing Instance is_promise_Persistent.
-
   Lemma ewp_work (n : Z) :
-    ⊢ EWP (work #n) {{f, ∀ δ ℓres, fiberResources δ ℓres -∗
-        EWP f #() <| Coop (δ, ℓres) |> {{v, □ ⌜ v = #n ⌝ ∗ fiberResources δ ℓres }}
+    ⊢ EWP (work #n) {{f, ∀ fargs, fiberResources fargs -∗
+        EWP f #() <| Coop fargs |> {{v, □ ⌜ v = #n ⌝ ∗ fiberResources fargs }}
       }}.
   Proof.
     rewrite /work.
     ewp_pure_steps.
-    iIntros (δ ℓres) "HfRes".
+    iIntros (fargs) "HfRes".
     ewp_pure_steps.
     ewp_bind_rule; simpl.
     iApply (ewp_mono with "[HfRes]"); [iApply (ewp_yield with "HfRes")|].
@@ -159,99 +107,76 @@ Section proof.
 
   Context (N Njoin : namespace).
 
-  Lemma ewp_spawnwork δ ℓres (f : val) Φ :
+  Lemma ewp_spawnwork fargs (f : val) Φ :
     ⊢ promiseInv -∗ 
-      fiberResources δ ℓres -∗
-      (∀ δ' ℓres', fiberResources δ' ℓres' -∗ EWP f #() <| Coop (δ', ℓres') |> {{v, □ Φ v ∗ fiberResources δ' ℓres' }}) -∗ 
-        EWP (spawnwork f) <| Coop (δ, ℓres) |> {{v, 
-          ∃ (p: loc), ⌜ v = #p ⌝ ∗ isPromise p Φ ∗ fiberResources δ ℓres}}.
+      fiberResources fargs -∗
+      (∀ fargs', fiberResources fargs' -∗ EWP f #() <| Coop fargs' |> {{v, □ Φ v ∗ fiberResources fargs' }}) -∗ 
+        EWP (spawnwork f) <| Coop fargs |> {{v, 
+          ∃ (p: loc), ⌜ v = #p ⌝ ∗ isPromise p Φ ∗ fiberResources fargs }}.
   Proof.
     iIntros "#HInv HfRes Hf".
     rewrite /spawnwork.
     ewp_pure_steps.
-    iApply (ewp_fork_promise).
-    iFrame "HfRes HInv".
+    iApply (ewp_fork_promise with "HInv HfRes").
     iIntros "HfRes".
     ewp_pure_steps.
-    iApply (spawn_scheduler2_spec N Njoin _ _ (λ _, True)%I Φ #() f with "HInv [] [Hf]").
-    - by done.
-    - iIntros "% _ HfRes".
-      destruct δℓ as [δ' ℓres'].
-      iSpecialize ("Hf" $! δ' ℓres' with "HfRes").
-      iApply (ewp_mono with "[Hf]"); [iApply "Hf"|].
-      iIntros (?) "HΦ !>".
-      by iFrame.
-    - by iFrame.
+    iApply (spawn_scheduler2_spec N Njoin Nresult _ (λ _, True)%I Φ #() f with "[//] HfRes [Hf]").
+    iIntros "% HfRes".
+    iApply ("Hf" $! (ℓres, (λ _, True)%I) with "HfRes").
   Qed.
 
-  Lemma ewp_wait_for_data γ δ ℓres ℓtlv :
-    ⊢ isTlvPred δ.1.2 (tlvI γ) -∗ 
-      tlvAgree δ.1.1 ℓtlv -∗
-      fiberResources δ ℓres -∗
-        EWP wait_for_data #ℓtlv <| Coop (δ, ℓres) |> {{v, fiberResources δ ℓres ∗ ∃ (i1 i2 : Z), ⌜ v = (PairV #i1 #i2) ⌝ ∗ tlvContent γ i1 i2 }}.
+  Lemma ewp_wait_for_data γ ℓtlv :
+    ⊢ fiberResources (ℓtlv, tlvI γ) -∗
+        EWP wait_for_data #ℓtlv <| Coop (ℓtlv, tlvI γ) |> {{v, ∃ (i1 i2 : Z), ⌜ v = (PairV #i1 #i2) ⌝ ∗ tlvContent γ i1 i2 ∗ fiberResources (ℓtlv, tlvI γ) }}.
   Proof.
-    iIntros "#HPred #HℓtlvAg HfRes".
+    iIntros "HfRes".
     rewrite /wait_for_data.
     iLöb as "IH".
     ewp_pure_steps.
-    destruct δ as [[δ11 δ12] δ2].
-    iDestruct "HfRes" as "((%ℓtlv' & #HℓtlvAg' & % & % & #HPred' & Hℓtlv & HI) & HRest)".
-    rewrite /tlvAgree /isTlvPred.
-    iDestruct (tlvAgree_agree with "HℓtlvAg HℓtlvAg'") as "->".
-    iDestruct (saved_pred_agree _ _ _ v with "HPred HPred'") as "Heq".
+    iDestruct "HfRes" as "(% & Hℓtlv & HI)".
     ewp_bind_rule; simpl.
     iApply (ewp_load with "Hℓtlv").
     iIntros "!> Hℓtlv !>".
-    iRewrite -"Heq" in "HI".
     rewrite /tlvI.
     iDestruct "HI" as "[->|(%&%&->&#Hi)]".
     - ewp_pure_steps.
       ewp_bind_rule; simpl.
-      iApply (ewp_mono with "[Hℓtlv HRest]").
-      { iApply (ewp_yield with "[Hℓtlv HRest]").
-        iFrame "HRest". iExists ℓtlv'.
-        rewrite /isFiberContext.
-        simpl.
-        repeat iSplit; try done.
-        iExists (InjLV #()), (tlvI γ). 
-        repeat iSplit; try done.
+      iApply (ewp_mono with "[Hℓtlv]").
+      { iApply (ewp_yield with "[Hℓtlv]").
+        iExists _. simpl.
+        iFrame "Hℓtlv".
         by iLeft. }
       iIntros (?) "HfRes !>".
       do 3 ewp_value_or_step.
       iApply ("IH" with "HfRes").
     - ewp_pure_steps.
-      iSplitL. 
-      { iFrame "HRest". iExists ℓtlv'.
-        rewrite /isFiberContext.
-        simpl.
-        repeat iSplit; try done.
-        iExists (InjRV (PairV #i1 #i2)), (tlvI γ). 
-        repeat iSplit; try done.
-        rewrite /tlvI.
-        iRight. iExists _, _.
-        repeat iSplit; try done. }
-      iExists _, _. by iSplit.
+      iExists _, _. 
+      iSplitR; first done.
+      iSplit; first done.
+      iExists _. simpl.
+      iFrame "Hℓtlv".
+      iRight. iExists _, _.
+      iSplit; done.
   Qed.
 
-  Lemma ewp_dispach γ δ ℓres i1 i2 : 
+  Lemma ewp_dispach γ ℓtlv i1 i2 : 
     ⊢ promiseInv -∗
-      isTlvPred δ.1.2 (tlvI γ) -∗
       tlvContent γ i1 i2 -∗ 
-      fiberResources δ ℓres -∗
-        EWP dispatch #() <| Coop (δ, ℓres) |> {{v, ⌜ v = #(i1 + i2) ⌝ ∗ fiberResources δ ℓres }}.
+      fiberResources (ℓtlv, tlvI γ) -∗
+        EWP dispatch #() <| Coop (ℓtlv, tlvI γ) |> {{v, ⌜ v = #(i1 + i2) ⌝ ∗ fiberResources (ℓtlv, tlvI γ) }}.
   Proof.
-    iIntros "#HInv #HPred #Htlvc HfRes".
+    iIntros "#HInv #Htlvc HfRes".
     rewrite /dispatch.
     ewp_pure_steps.
     (* get context *)
     ewp_bind_rule; simpl.
     iApply (ewp_mono); [iApply (ewp_get_context)|].
-    iIntros (?) "(%ℓtlv & -> & #HℓtlvAg) !>".
+    iIntros (?) "-> !>".
     ewp_pure_steps.
     (* wait until tlv is filled *)
     ewp_bind_rule; simpl.
-    iApply (ewp_mono with "[HfRes]"); [iApply (ewp_wait_for_data with "HPred HℓtlvAg HfRes")|].
-    iIntros (?) "(HfRes&%i1'&%i2'&->&#Htlvc') !>".
+    iApply (ewp_mono with "[HfRes]"); [iApply (ewp_wait_for_data with "HfRes")|].
+    iIntros (?) "(%i1'&%i2'&->&#Htlvc'&HfRes) !>".
     iDestruct (tlvContent_agree with "Htlvc Htlvc'") as "[<- <-]".
     ewp_pure_steps.
     (* p1 *)
@@ -274,12 +199,12 @@ Section proof.
     ewp_pure_steps.
     (* r1 *)
     ewp_bind_rule; simpl.
-    iApply (ewp_mono with "[Hp1 HfRes]"); [iApply (ewp_await with "[$]")|].
+    iApply (ewp_mono with "[Hp1 HfRes]"); [iApply (ewp_await with "HInv HfRes Hp1")|].
     iIntros (r1) "(-> & HfRes) !>". 
     ewp_pure_steps.
     (* r2 *)
     ewp_bind_rule; simpl.
-    iApply (ewp_mono with "[Hp2 HfRes]"); [iApply (ewp_await with "[$]")|].
+    iApply (ewp_mono with "[Hp2 HfRes]"); [iApply (ewp_await with "HInv HfRes Hp2")|].
     iIntros (r2) "(-> & HfRes) !>". 
     ewp_pure_steps.
     (* calculate *)
@@ -291,22 +216,21 @@ Section proof.
     ⊢ promiseInv -∗
       tlvContent γ i1 i2 -∗ 
         EWP main_fiber #i1 #i2 {{f, 
-          ∀ δ ℓres, isTlvPred δ.1.2 (tlvI γ) -∗ fiberResources δ ℓres -∗
-            EWP f #() <| Coop (δ, ℓres) |> {{v, □ ⌜ v = #(i1 + i2) ⌝ ∗ fiberResources δ ℓres }}
+          ∀ ℓtlv, fiberResources (ℓtlv, tlvI γ) -∗
+            EWP f #() <| Coop (ℓtlv, tlvI γ) |> {{v, □ ⌜ v = #(i1 + i2) ⌝ ∗ fiberResources (ℓtlv, tlvI γ) }}
         }}.
   Proof.
     iIntros "#HInv #Htlvc".
     rewrite /main_fiber.
     ewp_pure_steps.
-    iIntros (? ?) "#HPred HfRes".
+    iIntros (?) "HfRes".
     ewp_pure_steps.
     ewp_bind_rule; simpl.
     iApply (ewp_mono with "[HfRes]").
-    { iApply (ewp_fork_promise _ _ (λ v, ⌜ v = #(i1 + i2) ⌝)%I).
-      iFrame "HfRes HInv".
+    { iApply (ewp_fork_promise _ _ (λ v, ⌜ v = #(i1 + i2) ⌝)%I with "HInv HfRes").
       iIntros "HfRes".
       iApply (ewp_mono with "[HfRes]").
-      iApply (ewp_dispach with "HInv HPred Htlvc HfRes").
+      iApply (ewp_dispach with "HInv Htlvc HfRes").
       iIntros (?) "(-> & HfRes) !>".
       by iFrame. }
     iIntros (?) "(% & -> & #HisPr & HfRes) !>".
@@ -314,30 +238,27 @@ Section proof.
     (* get context *)
     ewp_bind_rule; simpl.
     iApply (ewp_mono); [iApply (ewp_get_context)|].
-    iIntros (?) "(%ℓtlv & -> & #HℓtlvAg) !>".
-    iDestruct "HfRes" as "((%ℓtlv' & #HℓtlvAg' & % & % & #HPred' & Hℓtlv & _) & HRest)".
-    iDestruct (tlvAgree_agree with "HℓtlvAg HℓtlvAg'") as "->".
-    (* iDestruct (saved_pred_agree _ _ _ v with "HPred HPred'") as "Heq". *)
+    iIntros (?) "-> !>".
+    iDestruct "HfRes" as "(% & Hℓtlv & HI)".
     ewp_pure_steps.
     ewp_bind_rule; simpl.
     iApply (ewp_store with "Hℓtlv").
     iIntros "!> Hℓtlv !>".
     ewp_pure_steps.
     (* await the result *)
-    iApply (ewp_mono with "[Hℓtlv HRest]").
-    { iApply (ewp_await with "[Hℓtlv HRest]").
-      iFrame "HInv HisPr HRest".
-      iExists ℓtlv'. 
-      iFrame "HℓtlvAg".
-      iExists _, _. iFrame "HPred Hℓtlv".
-      iRight. iExists _, _. by repeat iSplit. }
+    iApply (ewp_mono with "[Hℓtlv]").
+    { iApply (ewp_await with "HInv [Hℓtlv] HisPr").
+      iExists _. simpl.
+      iFrame "Hℓtlv".
+      iRight. iExists _, _.
+      iSplit; done. }
     by iIntros (?) "(-> & $)".
   Qed.
 End proof.
 
 Section closed.
   Context `{!heapGS Σ, !promiseGpreS Σ, !savedPredG Σ val, !spawnG Σ, !domainG Σ, !exampleG Σ}.
-  Context (N Njoin : namespace).
+  Context (N Njoin Nresult : namespace).
 
   Lemma ewp_main :
     ⊢ EWP main #() {{v, ⌜ v = #42 ⌝ }}.
@@ -349,12 +270,11 @@ Section closed.
     iMod (tlvContent_create 17 25) as (γ) "#Htlvc".
     iModIntro.
     iApply (ewp_bind' (AppRCtx _)); [by done|simpl].
-    iApply (ewp_mono); [iApply (ewp_main_fiber N Njoin with "HInv Htlvc")|].
+    iApply (ewp_mono); [iApply (ewp_main_fiber N Njoin Nresult with "HInv Htlvc")|].
     iIntros (f) "Hf !>".
     ewp_pure_steps.
     iApply (ewp_mono with "[Hf]").
-    iApply (ewp_run _ _ (tlvI γ) with "[Hf]").
-    iFrame "Hf".
+    iApply (ewp_run Nresult _ _ (tlvI γ) with "[] Hf").
     by iLeft.
     iIntros (?) "-> !>".
     iPureIntro.
