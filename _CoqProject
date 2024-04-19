@@ -2,6 +2,7 @@
 -Q theories/language language
 -Q theories/program_logic program_logic
 -Q theories/case_studies case_studies
+-Q theories/cqslib SegmentQueue
 
 -arg -w -arg -convert_concl_no_check
 
@@ -39,6 +40,16 @@ theories/case_studies/queue_lib.v
 theories/case_studies/eio/concurrent_queue.v
 theories/case_studies/eio/cqs.v
 theories/case_studies/eio/eio.v
+
+# CQS 
+#./theories/cqslib/util/everything.v
+#./theories/cqslib/util/big_opL.v
+#./theories/cqslib/util/cmra.v
+#./theories/cqslib/util/count_matching.v
+#./theories/cqslib/util/find_index.v
+#./theories/cqslib/util/local_updates.v
+
+#./theories/cqslib/lib/util/increaseValueTo.v
 
 # Multi-Threading
 
