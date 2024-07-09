@@ -1,5 +1,5 @@
 From iris.algebra Require Import cmra gset numbers big_op.
-From iris.staging.algebra Require Import list.
+From iris.unstable.algebra Require Import list.
 
 Lemma big_opL_replicate_irrelevant_element
       (M: ofe) (o: M -> M -> M) (H': Monoid o)

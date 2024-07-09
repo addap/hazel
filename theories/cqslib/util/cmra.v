@@ -1,5 +1,5 @@
 From iris.algebra Require Import cmra list.
-From iris.staging.algebra Require Import list.
+From iris.unstable.algebra Require Import list.
 
 (* list_op is now in iris_staging *)
 Lemma replicate_op {A: ucmra} (a b: A) n:
