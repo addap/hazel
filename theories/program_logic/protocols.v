@@ -36,6 +36,7 @@ Local Open Scope ieff.
 (* -------------------------------------------------------------------------- *)
 (** Inhabited. *)
 
+#[export]
 Instance iEff_inhabited {Σ} : Inhabited (iEff Σ) := populate (IEff inhabitant).
 
 
@@ -141,8 +142,10 @@ Arguments upcl _ _%ieff.
 (** Properties of the Upward Closure. *)
 
 (* Non-expansiveness. *)
+#[export]
 Instance upcl_ne {Σ} m n : Proper ((dist n) ==> (dist n)) (upcl (Σ:=Σ) m).
 Proof. by intros ?? Hne ??; simpl; repeat (apply Hne || f_equiv). Qed.
+#[export]
 Instance upcl_proper {Σ} m : Proper ((≡) ==> (≡)) (upcl (Σ:=Σ) m).
 Proof.
   intros ????. apply equiv_dist=>n.
@@ -150,6 +153,7 @@ Proof.
 Qed.
 
 (* The upward closure is monotonic. *)
+#[export]
 Instance upcl_mono_prot {Σ} (Ψ : iEff Σ) : MonoProt (upcl OS Ψ).
 Proof.
   constructor.
@@ -159,6 +163,7 @@ Proof.
 Qed.
 
 (* The persistent upward closure is persistently monotonic. *)
+#[export]
 Instance pers_upcl_pers_mono_prot {Σ} (Ψ : iEff Σ) : PersMonoProt (upcl MS Ψ).
 Proof.
   constructor. simpl.
@@ -192,6 +197,7 @@ Qed.
 (** Protocol Operators. *)
 
 (* Bottom protocol. *)
+#[export]
 Instance iEff_bottom {Σ} : Bottom (iEff Σ) := IEff (λ _, λne _, False%I).
 
 (* Pre/post protocol.
@@ -206,6 +212,7 @@ Definition iEffPre_base := iEffPre_base_aux.(unseal).
 Definition iEffPre_base_eq : @iEffPre_base = @iEffPre_base_def :=
   iEffPre_base_aux.(seal_eq).
 Arguments iEffPre_base {_} _ _%V _%I _%ieff.
+#[export]
 Instance: Params (@iEffPre_base) 4 := {}.
 
 (* Close a protocol with an existential quantifier. *)
@@ -217,6 +224,7 @@ Definition iEffPre_exist := iEffPre_exist_aux.(unseal).
 Definition iEffPre_exist_eq : @iEffPre_exist = @iEffPre_exist_def :=
   iEffPre_exist_aux.(seal_eq).
 Arguments iEffPre_exist {_ _} _%ieff.
+#[export]
 Instance: Params (@iEffPre_exist) 3 := {}.
 
 (* Iterate the existential closure. *)
@@ -232,6 +240,7 @@ Definition iEffPost_base := iEffPost_base_aux.(unseal).
 Definition iEffPost_base_eq : @iEffPost_base = @iEffPost_base_def :=
   iEffPost_base_aux.(seal_eq).
 Arguments iEffPost_base {_} _%V _%I.
+#[export]
 Instance: Params (@iEffPost_base) 2 := {}.
 
 (* Close a predicate with an existential quantifier. *)
@@ -243,6 +252,7 @@ Definition iEffPost_exist := iEffPost_exist_aux.(unseal).
 Definition iEffPost_exist_eq : @iEffPost_exist = @iEffPost_exist_def :=
   iEffPost_exist_aux.(seal_eq).
 Arguments iEffPost_exist {_ _} _%ieff.
+#[export]
 Instance: Params (@iEffPost_exist) 2 := {}.
 
 Definition iEffPost_texist {Σ} {TT : tele}
@@ -259,6 +269,7 @@ Definition iEff_marker := iEff_marker_aux.(unseal).
 Definition iEff_marker_eq : @iEff_marker = @iEff_marker_def :=
   iEff_marker_aux.(seal_eq).
 Arguments iEff_marker {_} _ _%ieff.
+#[export]
 Instance: Params (@iEff_marker) 3 := {}.
 
 (* Extend a given protocol with the constraint
@@ -271,6 +282,7 @@ Definition iEff_filter := iEff_filter_aux.(unseal).
 Definition iEff_filter_eq : @iEff_filter = @iEff_filter_def :=
   iEff_filter_aux.(seal_eq).
 Arguments iEff_filter {_} _ _%ieff.
+#[export]
 Instance: Params (@iEff_marker) 3 := {}.
 
 (* Protocol sum. *)
@@ -282,6 +294,7 @@ Definition iEff_sum := iEff_sum_aux.(unseal).
 Definition iEff_sum_eq : @iEff_sum = @iEff_sum_def :=
   iEff_sum_aux.(seal_eq).
 Arguments iEff_sum {_} _%ieff _%ieff.
+#[export]
 Instance: Params (@iEff_sum) 3 := {}.
 
 

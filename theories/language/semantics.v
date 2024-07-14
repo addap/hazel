@@ -93,6 +93,7 @@ Definition fill_frame (f : frame) (e : expr) : expr :=
 (* -------------------------------------------------------------------------- *)
 (** Properties of [fill_frame]. *)
 
+#[export]
 Instance fill_frame_inj f : Inj (=) (=) (fill_frame f).
 Proof. induction f; intros ???; simplify_eq/=; auto with f_equal. Qed.
 
@@ -589,7 +590,7 @@ Proof. destruct 1; eauto. Qed.
 
 (* There is always a fresh location to be used by [Alloc v]. *)
 Lemma alloc_fresh v n σ :
-  let l := fresh_locs (dom (gset loc) σ.(heap)) in
+  let l := fresh_locs (dom σ.(heap)) in
   (0 < n)%Z →
   head_step (AllocN ((Val $ LitV $ LitInt $ n)) (Val v)) σ 
             (Val $ LitV $ LitLoc l) (state_init_heap l n v σ) [].
@@ -603,14 +604,14 @@ Qed.
 (* There is always a fresh location to be used in the
    creation of a new one-shot continuation. *)
 Lemma try_with_fresh h r v k σ :
- let l := fresh_locs (dom (gset loc) σ.(heap)) in
+ let l := fresh_locs (dom σ.(heap)) in
  head_step (TryWith (Eff OS v k) h r)           σ
            (App (App h (Val v)) (Val (ContV k l)))
            (heap_upd <[l:=LitV $ LitBool false]> σ) [].
 Proof.
   intros. apply TryWithOSEffS.
   intros. apply (not_elem_of_dom (D := gset loc)).
-  specialize (fresh_locs_fresh (dom _ (heap σ)) 0).
+  specialize (fresh_locs_fresh (dom (heap σ)) 0).
   rewrite loc_add_0. naive_solver.
 Qed.
 

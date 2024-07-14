@@ -57,3 +57,5 @@ Proof. by solve_atomic. Qed.
 Global Instance cmpxchg_atomic v1 v2 v3 : Atomic StronglyAtomic (CmpXchg (Val v1) (Val v2) (Val v3)).
 Proof. by solve_atomic. Qed.
 
+Global Instance skip_atomic : Atomic StronglyAtomic Skip.
+Proof. by solve_atomic. Qed.

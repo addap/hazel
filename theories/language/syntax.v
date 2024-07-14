@@ -32,6 +32,8 @@ From iris.heap_lang Require Export locations. (* Domain of locations. *)
 
 Set Default Proof Using "Type".
 
+Declare Scope expr_scope.
+Declare Scope val_scope.
 Delimit Scope expr_scope with E.
 Delimit Scope val_scope  with V.
 
@@ -179,6 +181,7 @@ Definition to_val (e : expr) : option val :=
   match e with Val v => Some v | _ => None end.
 Lemma of_to_val e v : to_val e = Some v → of_val v = e.
 Proof. destruct e=>//=. by intros [= <-]. Qed.
+#[export]
 Instance of_val_inj : Inj (=) (=) of_val.
 Proof. by intros ?? [=]. Qed.
 
@@ -469,12 +472,16 @@ End induction_principle.
 
 (* We prove that [expr], [val], [frame], and [ectx] have decidable equality. *)
 
+#[export]
 Instance base_lit_eq_dec : EqDecision base_lit.
 Proof. solve_decision. Defined.
+#[export]
 Instance un_op_eq_dec : EqDecision un_op.
 Proof. solve_decision. Defined.
+#[export]
 Instance bin_op_eq_dec : EqDecision bin_op.
 Proof. solve_decision. Defined.
+#[export]
 Instance mode_dec : EqDecision mode.
 Proof. solve_decision. Defined.
 
@@ -1091,6 +1098,7 @@ End eq_decidable.
    [inj_countable'] allows us to use this intermediate representation.
 *)
 
+#[export]
 Instance mode_countable : Countable mode.
 Proof.
   refine (inj_countable'
@@ -1100,6 +1108,7 @@ Proof.
        match b with false => OS | true => MS end) _);
   by intros [].
 Qed.
+#[export]
 Instance base_lit_countable : Countable base_lit.
 Proof.
   refine (inj_countable'
@@ -1119,6 +1128,7 @@ Proof.
        end) _);
   by intros [].
 Qed.
+#[export]
 Instance un_op_finite : Countable un_op.
 Proof.
   refine (inj_countable'
@@ -1128,6 +1138,7 @@ Proof.
        match n with 0 => NegOp | _ => MinusUnOp end) _);
   by intros [].
 Qed.
+#[export]
 Instance bin_op_countable : Countable bin_op.
 Proof.
   refine (inj_countable'
@@ -1799,10 +1810,15 @@ Global Arguments vals_compare_safe !_ !_ /.
 (* -------------------------------------------------------------------------- *)
 (** Inhabited. *)
 
+#[export]
 Instance state_inhabited : Inhabited state := populate {| heap := inhabitant |}.
+#[export]
 Instance val_inhabited : Inhabited val := populate (LitV LitUnit).
+#[export]
 Instance expr_inhabited : Inhabited expr := populate (Val inhabitant).
+#[export]
 Instance frame_inhabited : Inhabited frame := populate FstCtx.
+#[export]
 Instance ectx_inhabited : Inhabited ectx := populate inhabitant.
 
 

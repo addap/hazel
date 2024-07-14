@@ -109,7 +109,6 @@ Proof.
     do 4 ewp_value_or_step.
     iApply ("IH" with "Hγ").
   - iDestruct "Hlv" as "[HQ|Hγ']".
-    (* a.d. TODO iCombine as %[] does not work. *)
     2: {
       iCombine "Hγ Hγ'" as "H".
       iPoseProof (own_valid with "H") as "%H".
@@ -123,4 +122,4 @@ Proof.
 Qed.
 End proof.
 
-Typeclasses Opaque join_handle.
+Global Typeclasses Opaque join_handle.

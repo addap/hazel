@@ -3,11 +3,10 @@ From iris.algebra Require Import excl_auth gset gmap agree csum frac excl.
 From iris.base_logic Require Import invariants.
 From iris.base_logic.lib Require Import iprop wsat saved_prop.
 From program_logic Require Import reasoning_rules.
-From case_studies Require Import list_lib .
 
 (* An axiomatization of CQS *)
 Section cqs.
-Context `{!heapGS Σ, !ListLib Σ}.
+Context `{!heapGS Σ}.
 
 Variable R : iProp Σ.
 

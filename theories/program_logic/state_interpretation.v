@@ -45,6 +45,7 @@ Class heapGpreS Σ := {
 Definition heapΣ : gFunctors :=
   #[invΣ; gen_heapΣ loc val; inv_heapΣ loc val].
 
+#[export]
 Instance subG_heapPreG {Σ} : subG heapΣ Σ → heapGpreS Σ.
 Proof. solve_inG. Qed.
 

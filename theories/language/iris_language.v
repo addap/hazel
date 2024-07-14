@@ -158,13 +158,12 @@ Proof.
     assert (∃ (n': nat), n = n') as [n' ->].
     { apply Z_of_nat_complete. lia. }
     destruct n' as [|n']; [by lia|].
-    (* Search (Z.to_nat (Z.pos _)). *)
     rewrite Nat2Z.id in H11.
     simpl in H11.
     specialize (H11 0).
     rewrite loc_add_0 in H11.
-    rewrite lookup_union_l in H11; [|rewrite lookup_union_l].
-    rewrite lookup_union_l in H11.
+    rewrite lookup_union_l' in H11; [|rewrite lookup_union_l'].
+    rewrite lookup_union_l' in H11.
     2-4: by rewrite lookup_insert.
     rewrite lookup_insert in H11.
     discriminate H11; by lia.

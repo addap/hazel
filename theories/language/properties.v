@@ -12,13 +12,17 @@ From language Require Import syntax.
 (* We prove that [InjLV] and [InjRV] form a pair of markers with
    disjoint range. *)
 
+#[export]
 Instance InjLV_inj : Inj (=) (=) InjLV.
 Proof. intros ??. by inversion 1. Qed.
+#[export]
 Instance InjRV_inj : Inj (=) (=) InjRV.
 Proof. intros ??. by inversion 1. Qed.
 
+#[export]
 Instance InjLV_dec_range : DecRange InjLV.
 Proof. intros v. case v; try (right; by inversion 1); left; by exists v0. Qed.
+#[export]
 Instance InjRV_dec_range : DecRange InjRV.
 Proof. intros v. case v; try (right; by inversion 1); left; by exists v0. Qed.
 
@@ -27,12 +31,16 @@ Proof. by apply dec_range. Qed.
 Lemma InjRV_case v : {w | v = InjRV w} + {∀ w, v ≠ InjRV w}.
 Proof. by apply dec_range. Qed.
 
+#[export]
 Instance InjLV_marker : Marker InjLV.
 Proof. split. { by apply InjLV_inj. } { by apply InjLV_dec_range. } Qed.
+#[export]
 Instance InjRV_marker : Marker InjRV.
 Proof. split. { by apply InjRV_inj. } { by apply InjRV_dec_range. } Qed.
 
+#[export]
 Instance InjLV_InjRV_disj_range : DisjRange InjLV InjRV.
 Proof. by intros ?. Qed.
+#[export]
 Instance InjRV_InjLV_disj_range : DisjRange InjRV InjLV.
 Proof. by intros ?. Qed.

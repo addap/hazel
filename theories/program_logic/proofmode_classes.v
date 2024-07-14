@@ -16,13 +16,17 @@ Section proofmode_classes.
   Implicit Types v : val .
   Implicit Types e : expr .
 
-  Global Instance frame_wp p s E e R Φ Ψ :
+  (* Global Instance frame_wp p E e R Φ Ψ :
     (∀ v, Frame p R (Φ v) (Ψ v)) →
-    Frame p R (WP e @ s; E {{ Φ }}) (WP e @ s; E {{ Ψ }}) | 2.
-  Proof. rewrite /Frame=> HR. rewrite wp_frame_l. apply wp_mono, HR. Qed. 
+    Frame p R (EWP e @ E {{ Φ }}) (EWP e @ E {{ Ψ }}) | 2.
+  Proof. 
+  Admitted. *)
+  (* rewrite /Frame=> HR. rewrite ewp_frame_l. apply wp_mono, HR. Qed.  *)
 
-  Global Instance is_except_0_wp s E e Φ : IsExcept0 (WP e @ s; E {{ Φ }}).
-  Proof. by rewrite /IsExcept0 -{2}fupd_wp -except_0_fupd -fupd_intro. Qed.
+  (* Global Instance is_except_0_wp E e Φ : IsExcept0 (EWP e @ E {{ Φ }}).
+  Proof. 
+  Admitted. *)
+  (* by rewrite /IsExcept0 -{2}fupd_ewp -except_0_fupd -fupd_intro. Qed. *)
 
   Global Instance elim_modal_bupd_wp p E e P Φ :
     TCEq (to_eff e) None → 
@@ -70,15 +74,16 @@ Section proofmode_classes.
     iIntros (v) ">[Hβ HΦ]". iApply "HΦ". by iApply "Hclose".
   Qed.
 
-  Global Instance elim_acc_wp_nonatomic {X} E α β γ e s Φ :
+  (* Global Instance elim_acc_wp_nonatomic {X} E α β γ e Φ :
     TCEq (to_eff e) None → 
     ElimAcc (X:=X) True (fupd E E) (fupd E E)
-            α β γ (WP e @ s; E {{ Φ }})
-            (λ x, WP e @ s; E {{ v, |={E}=> β x ∗ (γ x -∗? Φ v) }})%I.
+            α β γ (EWP e @ E {{ Φ }})
+            (λ x, EWP e @ E {{ v, |={E}=> β x ∗ (γ x -∗? Φ v) }})%I.
   Proof.
     iIntros (? _) "Hinner >Hacc". iDestruct "Hacc" as (x) "[Hα Hclose]".
-    iApply wp_fupd.
-    iApply (wp_wand with "(Hinner Hα)").
-    iIntros (v) ">[Hβ HΦ]". iApply "HΦ". by iApply "Hclose".
-  Qed.
+    iApply ewp_fupd.
+    (* iApply (ewp_wand with "(Hinner Hα)").
+    iIntros (v) ">[Hβ HΦ]". iApply "HΦ". by iApply "Hclose". *)
+  (* Qed. *)
+  Admitted. *)
 End proofmode_classes.

@@ -28,9 +28,10 @@ From iris.proofmode Require Import base tactics classes.
 From iris.algebra Require Import excl_auth gset gmap agree csum frac excl.
 From iris.base_logic Require Import invariants.
 From iris.base_logic.lib Require Import iprop wsat saved_prop.
+
+From eio Require Import deferred_stack cqs.
 From program_logic Require Import reasoning_rules.
 
-From case_studies.eio Require Import concurrent_queue cqs.
 (* ========================================================================== *)
 (** * Implementation of the Scheduler. *)
 
@@ -226,6 +227,7 @@ Definition promiseΣ := #[
 ].
   
 (* The proof of the previous claim. *)
+#[export]
 Instance subG_promiseΣ {Σ} : subG promiseΣ Σ → promiseGpreS Σ.
 Proof. solve_inG. Qed.
 
@@ -238,7 +240,7 @@ Class promiseGS Σ := {
 (** Predicates. *)
 
 Section predicates.
-  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val}.
+  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val, !deferredGS Σ, !savedPropG Σ}.
 
   (* ------------------------------------------------------------------------ *)
   (* Definitions. *)
@@ -273,7 +275,7 @@ Section predicates.
   
   (* Saved predicate for the promise result. *)
   Definition isPromiseResult ε (Φ : val -d> iPropO Σ) := 
-    saved_pred_own ε Φ.
+    saved_pred_own ε DfracDiscarded Φ.
 
   Definition isPromise (p : loc) Φ := (
     ∃ γ ε, isMember p γ ε ∗ isPromiseResult ε Φ
@@ -290,7 +292,7 @@ Section predicates.
 
   (* invariant stuff *)
   Definition promiseN : namespace := nroot .@ "promise".
-  (* Definition queueN : namespace := nroot .@ "queue". *)
+  Definition queueN : namespace := nroot .@ "queue".
 
   (* we can remove the ready & q from promiseInv because we keep all the queue handling inside the 
      effect handler. This makes it much easier since
@@ -352,19 +354,18 @@ Section predicates.
     (fiberResourcesArgs -d> gnameO -d> val -d> val -d> iPropO Σ) →
     (fiberResourcesArgs -d> gnameO -d> val -d> val -d> iPropO Σ) := (λ ready fargs γ q k,
     fiberResources fargs -∗
-    ▷ is_queue_reader q (ready fargs γ q) -∗ 
-      EWP (k #()) {{ _, fiberResources fargs ∗ ▷ is_queue_reader q (ready fargs γ q) ∗ promise_state_done γ #() }}
+    ▷ is_queue_reader queueN (ready fargs γ q) q -∗ 
+      EWP (k #()) {{ _, fiberResources fargs ∗ ▷ is_queue_reader queueN (ready fargs γ q) q ∗ promise_state_done γ #() }}
   )%I.
 
   Local Instance ready_contractive : Contractive ready_pre.
   Proof.
     rewrite /ready_pre=> n ready ready' Hn fargs γ q k.
-    repeat (f_contractive || apply is_queue_ne || f_equiv);
-    try apply Hn; try done; try (intros=>?; apply Hn).
-    intros _. do 2 f_equiv. 
-    f_contractive.
-    apply is_queue_reader_ne.
-    apply Hn.
+    f_equiv. f_equiv.
+    - f_contractive. apply is_queue_reader_ne. apply Hn.
+    - f_equiv.
+      intros _. do 2 f_equiv. 
+      f_contractive. apply is_queue_reader_ne. apply Hn.
   Qed.
   Definition ready_def : (fiberResourcesArgs -d> gnameO -d> val -d> val -d> iPropO Σ) :=
     fixpoint ready_pre.
@@ -445,7 +446,7 @@ Section predicates.
       rewrite frac_op.
       rewrite cmra_update_updateP.
       apply cmra_updateP_id. 
-      apply Qp_half_half.
+      apply Qp.half_half.
     Qed. 
 
     Lemma promise_state_join γ :
@@ -459,7 +460,7 @@ Section predicates.
       rewrite frac_op.
       rewrite cmra_update_updateP.
       apply cmra_updateP_id. 
-      by rewrite Qp_half_half.
+      by rewrite Qp.half_half.
     Qed.
 
     Lemma promise_state_fulfill γ v :
@@ -746,7 +747,7 @@ End protocol_coop.
 (** * Verification. *)
 
 Section verification.
-  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val}.
+  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val, !deferredGS Σ, !savedPropG Σ}.
   Context (resultN : namespace).
 
   Lemma ewp_new_scheduler_result (Φ : val -> iProp Σ) :
@@ -786,7 +787,7 @@ Section verification.
     iApply ewp_alloc. iIntros "!>" (p) "Hp".
     iMod promise_state_create as "[%γ Hps]".
     iMod (promise_state_split with "Hps") as "[Hps1 Hps2]".
-    iMod (saved_pred_alloc Φ) as "[%ε #Hε]".
+    iMod (saved_pred_alloc Φ) as "[%ε #Hε]". done.
     iAssert (promiseSt p γ ε) with "[Hp Hps1 Htqstate Hres]" as "HpSt".
     { iRight. iExists enqs. iFrame.
       iSplit; last by done.
@@ -814,9 +815,9 @@ Section verification.
     
   Lemma ewp_next fargs γ ℓres q Ψ Φ :
   ⊢ fiberResources fargs -∗ 
-    is_queue_reader q (ready fargs γ q) -∗
+    is_queue_reader queueN (ready fargs γ q) q -∗
     mainResult resultN γ ℓres Φ  -∗
-      EWP (next #ℓres q) <| Ψ |> {{ _, fiberResources fargs ∗ ▷ is_queue_reader q (ready fargs γ q) ∗ promise_state_done γ #() }}.
+      EWP (next #ℓres q) <| Ψ |> {{ _, fiberResources fargs ∗ ▷ is_queue_reader queueN (ready fargs γ q) q ∗ promise_state_done γ #() }}.
   Proof. 
     iIntros "HfRes Hq #HmRes".
     iLöb as "IH".
@@ -996,7 +997,7 @@ Section verification.
     - (* the promise is already fulfilled *)
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". 
-      iPoseProof (saved_pred_agree ε Φ Φ' y with "Hε Hε'") as "Heqv".
+      iPoseProof (saved_pred_agree ε _ _ Φ Φ' y with "Hε Hε'") as "Heqv".
       iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
       iSplitL "Hclose". iApply "Hclose".
       iModIntro.
@@ -1043,7 +1044,7 @@ Section verification.
       iModIntro.
       iApply (ewp_load with "Hp").
       iIntros "!> Hp !>". 
-      iPoseProof (saved_pred_agree ε Φ Φ' y with "Hε Hε'") as "Heqv".
+      iPoseProof (saved_pred_agree ε _ _ Φ Φ' y with "Hε Hε'") as "Heqv".
       iApply (fupd_trans_frame (⊤ ∖ ↑promiseN) (⊤ ∖ ↑promiseN) ⊤ _ (▷ promiseInv_inner)).
       iSplitL "Hclose". iApply "Hclose".
       iModIntro.
@@ -1157,13 +1158,14 @@ Section verification.
   Qed.
 
   Lemma ewp_execute (fargs : fiberResourcesArgs) γ ℓres Φ (q fiber : val) :
-  ⊢ is_queue_reader q (ready fargs γ q) -∗
+  ⊢ is_queue_reader queueN (ready fargs γ q) q -∗
     fiberResources fargs -∗
     mainResult resultN γ ℓres Φ -∗
     (fiberResources fargs -∗ EWP fiber #() <| Coop fargs |> {{ _, fiberResources fargs }}) -∗
-      EWP execute q #ℓres #fargs.1 fiber {{_, fiberResources fargs ∗ ▷ is_queue_reader q (ready fargs γ q) ∗ promise_state_done γ #() }}.
+      EWP execute q #ℓres #fargs.1 fiber {{_, fiberResources fargs ∗ ▷ is_queue_reader queueN (ready fargs γ q) q ∗ promise_state_done γ #() }}.
   Proof.
     iIntros "Hq HfRes #HmRes Hfiber".
+    iDestruct (is_queue_reader_is_queue with "Hq") as "[#Hq Hqr]".
     rewrite /execute.
     do 6 ewp_value_or_step.
     iLöb as "IH" forall (fiber).
@@ -1176,7 +1178,7 @@ Section verification.
     (* Return branch. *)
     - iIntros (?) "HfRes".
       ewp_pure_steps. 
-      by iApply (ewp_next with "HfRes Hq").
+      by iApply (ewp_next with "HfRes Hqr").
     (* Effect branch. *)
     - iIntros (request k). rewrite upcl_Coop upcl_FORK upcl_SUSPEND upcl_GET_CONTEXT.
       iIntros "[(%e & -> & (HfRes & He) & Hk)
@@ -1186,8 +1188,8 @@ Section verification.
       + ewp_pure_steps.
         (* change queue state to register a push. *)
         ewp_bind_rule; simpl.
-        iApply (ewp_mono with "[Hq]"); [iApply (queue_register_push True%I with "Hq")|].
-        iIntros (?) "(#Hq & Hfulfill & % & Hpush) !>".
+        iApply (ewp_mono with "[Hqr]"); [iApply (queue_register_push_Q queueN True%I with "Hqr")|].
+        iIntros (?) "(Hfulfill & % & % & Hpush) !>".
         ewp_pure_steps.
         (* prepare the push, this one does not have a precondition bc the fiber is immediately ready. *)
         iApply (ewp_bind' (AppRCtx _)); first by done. simpl.
@@ -1195,8 +1197,7 @@ Section verification.
         { iApply (queue_push_spec with "Hq Hpush [Hk]").
           iIntros "!> _".
           rewrite ready_unfold /ready_pre.
-          iClear "Hq".
-          iIntros "HfRes Hq". ewp_pure_steps.
+          iIntros "HfRes Hqr". ewp_pure_steps.
           iSpecialize ("Hk" $! #() with "HfRes").
           (* iApply (ewp_mono _ _ (λ _, isMainResult θ ℓres ∗ (∃ v : valO, promise_state_done θ v ∗ □ Φ v))%I (λ _, isMainResult θ ℓres ∗ (∃ v : valO, promise_state_done θ v))%I with "[Hk Hres]").
           2: {
@@ -1204,7 +1205,6 @@ Section verification.
             by iExists _.
           } *)
           iApply "Hk". iNext. 
-          (* iSpecialize ("IH_handler" with "Hq"). *)
           rewrite -deep_handler_unfold.
           iApply "IH_handler".
           by iAssumption.
@@ -1215,15 +1215,14 @@ Section verification.
         iApply (ewp_mono with "[Hfulfill]").
         { iApply (queue_fulfill_Q with "Hq Hfulfill []").
           done. }
-        iClear "Hq".
-        iIntros (?) "Hq !>". do 3 ewp_value_or_step.
-        by iApply ("IH" $! e with "Hq HfRes He").
+        iIntros (?) "Hqr !>". do 3 ewp_value_or_step.
+        by iApply ("IH" $! e with "HfRes He Hqr").
       (* Suspend/GetContext. *)
       + do 12 ewp_value_or_step.
         (* prepare the push, this one must take the Q as a precondition. Not sure if it's okay to use the string "v" in the definition of the value. *)
         ewp_bind_rule; simpl.
-        iApply (ewp_mono with "[Hq]"); [iApply (queue_register_push Q with "Hq")|].
-        iIntros (?) "(#Hq & Hfulfill & % & Hpush) !>".
+        iApply (ewp_mono with "[Hqr]"); [iApply (queue_register_push_Q queueN Q with "Hqr")|].
+        iIntros (?) "(Hfulfill & % & % & Hpush) !>".
         do 3 ewp_value_or_step.
         ewp_bind_rule; simpl.
         (* here we bind the creation of waker. Now we should prove a spec for it. *)
@@ -1258,16 +1257,20 @@ Section verification.
         ewp_bind_rule; simpl.
         iApply (ewp_mono with "[Hfulfill HQ]");
           [iApply (queue_fulfill_Q with "Hq Hfulfill HQ")|].
-        iClear "Hq".
-        iIntros (?) "Hq !>".
+        iIntros (?) "Hqr !>".
         ewp_pure_steps.
-        by iApply (ewp_next with "HfCtx Hq").
+        by iApply (ewp_next with "HfCtx Hqr").
       + do 12 ewp_value_or_step.
-        iSpecialize ("IH_handler" with "Hq").
+        iSpecialize ("IH_handler" with "Hqr").
         iApply ("Hk" $! #() with "[//]").
         rewrite -deep_handler_unfold.
         iApply "IH_handler".
   Qed.
+End verification.
+
+Section verification_run.
+  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val, !deferredGpreS Σ, !savedPropG Σ}.
+  Context (resultN: namespace).
 
   Lemma ewp_run (init main : val) I Φ :
   ⊢ I init -∗ 
@@ -1277,7 +1280,7 @@ Section verification.
     iIntros "HI Hmain". unfold run. ewp_pure_steps.
     (* Main fiber result *)
     ewp_bind_rule; simpl. 
-    iApply ewp_mono; [iApply (ewp_new_scheduler_result Φ)|].
+    iApply ewp_mono; [iApply (ewp_new_scheduler_result resultN Φ)|].
     iIntros (vres) "(%ℓres & %γ & -> & #HmRes & Hwaiting) !>".
     ewp_pure_steps.
     (* Initial fiber context. *) 
@@ -1290,16 +1293,16 @@ Section verification.
     iSpecialize ("Hmain" $! ℓtlv).
     ewp_pure_steps.
     ewp_bind_rule; simpl. 
-    iApply ewp_mono; [iApply queue_create_spec|].
-    iIntros (q) "Hq !>". 
+    iApply ewp_mono; [iApply (queue_create_spec queueN)|].
+    iIntros (q) "(%H & Hqcreate) !>". 
     (* a.d. it's kind of interesting that ready is now also scheduler specific. But it's nice to know that
        we cannot schedule a fiber in a different scheduler. *)
-    iSpecialize ("Hq" $! (ready fargs γ q)).
-    iDestruct "Hq" as ">Hq".
+    iSpecialize ("Hqcreate" $! (ready fargs γ q)).
+    iDestruct "Hqcreate" as ">(#Hq & Hqr)".
     ewp_pure_steps.
     iApply (ewp_bind' (AppRCtx _)); [by done|simpl].
-    iApply (ewp_mono with "[Hmain Hq HfCtx Hwaiting]").
-    { iApply (ewp_execute with "Hq HfCtx HmRes [Hmain Hwaiting]").
+    iApply (ewp_mono with "[Hmain Hqr HfCtx Hwaiting]").
+    { iApply (ewp_execute resultN with "Hqr HfCtx HmRes [Hmain Hwaiting]").
       iIntros "HfRes".
       ewp_pure_steps.
       iSpecialize ("Hmain" with "HfRes").
@@ -1337,7 +1340,7 @@ Section verification.
     ewp_pure_steps.
     by iFrame "Hvres".
   Qed.
-End verification.
+End verification_run.
 
 (* ========================================================================== *)
 (** * Specification. *)
@@ -1353,7 +1356,7 @@ Section specification.
 End specification.
 
 Section closed_proof.
-  Context `{!heapGS Σ, !promiseGpreS Σ, !savedPredG Σ val}.
+  Context `{!heapGS Σ, !promiseGpreS Σ, !savedPredG Σ val, !savedPropG Σ, !deferredGpreS Σ}.
   Context (resultN : namespace).
 
   Lemma promiseInv_inner_init :

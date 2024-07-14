@@ -165,7 +165,7 @@ Proof.
       iMod (fupd_mask_subseteq ∅) as "Hclose". by apply empty_subseteq.
       iModIntro. iSplitR.
       * iPureIntro. rewrite /reducible //=.
-        set (l := fresh_locs (dom (gset loc) σ.(heap))).
+        set (l := fresh_locs (dom σ.(heap))).
         exists [], (h v (ContV k l)), (heap_upd <[l:=#false]> σ), []. simpl.
         apply (Ectx_prim_step _ _ _ _ [] []
               (TryWith (Eff OS v k) h r) (h v (ContV k l))); try done.

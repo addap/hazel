@@ -55,7 +55,7 @@ Section reasoning_rules.
     { by apply empty_subseteq. }
     iModIntro. iSplitR.
     - iPureIntro. rewrite /reducible //=.
-      set (l := fresh_locs (dom (gset loc) σ.(heap))).
+      set (l := fresh_locs (dom σ.(heap))).
       exists [], #l, (heap_upd <[l:=v]> σ), []. simpl.
       apply (Ectx_prim_step _ _ _ _ [] [] (ref v)%E (#l)); try done.
       rewrite -state_init_heap_singleton.

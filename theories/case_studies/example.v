@@ -2,10 +2,10 @@ From iris.proofmode Require Import base tactics classes.
 From iris.algebra Require Import excl_auth gset gmap agree csum frac excl.
 From iris.base_logic Require Import invariants.
 From iris.base_logic.lib Require Import iprop wsat saved_prop.
+
+From eio Require Import deferred_stack eio.
 From program_logic Require Import reasoning_rules.
-From case_studies Require Import list_lib .
-From case_studies.eio Require Import eio.
-From case_studies.mt Require Import spawn domain_manager.
+From multi_threading Require Import spawn domain_manager.
 
 Section complex.
 
@@ -48,7 +48,7 @@ Section complex.
     let: "f" := main_fiber #17 #25 in
     run NONEV "f"
   )%V.
-Section complex.
+End complex.
 
 Class exampleG Σ := {
   tlvContentG :> inG Σ (agreeR (prodO ZO ZO))
@@ -58,6 +58,7 @@ Definition exampleΣ := #[
   GFunctor (agreeR (prodO ZO ZO))
 ].
 
+#[export]
 Instance subG_exampleΣ {Σ} : subG exampleΣ Σ → exampleG Σ.
 Proof. solve_inG. Qed.
 
@@ -86,7 +87,7 @@ Section spec.
 End spec.
 
 Section proof.
-  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val, !spawnG Σ, !domainG Σ, !exampleG Σ}.
+  Context `{!heapGS Σ, !promiseGS Σ, !savedPredG Σ val, !spawnG Σ, !domainG Σ, !exampleG Σ, !deferredGS Σ, savedPropG Σ}.
   Context (Nresult : namespace).
   
   Lemma ewp_work (n : Z) :
@@ -257,7 +258,7 @@ Section proof.
 End proof.
 
 Section closed.
-  Context `{!heapGS Σ, !promiseGpreS Σ, !savedPredG Σ val, !spawnG Σ, !domainG Σ, !exampleG Σ}.
+  Context `{!heapGS Σ, !promiseGpreS Σ, !savedPredG Σ val, !spawnG Σ, !domainG Σ, !exampleG Σ, !deferredGS Σ, !savedPropG Σ}.
   Context (N Njoin Nresult : namespace).
 
   Lemma ewp_main :

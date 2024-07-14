@@ -2,10 +2,10 @@ From iris.proofmode Require Import base tactics classes.
 From iris.algebra Require Import excl excl_auth gset gmap agree csum frac excl.
 From iris.base_logic Require Import invariants.
 From iris.base_logic.lib Require Import iprop wsat saved_prop.
-From program_logic Require Import reasoning_rules.
 
-From case_studies.eio Require Import eio.
-From case_studies.mt Require Import spawn.
+From eio Require Import deferred_stack eio.
+From program_logic Require Import reasoning_rules.
+From multi_threading Require Import spawn.
 
 Definition make_register : val :=
   (λ: "domain" "init" "f", (λ: "waker",
@@ -73,7 +73,7 @@ Section spec.
     rewrite frac_op.
     rewrite cmra_update_updateP.
     apply cmra_updateP_id. 
-    apply Qp_half_half.
+    apply Qp.half_half.
   Qed. 
 
   Lemma domain_state_join γ :
@@ -87,7 +87,7 @@ Section spec.
     rewrite frac_op.
     rewrite cmra_update_updateP.
     apply cmra_updateP_id. 
-    by rewrite Qp_half_half.
+    by rewrite Qp.half_half.
   Qed.
 
   Lemma domain_state_create ℓ Φ :
@@ -125,7 +125,13 @@ Section spec.
 End spec.
       
 Section proof.
-  Context `{!heapGS Σ, !spawnG Σ, !promiseGS Σ, !savedPredG Σ val, !domainG Σ}.
+  Context `{!heapGS Σ
+  , !spawnG Σ
+  , !promiseGS Σ
+  , !domainG Σ
+  , !deferredGpreS Σ
+  , !savedPropG Σ
+  }.
   Context (N Njoin Nreturn: namespace).
 
   Lemma make_register_spec γ δ ℓ (I Φ : val -> iProp Σ) (init f: val) :

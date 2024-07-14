@@ -39,7 +39,7 @@ Proof.
   - rewrite ewp_unfold /ewp_pre wp_unfold /wp_pre /= Heqo Heqo0.
     iIntros "Hewp" (σ ns k ks nt) "Hs".
     iMod ("Hewp" $! σ ns k ks nt with "Hs") as "[$ H]". iModIntro.
-    iIntros (e2 σ2 efs Hstep).
+    iIntros (e2 σ2 efs Hstep) "Hcredit".
     case k   as [|??]; [|done].
     simpl in Hstep.
     iMod ("H" with "[//]") as "H". iIntros "!> !>".
@@ -55,7 +55,7 @@ Proof.
         iDestruct "Hefs" as "[He Hefs]".
         iSplitL "He".
         by iApply ("IH" with "He").
-        by iApply ("IHefs" with "Hefs").
+        by iApply ("IHefs" with "Hcredit Hefs").
 Qed.
 
 
